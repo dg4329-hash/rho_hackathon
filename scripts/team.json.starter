@@ -26,7 +26,7 @@
     {
       "name": "figma.export",
       "command": "./scripts/figma-export.sh",
-      "description": "Export a Figma frame to PNG + text outline. Usage: figma-export.sh <fileKey> <nodeId>",
+      "description": "Export a Figma frame as PNG + text outline. Usage: figma-export.sh list  (see frame names)  then  figma-export.sh \"<Page/Frame name>\". No file key needed; the owner has it configured.",
       "permission": "ask"
     },
     {

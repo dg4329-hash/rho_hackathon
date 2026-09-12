@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # Export a Figma frame to PNG + a readable text outline for coding agents.
 #
-#   ./scripts/figma-export.sh <fileKey> <nodeId>
-#
-#   fileKey  the part of the Figma URL after /file/ or /design/   e.g. 8fA2bC…
-#   nodeId   the node-id from the URL; both 12:34 and 12-34 spellings are accepted
+#   ./scripts/figma-export.sh list                  # frames in $FIGMA_FILE_KEY
+#   ./scripts/figma-export.sh "Onboarding/Step 2"   # export by name (owner sets FIGMA_FILE_KEY once)
+#   ./scripts/figma-export.sh <fileKey> <nodeId>    # explicit form; 12:34 and 12-34 both accepted
 #
 # Requires FIGMA_TOKEN in the environment (personal access token, https://www.figma.com/developers/api#access-tokens).
 # Never commit the token. Optional: FIGMA_MAX_DEPTH (default 8), FIGMA_OUT_DIR (default /tmp),
@@ -14,12 +13,31 @@
 #          Outline: …             (indented tree: name, type, bounding box, text, font, fill)
 set -euo pipefail
 
-FILE_KEY="${1:-}"
-NODE_ID="${2:-}"
-
-if [[ -z "$FILE_KEY" || -z "$NODE_ID" ]]; then
-  echo "Usage: figma-export.sh <fileKey> <nodeId>" >&2
-  echo "  fileKey = segment after /file/ or /design/ in the Figma URL; nodeId = node-id query param (12:34 or 12-34)" >&2
+# ---- arguments ---------------------------------------------------------------
+#   figma-export.sh list                      list frames in $FIGMA_FILE_KEY (name → node id)
+#   figma-export.sh "<frame name>"            export a frame from $FIGMA_FILE_KEY by name (case-insensitive; substring ok)
+#   figma-export.sh <nodeId>                  export by node id from $FIGMA_FILE_KEY
+#   figma-export.sh <fileKey> <nodeId>        explicit file + node (original form)
+# The owner sets FIGMA_FILE_KEY once next to FIGMA_TOKEN; requesters only need a frame name.
+MODE="export"
+FILE_KEY=""
+NODE_ID=""
+FRAME_NAME=""
+if [[ $# -ge 2 ]]; then
+  FILE_KEY="$1"; NODE_ID="$2"
+elif [[ $# -eq 1 && "$1" == "list" ]]; then
+  MODE="list"
+elif [[ $# -eq 1 && "$1" =~ ^[0-9]+[:-][0-9]+$ ]]; then
+  NODE_ID="$1"
+elif [[ $# -eq 1 ]]; then
+  FRAME_NAME="$1"
+else
+  echo "Usage: figma-export.sh list | figma-export.sh \"<frame name>\" | figma-export.sh <nodeId> | figma-export.sh <fileKey> <nodeId>" >&2
+  exit 2
+fi
+FILE_KEY="${FILE_KEY:-${FIGMA_FILE_KEY:-}}"
+if [[ -z "$FILE_KEY" ]]; then
+  echo "No Figma file: set FIGMA_FILE_KEY (segment after /file/ or /design/ in the Figma URL) next to FIGMA_TOKEN, or pass <fileKey> <nodeId>." >&2
   exit 2
 fi
 
@@ -39,6 +57,39 @@ done
 API="${FIGMA_API_BASE:-https://api.figma.com}"
 OUT_DIR="${FIGMA_OUT_DIR:-/tmp}"
 MAX_DEPTH="${FIGMA_MAX_DEPTH:-8}"
+AUTH="X-Figma-Token: ${FIGMA_TOKEN}"
+
+# ---- frame lookup by name (pages + top-level frames, one cheap request) ----------------------------------
+if [[ "$MODE" == "list" || -n "$FRAME_NAME" ]]; then
+  FILE_JSON=$(curl -sS -f -H "$AUTH" "$API/v1/files/${FILE_KEY}?depth=2") || {
+    echo "Figma files API request failed (check FIGMA_TOKEN and FIGMA_FILE_KEY '$FILE_KEY')" >&2
+    exit 1
+  }
+  RESOLVED=$(printf '%s' "$FILE_JSON" | node -e '
+    const mode = process.argv[1], want = (process.argv[2] || "").toLowerCase();
+    let d = ""; process.stdin.on("data", c => d += c); process.stdin.on("end", () => {
+      let j; try { j = JSON.parse(d); } catch { console.error("files API returned non-JSON"); process.exit(1); }
+      const frames = [];
+      for (const page of (j.document && j.document.children) || [])
+        for (const n of page.children || [])
+          if (["FRAME","COMPONENT","COMPONENT_SET","SECTION","GROUP"].includes(n.type))
+            frames.push({ page: page.name, name: n.name, id: n.id, type: n.type, full: page.name + "/" + n.name });
+      if (mode === "list") {
+        console.log("File: " + (j.name || "") + "  (" + frames.length + " frames)");
+        for (const f of frames) console.log("  " + f.full.padEnd(48) + " " + f.id + "  " + f.type);
+        process.exit(0);
+      }
+      const norm = s => s.toLowerCase().trim();
+      let hit = frames.filter(f => norm(f.full) === want || norm(f.name) === want);
+      if (hit.length === 0) hit = frames.filter(f => norm(f.full).includes(want) || norm(f.name).includes(want));
+      if (hit.length === 1) { console.log(hit[0].id); process.exit(0); }
+      if (hit.length === 0) { console.error("No frame matching \"" + process.argv[2] + "\". Frames: " + frames.map(f => f.full).join(" | ")); process.exit(3); }
+      console.error("Ambiguous \"" + process.argv[2] + "\": " + hit.map(f => f.full + " (" + f.id + ")").join(" | ") + ". Use the full Page/Frame name."); process.exit(3);
+    });' "$MODE" "$FRAME_NAME") || exit $?
+  if [[ "$MODE" == "list" ]]; then printf '%s\n' "$RESOLVED"; exit 0; fi
+  NODE_ID="$RESOLVED"
+  echo "Frame: $FRAME_NAME → $NODE_ID"
+fi
 
 # Figma URLs spell node ids as 12-34; the API wants 12:34 (URL-encoded as 12%3A34).
 if [[ "$NODE_ID" != *:* && "$NODE_ID" == *-* ]]; then
@@ -46,7 +97,6 @@ if [[ "$NODE_ID" != *:* && "$NODE_ID" == *-* ]]; then
 fi
 NODE_ENC=$(node -e 'console.log(encodeURIComponent(process.argv[1]))' "$NODE_ID")
 OUT="$OUT_DIR/mesh-figma-${NODE_ID//[:\/]/_}.png"
-AUTH="X-Figma-Token: ${FIGMA_TOKEN}"
 
 # --- PNG: GET /v1/images/:key?ids=&format=png&scale=2 → { images: { "<id>": "<url>" } } → download ---
 IMG_JSON=$(curl -sS -f -H "$AUTH" "$API/v1/images/${FILE_KEY}?ids=${NODE_ENC}&format=png&scale=2") || {

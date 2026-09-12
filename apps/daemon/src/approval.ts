@@ -4,8 +4,11 @@
  */
 import chalk from "chalk";
 import { nativeApprove, nativeDialogAvailable } from "./native.js";
+import { selectApprovalPath, type PendingApprovals } from "./pending.js";
 
 export interface ApprovalRequest {
+  /** Request id (the relay frame id); doubles as the key in the pending queue. */
+  id: string;
   from: string;
   why: string;
   command?: string;
@@ -77,11 +80,37 @@ function safeText(text: string, max: number): string {
 
 let queue: Promise<unknown> = Promise.resolve();
 
-/** Ask the owner. Prompts are serialized so two never overlap. */
-export function askApproval(req: ApprovalRequest): Promise<ApprovalAnswer> {
+/**
+ * Ask the owner. Path (see pending.ts selectApprovalPath): a `mesh watch` watcher inside the
+ * owner's coding agent → native OS dialog → terminal y/n. Dialog/tty prompts are serialized so two
+ * never overlap; the watcher path is not (many requests can wait in the queue at once).
+ */
+export function askApproval(req: ApprovalRequest, pending?: PendingApprovals): Promise<ApprovalAnswer> {
+  const path = selectApprovalPath({
+    watcherAttached: pending?.watcherAttached() ?? false,
+    mode: process.env.MESH_APPROVE,
+    dialogAvailable: nativeDialogAvailable(),
+    tty: hasTty(),
+  });
+  if (path === "watcher" && pending) return viaWatcher(req, pending);
+  return viaLocalPrompt(req, path === "tty");
+}
+
+async function viaWatcher(req: ApprovalRequest, pending: PendingApprovals): Promise<ApprovalAnswer> {
+  process.stdout.write(`\n${chalk.yellow("⚡")} ${chalk.magenta(safeText(req.from, 32))} ${chalk.bold(req.command ? "wants to run:" : "wants to call")} ${chalk.cyan(safeText(req.command ?? req.tool ?? "?", 200))}  ${chalk.dim("(waiting for your coding agent)")}\n`);
+  const answer = await pending.ask({ id: req.id, from: req.from, why: req.why, command: req.command, tool: req.tool, args: req.args });
+  if (answer) {
+    process.stdout.write((answer.approved ? chalk.green("  approved") : chalk.red(`  denied${answer.reason ? ` (${safeText(answer.reason, 120)})` : ""}`)) + " " + chalk.dim("via agent") + "\n");
+    return answer;
+  }
+  process.stdout.write(chalk.dim("  no answer from the agent; falling back\n"));
+  return viaLocalPrompt(req, !nativeDialogAvailable());
+}
+
+function viaLocalPrompt(req: ApprovalRequest, ttyOnly: boolean): Promise<ApprovalAnswer> {
   const run = async (): Promise<ApprovalAnswer> => {
     // 1. Native OS dialog (works with any coding tool, and when the daemon runs in the background).
-    if (nativeDialogAvailable()) {
+    if (!ttyOnly && nativeDialogAvailable()) {
       const what = req.command ? `run:  ${safeText(req.command, 400)}` : `call: ${safeText(req.tool ?? "?", 100)} ${safeText(prettyArgs(req.args), 600)}`;
       const body = `${what}\n\nwhy: ${safeText(req.why, 300)}`;
       process.stdout.write(`\n${chalk.yellow("⚡")} ${chalk.magenta(safeText(req.from, 32))} ${chalk.bold(req.command ? "wants to run:" : "wants to call")} ${chalk.cyan(safeText(req.command ?? req.tool ?? "?", 200))}  ${chalk.dim("(dialog)")}\n`);

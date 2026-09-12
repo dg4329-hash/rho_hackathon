@@ -218,7 +218,8 @@ export function createCore(opts: CoreOptions): DaemonCore & { client: RelayClien
     pending.wakeAll();
     if (messages.size > 500) messages.delete(messages.keys().next().value as string);
     say(`${chalk.cyan("✉")} ${chalk.magenta(frame.from)}${to === "all" ? chalk.dim(" (to all)") : ""}: ${text.length > 300 ? text.slice(0, 299) + "…" : text}`);
-    if (!opts.quiet && Math.abs(Date.now() - Date.parse(frame.ts)) < 5 * 60_000) { debug("notify", frame.from); nativeNotify(`mesh: message from ${frame.from}`, text); } // skip old replayed history (5 min window tolerates clock skew); tests run quiet
+    // OS notification only when nothing better is attached: an overlay or the Claude Code watcher already shows it live.
+    if (!opts.quiet && !pending.watcherAttached() && Math.abs(Date.now() - Date.parse(frame.ts)) < 5 * 60_000) { debug("notify", frame.from); nativeNotify(`mesh: message from ${frame.from}`, text); }
   }
 
   client.on("frame", (frame) => {

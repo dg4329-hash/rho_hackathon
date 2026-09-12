@@ -14,7 +14,8 @@
  */
 "use strict";
 
-const DAEMON = process.env.MESH_DAEMON || "http://localhost:7337";
+const argDaemon = (() => { const i = process.argv.indexOf("--daemon"); return i > 0 ? process.argv[i + 1] : undefined; })();
+const DAEMON = argDaemon || process.env.MESH_DAEMON || "http://localhost:7337";
 const TIMEOUT_MS = 1000;
 const kind = process.argv[2];
 

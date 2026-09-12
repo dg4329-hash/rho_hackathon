@@ -42,6 +42,8 @@ const OUTBOX_LIMIT = 500;
 
 export class RelayClient extends EventEmitter<RelayClientEvents> {
   private outbox: string[] = [];
+  /** True between (re)connect and the relay's post-replay presence frame. Requests seen while replaying are history, not new work. */
+  replaying = false;
   readonly user: string;
   readonly room: string;
   readonly relay: string;
@@ -87,6 +89,7 @@ export class RelayClient extends EventEmitter<RelayClientEvents> {
     ws.on("open", () => {
       this.connected = true;
       this.backoffMs = 1000;
+      this.replaying = true;
       this.send({ type: "hello", role: this.role, offers: this.offers });
       this.flushOutbox();
       this.emit("open");
@@ -117,6 +120,7 @@ export class RelayClient extends EventEmitter<RelayClientEvents> {
     this.history.push({ frame, receivedAt: Date.now() });
     if (this.history.length > HISTORY_LIMIT) this.history.splice(0, this.history.length - HISTORY_LIMIT);
     if (frame.type === "presence") {
+      this.replaying = false; // relay sends presence right after the replay
       this.lastPresence = frame;
       this.emit("presence", frame);
     } else if (frame.type === "error") {

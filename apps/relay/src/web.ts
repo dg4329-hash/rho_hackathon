@@ -186,10 +186,19 @@ chmod +x "$MESH_HOME/mesh.mjs" "$MESH_HOME/emit.js" 2>/dev/null || true
 if [ "\${MESH_FOREGROUND:-}" = "1" ]; then
   echo "mesh: joining room '$ROOM' via $RELAY (foreground; approvals in this terminal)"
 else
+  if [ "$(uname -s)" = "Linux" ] && ! command -v zenity >/dev/null 2>&1; then
+    echo "mesh: no 'zenity' on this Linux box, so approvals need a terminal; running in the foreground (install zenity for background mode)"
+    exec node "$MESH_HOME/mesh.mjs" join "$ROOM" --relay "$RELAY" "$@" </dev/tty
+  fi
   echo "mesh: joining room '$ROOM' via $RELAY in the background (approvals pop up as system dialogs)"
   node "$MESH_HOME/mesh.mjs" join "$ROOM" --relay "$RELAY" --background "$@"
-  echo "mesh: done. Restart your coding agent session once so it picks up the mesh tools.  (mesh status / mesh stop: node ~/.mesh/mesh.mjs status)"
-  exit $?
+  rc=$?
+  if [ $rc -eq 0 ]; then
+    echo "mesh: done. Restart your coding agent session once so it picks up the mesh tools.  (status/stop: node ~/.mesh/mesh.mjs status)"
+  else
+    echo "mesh: join failed (exit $rc). See ~/.mesh/daemon.log" >&2
+  fi
+  exit $rc
 fi
 # When piped through \`curl | bash\` stdin is the script, not the terminal; the daemon needs a TTY to ask y/n.
 if [ ! -t 0 ] && ( : </dev/tty ) 2>/dev/null; then

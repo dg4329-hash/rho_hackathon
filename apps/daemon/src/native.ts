@@ -24,12 +24,20 @@ function run(cmd: string, args: string[], env: NodeJS.ProcessEnv, timeoutMs: num
 }
 
 function has(bin: string): boolean {
-  return spawnSync(process.platform === "win32" ? "where" : "which", [bin], { stdio: "ignore" }).status === 0;
+  if (process.platform === "win32") return spawnSync("where", [bin], { stdio: "ignore" }).status === 0;
+  return spawnSync("sh", ["-c", `command -v ${bin}`], { stdio: "ignore" }).status === 0;
+}
+/** A GUI session we can draw a dialog on. Over ssh / in a container there is none. */
+function guiSession(): boolean {
+  if (process.platform === "win32") return !process.env.SSH_CONNECTION;
+  if (process.platform === "darwin") return !process.env.SSH_CONNECTION && !process.env.SSH_TTY;
+  return !!(process.env.DISPLAY || process.env.WAYLAND_DISPLAY);
 }
 
 /** True if a native dialog is likely to work here. */
 export function nativeDialogAvailable(): boolean {
   if (process.env.MESH_APPROVE === "tty") return false;
+  if (!guiSession()) return false;
   if (process.platform === "darwin") return true;
   if (process.platform === "win32") return true;
   return has("zenity");
@@ -46,19 +54,22 @@ export async function nativeApprove(req: DialogRequest): Promise<"approved" | "d
     if (!r) return null;
     if (/gave up:true/.test(r.out)) return "timeout";
     if (/button returned:Approve/.test(r.out)) return "approved";
-    return "denied"; // cancel button exits non-zero
+    if (r.code !== 0 && !/button returned/.test(r.out) && !/User canceled/.test(r.out)) return null; // osascript couldn't show UI
+    return "denied"; // cancel button exits non-zero with "User canceled" 
   }
   if (process.platform === "win32") {
     const ps = `Add-Type -AssemblyName PresentationFramework; $r=[System.Windows.MessageBox]::Show($env:MESH_BODY,$env:MESH_TITLE,'YesNo','Question','No'); Write-Output $r`;
     const r = await run("powershell", ["-NoProfile", "-NonInteractive", "-Command", ps], { ...process.env, MESH_BODY: req.body, MESH_TITLE: req.title }, ms);
     if (!r) return null;
     if (r.code === null) return "timeout";
+    if (!/Yes|No/.test(r.out)) return null; // PowerShell couldn't show a MessageBox (no desktop session)
     return /Yes/.test(r.out) ? "approved" : "denied";
   }
   if (has("zenity")) {
     const r = await run("zenity", ["--question", "--title", req.title, "--text", req.body, "--ok-label", "Approve", "--cancel-label", "Deny", "--timeout", String(req.timeoutSeconds), "--width", "480"], process.env, ms);
     if (!r) return null;
     if (r.code === 5) return "timeout";
+    if (r.code !== 0 && r.code !== 1) return null; // zenity failed to open a display
     return r.code === 0 ? "approved" : "denied";
   }
   return null;

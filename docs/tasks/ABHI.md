@@ -69,3 +69,25 @@ Output excerpt:
 10:05:51  tarush    ✘ timed out after 120.0s  #0005
 ```
 Covers: presence (join + leave), all 5 event kinds, shell + mcp requests, approved / auto / denied, streamed stdout+stderr, exit 0, timeout, mcp JSON result pretty-printed, reconnect with backoff when relay is down. Remaining for acceptance: run against Tarush's relay on a third laptop.
+
+### Step 5 — hooks (against mock daemon; Dev's daemon not up yet)
+```
+pnpm -F feed mock && pnpm -F feed mock-daemon && pnpm -F feed start -- rho     # three panes
+echo '{"prompt":"Implement onboarding step 2…","cwd":"/Users/abhi/app"}' | node hooks/emit.js prompt
+echo '{"tool_name":"Edit","tool_input":{"file_path":"/Users/abhi/app/src/Step2.tsx"},"cwd":"/Users/abhi/app"}' | node hooks/emit.js file_touched
+```
+Feed, <1 s later:
+```
+14:50:24  dev       💬 prompt: Implement onboarding step 2 to match the Figma frame
+14:50:24  dev       📁 file: src/Step2.tsx
+14:50:24  dev       🔧 tool: mcp__mesh__ask_teammate
+14:50:24  dev       ⏸  status: idle
+```
+Next `prompt` hook prints to stdout (→ agent context):
+```
+Team activity (last 10 min):
+- 14:50 dev prompt: Implement onboarding step 2 to match the Figma frame
+- 14:50 dev file: src/Step2.tsx
+```
+Failure modes: no daemon → exit 0 in 0.5 s, no output. Garbage stdin → exit 0. `hooks/install.sh <repo>` backs up, merges, keeps existing hooks, idempotent on re-run.
+Remaining for acceptance: install on Dev's laptop against the real daemon, time prompt → feed.

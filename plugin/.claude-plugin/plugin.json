@@ -1,0 +1,9 @@
+{
+  "name": "mesh",
+  "version": "0.1.0",
+  "description": "Borrow a teammate's machine, not their credentials. Mesh tools (list_teammates, ask_teammate, ...) plus in-session approvals: teammates' requests to use this machine arrive as notifications and you answer in Claude Code's own permission prompt.",
+  "author": { "name": "mesh (rho hackathon)" },
+  "repository": "https://github.com/dg4329-hash/rho_hackathon",
+  "license": "MIT",
+  "keywords": ["mesh", "teammates", "mcp", "approvals", "collaboration"]
+}

@@ -1,0 +1,7 @@
+[
+  {
+    "name": "mesh",
+    "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/mesh-watch",
+    "description": "mesh: teammate requests waiting for your approval"
+  }
+]

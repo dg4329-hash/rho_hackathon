@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/** `mesh` CLI: join / ask / init (CONTRACT §6). */
+/** `mesh` CLI: join / ask / init / watch / status / stop / log (CONTRACT §6). */
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Command } from "commander";
@@ -7,15 +7,16 @@ import chalk from "chalk";
 import { spawn } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, openSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { DEFAULT_PORT, type Offer, type TeamConfig } from "@mesh/protocol";
+import { DEFAULT_PORT, type Offer, type PendingRequest, type TeamConfig } from "@mesh/protocol";
 import { configFromFlags, loadConfig, userCwd } from "./config.js";
 import { createCore } from "./core.js";
 import { createLocalServer } from "./local-server.js";
 import { createMcpImport } from "./mcp-import.js";
 import { resolveNotes, resolvePermission } from "./permissions.js";
-import { defaultHandle, installClaudeHooks, parseRoomArg, printRegister, registerClaudeCode, registerCodex, registerCursor, type RegisterResult } from "./register.js";
+import { defaultHandle, installClaudeHooks, parseRoomArg, printRegister, registerApproveAskRule, registerClaudeCode, registerCodex, registerCursor, type RegisterResult } from "./register.js";
 import { RelayClient } from "./relay-client.js";
 import { restoreTerminal } from "./approval.js";
+import { watchLine } from "./pending.js";
 
 /** ~-relative path for banners. */
 function shorten(p: string): string {
@@ -77,6 +78,8 @@ program
     if (target.relay && !flags.relay) flags.relay = target.relay;
     const { config, cwd, source } = loadWithFlags(room, flags);
     const port = Number(flags.port) || DEFAULT_PORT;
+    // Remember how we joined so the Claude Code plugin's SessionStart hook can bring the daemon back later.
+    try { writeJoinConfig({ room: config.room, relay: config.relay, user: config.user, port, cwd, updatedAt: new Date().toISOString() }); } catch { /* best effort */ }
 
     if (flags.background) {
       const running = await readState(port);
@@ -143,6 +146,7 @@ program
         const results: RegisterResult[] = [
           registerClaudeCode(port, cwd),
           installClaudeHooks(cwd, port),
+          registerApproveAskRule(cwd),
           registerCursor(port, cwd, flags.cursor),
           registerCodex(port, flags.codex),
         ];
@@ -237,11 +241,45 @@ program
     console.log(chalk.green(`wrote ${target}`) + chalk.dim(" — edit user/room/relay/cwd, then `mesh join <room> --as <user>`"));
   });
 
+// ---------- watch (the Claude Code plugin's background monitor) ----------
+program
+  .command("watch")
+  .description("print one line per teammate request waiting for your approval (run by the Claude Code plugin monitor; Ctrl-C / SIGTERM to stop)")
+  .option("--port <n>", "local daemon port", String(DEFAULT_PORT))
+  .action(async (flags: { port: string }) => {
+    const port = Number(flags.port) || DEFAULT_PORT;
+    const base = `http://localhost:${port}`;
+    const printed = new Set<string>();
+    let down = false;
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    for (const sig of ["SIGINT", "SIGTERM"] as const) process.on(sig, () => process.exit(0));
+    for (;;) {
+      let list: PendingRequest[] | undefined;
+      try {
+        const r = await fetch(`${base}/pending?wait=25`, { signal: AbortSignal.timeout(40_000) });
+        if (r.ok) list = ((await r.json()) as { pending?: PendingRequest[] }).pending ?? [];
+      } catch { /* daemon down or restarting */ }
+      if (!list) {
+        if (!down) { console.error(`mesh watch: no daemon on :${port}; retrying every 3 s (mesh status / mesh join <room> --background)`); down = true; }
+        await sleep(3000);
+        continue;
+      }
+      if (down) { console.error(`mesh watch: connected to :${port}`); down = false; }
+      const live = new Set(list.map((p) => p.id));
+      for (const p of list) if (!printed.has(p.id)) { printed.add(p.id); console.log(watchLine(p)); }
+      for (const id of printed) if (!live.has(id)) printed.delete(id);
+    }
+  });
+
 // ---------- background state ----------
 interface DaemonState { pid: number; port: number; room: string; relay: string; user: string; cwd: string; startedAt: string }
+/** ~/.mesh/config.json: how the last `mesh join` was invoked (the plugin's SessionStart hook restarts the daemon from it). */
+interface JoinConfig { room: string; relay: string; user: string; port: number; cwd: string; updatedAt: string }
 const meshHome = () => path.join(homedir(), ".mesh");
 const statePath = () => path.join(meshHome(), "daemon.json");
 const logPath = () => path.join(meshHome(), "daemon.log");
+const configPath = () => path.join(meshHome(), "config.json");
+function writeJoinConfig(cfg: JoinConfig): void { mkdirSync(meshHome(), { recursive: true }); writeFileSync(configPath(), JSON.stringify(cfg, null, 2) + "\n"); }
 function writeState(st: DaemonState): void { mkdirSync(meshHome(), { recursive: true }); writeFileSync(statePath(), JSON.stringify(st, null, 2)); }
 function loadState(): DaemonState | undefined { try { return JSON.parse(readFileSync(statePath(), "utf8")) as DaemonState; } catch { return undefined; } }
 async function health(port: number): Promise<Record<string, unknown> | undefined> {

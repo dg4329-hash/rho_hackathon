@@ -19,6 +19,7 @@ import {
 import type { ActivityEntry, AskInput, DaemonCore, Job, McpImport, Member } from "./api.js";
 import { askApproval } from "./approval.js";
 import { nativeNotify } from "./native.js";
+import { PendingApprovals } from "./pending.js";
 import { Jobs, toJobResult } from "./jobs.js";
 import { resolvePermission } from "./permissions.js";
 import { RelayClient, debug } from "./relay-client.js";
@@ -49,6 +50,7 @@ export function createCore(opts: CoreOptions): DaemonCore & { client: RelayClien
   const { config, cwd, client, mcpImport, shellOffers, mcpOffers } = opts;
   const me = config.user;
   const jobs = new Jobs();
+  const pending = new PendingApprovals();
   const say = (line: string) => {
     if (!opts.quiet) console.log(line);
   };
@@ -107,7 +109,7 @@ export function createCore(opts: CoreOptions): DaemonCore & { client: RelayClien
       say(chalk.green(`⚡ ${req.from} › ${req.command ?? req.tool}  ${chalk.dim("(auto-approved)")}`));
       return true;
     }
-    const answer = await askApproval({ from: req.from, why: req.why, command: req.command, tool: req.tool, args: req.args });
+    const answer = await askApproval({ id: req.id, from: req.from, why: req.why, command: req.command, tool: req.tool, args: req.args }, pending);
     if (!answer.approved) {
       sendDecision(req.id, "denied", answer.reason ?? "owner declined");
       return false;
@@ -340,6 +342,14 @@ export function createCore(opts: CoreOptions): DaemonCore & { client: RelayClien
 
     relayStatus() {
       return client.status();
+    },
+
+    pendingApprovals(waitMs: number) {
+      return pending.poll(waitMs);
+    },
+
+    decide(id, decision, reason) {
+      return pending.decide(id, decision, reason);
     },
   };
 

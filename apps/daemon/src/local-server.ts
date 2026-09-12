@@ -13,7 +13,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import {
   TOOL_DESCRIPTIONS, AskTeammateInput, CheckJobInput, PostEventInput, TeamActivityInput, DescribeCapabilityInput, SendMessageInput, InboxInput,
-  EventKind, type Offer,
+  ApproveRequestInput, EventKind, type Offer,
 } from "@mesh/protocol";
 import type { DaemonCore, LocalServer } from "./api.js";
 import { exampleArgs, validateAgainstSchema } from "./schema.js";
@@ -170,6 +170,29 @@ export function buildMcpServer(core: DaemonCore): McpServer {
     return ok({ events: core.activity(sinceMinutes) });
   }));
 
+  // Deliberately never allowlisted: Claude Code's permission prompt for this call *is* the owner's yes/no.
+  // `anthropic/requiresUserInteraction` makes Claude Code prompt on every call, in auto and bypass modes too,
+  // with no "don't ask again" (Claude Code ≥ 2.1.199). The project's permissions.ask rule is the belt to this brace.
+  server.registerTool("approve_request", {
+    description: TOOL_DESCRIPTIONS.approve_request,
+    inputSchema: {
+      id: z.string().min(1).describe("request id from the mesh notification line"),
+      decision: z.enum(["approved", "denied"]).describe("'approved' runs it on this machine; 'denied' tells the teammate no"),
+      reason: z.string().max(300).optional().describe("optional one-line reason, shown to the teammate when denied"),
+    },
+    _meta: { "anthropic/requiresUserInteraction": true },
+  }, guard((raw) => {
+    const { id, decision, reason } = ApproveRequestInput.parse(raw);
+    if (!core.decide(id, decision, reason)) {
+      const waiting = core.pendingApprovals(0);
+      return waiting.then((list) => fail(
+        `no pending request '${id}' (it expired, was already decided, or never existed). ` +
+        (list.length ? `Still pending: ${list.map((p) => `${p.id} (${p.from}: ${p.command ?? p.tool})`).join(", ")}` : "Nothing is pending."),
+      ));
+    }
+    return ok({ ok: true, id, decision });
+  }));
+
   return server;
 }
 
@@ -220,6 +243,22 @@ export function buildApp(core: DaemonCore): express.Express {
 
   app.get("/health", (_req, res) => {
     res.json({ user: core.me, room: core.config.room, relay: core.relayStatus(), members: core.members().length });
+  });
+
+  // In-tool approvals (`mesh watch` + the plugin monitor). GET long-polls up to ?wait= seconds (max 60);
+  // any poll marks a watcher as attached for the next 60 s, which routes approvals into the pending queue.
+  app.get("/pending", async (req, res) => {
+    const n = Number(req.query.wait);
+    const waitSeconds = Number.isFinite(n) && n > 0 ? Math.min(60, n) : 0;
+    res.json({ pending: await core.pendingApprovals(waitSeconds * 1000) });
+  });
+
+  app.post("/decide", (req, res) => {
+    const parsed = ApproveRequestInput.safeParse(req.body);
+    if (!parsed.success) { res.status(400).json({ ok: false, error: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ") }); return; }
+    const { id, decision, reason } = parsed.data;
+    if (!core.decide(id, decision, reason)) { res.status(404).json({ ok: false, error: `no pending request ${id}` }); return; }
+    res.json({ ok: true, id, decision });
   });
 
   return app;

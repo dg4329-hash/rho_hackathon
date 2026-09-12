@@ -5,7 +5,7 @@
  *   local-server.ts(HTTP + MCP server for the IDE agent)           implements LocalServer
  * Do not change these interfaces without telling the other builder.
  */
-import type { Offer, Role, TeamConfig, JobResult, EventKind, InboxMessage } from "@mesh/protocol";
+import type { Offer, Role, TeamConfig, JobResult, EventKind, InboxMessage, PendingRequest } from "@mesh/protocol";
 
 export interface Member { user: string; role: Role; offers: Offer[] }
 
@@ -54,6 +54,13 @@ export interface DaemonCore {
   /** Messages addressed to me or 'all'. unreadOnly marks returned messages read. */
   inbox(opts: { unreadOnly: boolean; sinceMinutes: number }): InboxMessage[];
   relayStatus(): "connected" | "disconnected";
+  /**
+   * Incoming requests waiting for the owner's decision (the in-tool approval path). Long-polls up to
+   * waitMs when empty. Calling it marks a watcher as attached, which routes new approvals here.
+   */
+  pendingApprovals(waitMs: number): Promise<PendingRequest[]>;
+  /** Answer a pending request. False when the id is not (or no longer) pending. */
+  decide(id: string, decision: "approved" | "denied", reason?: string): boolean;
 }
 
 /** Implemented by mcp-import.ts. Consumed by core.ts when serving incoming `tool` requests and when building `hello` offers. */

@@ -48,10 +48,40 @@ function onPath(bin: string): boolean {
   return r.status === 0;
 }
 
+/** True when the `mesh` Claude Code plugin is installed (any marketplace): it ships the MCP server + hooks itself. */
+export function meshPluginInstalled(): boolean {
+  const file = path.join(process.env.CLAUDE_CONFIG_DIR || path.join(homedir(), ".claude"), "plugins", "installed_plugins.json");
+  const installed = readJson(file);
+  const plugins = (installed?.plugins as Record<string, unknown> | undefined) ?? {};
+  return Object.keys(plugins).some((k) => k.startsWith("mesh@"));
+}
+
+/** Canonical tool names Claude Code uses for approve_request: `claude mcp add mesh …` form and the plugin form. */
+export const APPROVE_REQUEST_TOOLS = ["mcp__mesh__approve_request", "mcp__plugin_mesh_mesh__approve_request"] as const;
+
+/**
+ * Force Claude Code to prompt for approve_request even in auto / bypass modes: `permissions.ask` rules in
+ * <cwd>/.claude/settings.json (ask rules apply without workspace trust and are honoured by auto mode). The tool
+ * also carries `anthropic/requiresUserInteraction`; this rule is the backstop for older Claude Code versions.
+ */
+export function registerApproveAskRule(cwd: string): RegisterResult {
+  const file = path.join(cwd, ".claude", "settings.json");
+  const cfg = readJson(file) ?? {};
+  const permissions = (cfg.permissions as Record<string, unknown> | undefined) ?? {};
+  const ask = Array.isArray(permissions.ask) ? (permissions.ask as unknown[]).filter((x): x is string => typeof x === "string") : [];
+  const missing = APPROVE_REQUEST_TOOLS.filter((t) => !ask.includes(t));
+  if (missing.length === 0) return { tool: "Claude Code approve_request ask rule", status: "already" };
+  permissions.ask = [...ask, ...missing];
+  cfg.permissions = permissions;
+  try { writeJson(file, cfg); } catch (e) { return { tool: "Claude Code approve_request ask rule", status: "failed", note: (e as Error).message }; }
+  return { tool: "Claude Code approve_request ask rule", status: "registered", note: file };
+}
+
 /** Claude Code: `claude mcp add` (local scope = this project). Falls back to skipped if the CLI isn't installed. */
 export function registerClaudeCode(port: number, cwd: string): RegisterResult {
   const url = `http://localhost:${port}/mcp`;
   if (!onPath("claude")) return { tool: "Claude Code", status: "skipped", note: "claude CLI not on PATH" };
+  if (meshPluginInstalled()) return { tool: "Claude Code", status: "already", note: "the mesh plugin provides the MCP server" };
   const list = spawnSync("claude", ["mcp", "get", "mesh"], { cwd, encoding: "utf8" });
   if (list.status === 0 && (list.stdout ?? "").includes(url)) return { tool: "Claude Code", status: "already" };
   if (list.status === 0) spawnSync("claude", ["mcp", "remove", "mesh"], { cwd, stdio: "ignore" });
@@ -115,6 +145,7 @@ export function findEmitScript(): string | undefined {
 /** Claude Code hooks → <cwd>/.claude/settings.json (merge; replaces previous mesh entries; keeps everything else). */
 export function installClaudeHooks(cwd: string, port: number): RegisterResult {
   if (!onPath("claude")) return { tool: "Claude Code hooks", status: "skipped", note: "claude CLI not on PATH" };
+  if (meshPluginInstalled()) return { tool: "Claude Code hooks", status: "already", note: "the mesh plugin provides the hooks" };
   const emit = findEmitScript();
   if (!emit) return { tool: "Claude Code hooks", status: "skipped", note: "emit.js not found (expected ~/.mesh/emit.js)" };
   // keep a stable copy under ~/.mesh so the hook survives repo moves

@@ -61,6 +61,8 @@ async function testLocalServer() {
       { ts: "2026-09-12T10:01:00Z", from: "dev", type: "request", summary: "asked tarush: echo hi" },
     ],
     relayStatus: () => "connected",
+    async pendingApprovals() { return []; },
+    decide: (id) => id === "req-1",
   };
 
   const port = await freePort();
@@ -71,8 +73,18 @@ async function testLocalServer() {
     await client.connect(new StreamableHTTPClientTransport(new URL(`http://localhost:${port}/mcp`)));
 
     const { tools } = await client.listTools();
-    check(tools.length === 8, "listTools returns 8 tools", tools.map((t) => t.name));
+    check(tools.length === 9, "listTools returns 9 tools", tools.map((t) => t.name));
     check(tools.every((t) => (t.description ?? "").length > 0), "every tool has a description");
+    const approve = tools.find((t) => t.name === "approve_request");
+    check((approve?._meta as Record<string, unknown> | undefined)?.["anthropic/requiresUserInteraction"] === true, "approve_request carries anthropic/requiresUserInteraction", approve?._meta);
+    const ap = JSON.parse(textOf(await client.callTool({ name: "approve_request", arguments: { id: "req-1", decision: "approved" } })));
+    check(ap.ok === true && ap.decision === "approved", "approve_request resolves a pending id", ap);
+    const apMiss = await client.callTool({ name: "approve_request", arguments: { id: "nope", decision: "denied" } });
+    check(apMiss.isError === true && textOf(apMiss).includes("no pending request"), "approve_request unknown id → isError", textOf(apMiss));
+    const dec = await fetch(`http://localhost:${port}/decide`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: "nope", decision: "approved" }) });
+    check(dec.status === 404, "POST /decide unknown id → 404");
+    const pend = await (await fetch(`http://localhost:${port}/pending`)).json();
+    check(Array.isArray(pend.pending), "GET /pending returns a list", pend);
 
     const lt = await client.callTool({ name: "list_teammates", arguments: {} });
     const ltObj = JSON.parse(textOf(lt));

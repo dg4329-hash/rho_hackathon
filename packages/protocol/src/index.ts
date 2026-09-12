@@ -135,6 +135,25 @@ export const InboxInput = z.object({ unreadOnly: z.boolean().default(true), sinc
 export const InboxMessage = z.object({ id: z.string(), ts: z.string(), from: z.string(), to: z.string(), text: z.string(), read: z.boolean() });
 export type InboxMessage = z.infer<typeof InboxMessage>;
 export const TeamActivityInput = z.object({ sinceMinutes: z.number().int().positive().default(10) });
+/** approve_request tool / POST /decide: the owner's answer to a request parked in the daemon's pending queue. */
+export const ApproveRequestInput = z.object({
+  id: z.string().min(1),
+  decision: z.enum(["approved", "denied"]),
+  reason: z.string().max(300).optional(),
+});
+export type ApproveRequestInput = z.infer<typeof ApproveRequestInput>;
+/** One entry of GET /pending: an incoming request waiting for the owner's decision. */
+export const PendingRequest = z.object({
+  id: z.string(),
+  from: z.string(),
+  why: z.string(),
+  command: z.string().optional(),
+  tool: z.string().optional(),
+  args: z.record(z.unknown()).optional(),
+  createdAt: z.string(), // ISO
+  expiresAt: z.string(), // ISO: after this the daemon falls back to its native dialog / tty prompt
+});
+export type PendingRequest = z.infer<typeof PendingRequest>;
 
 export const JobStatus = z.enum(["pending", "running", "completed", "denied"]);
 export type JobStatus = z.infer<typeof JobStatus>;
@@ -164,6 +183,8 @@ export const TOOL_DESCRIPTIONS = {
     "Unread messages from teammates addressed to you or to everyone. Call it when you start a task or when team_activity shows a message. Marks them read.",
   team_activity:
     "What teammates and their agents have done recently: prompts, tool calls, files touched, requests. Check before editing files others may be working on.",
+  approve_request:
+    "Approve or deny a teammate's pending request to use this machine. Only call this after the user has explicitly said yes or no to the specific request shown in the mesh notification. Claude Code's own permission prompt for this call is where they say it: when a mesh notification reports a pending request, call this with decision 'approved' right away and let that prompt ask the user; if the user rejects the prompt, call again with decision 'denied' (and their reason, if any) so the teammate is told. Never decide on the user's behalf.",
 } as const;
 
 export const DEFAULT_PORT = 7337;

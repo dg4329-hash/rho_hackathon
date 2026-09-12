@@ -17,6 +17,8 @@ Those move your team into a hosted sandbox and pool credentials in a vault. We c
 
 ## 2. What it is (three processes, one you barely write)
 
+**Public relay URL (Tarush):** pending Railway login — use `ws://localhost:8080` until deployed. Deploy: `scripts/deploy-relay.sh` (Dockerfile in `apps/relay/`). After deploy, replace this line with `wss://<host>` and tell the group chat.
+
 ```
  Dev's laptop                        Tarush's laptop
  ┌──────────────┐                    ┌──────────────┐

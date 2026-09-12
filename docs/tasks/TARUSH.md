@@ -48,3 +48,58 @@ With Dev: `ask_teammate` on `sleep 70 && echo done` must return `{ status: 'runn
 
 ## Definition of done
 Relay deployed and stable for a 30-minute session with three laptops connected. Figma script demoed to the team. Paste `wscat` transcript and Figma script output under "Evidence" below.
+
+## Evidence
+
+### 2026-09-12 — Step 1 relay (local acceptance)
+
+Commands:
+
+```text
+pnpm -F @mesh/protocol build
+pnpm -F relay typecheck
+pnpm -F relay start
+# Node WS clients (wscat-equivalent) in room x:
+B received A event: true
+C got presence: true
+C got history replay: true
+OK true
+curl.exe http://localhost:8080/health → {"rooms":…,"connections":…}
+```
+
+Relay implements rooms, hello→presence+history replay, verbatim fan-out, ping/25s, GET /health.
+
+### 2026-09-12 — Deploy
+
+- Added `apps/relay/Dockerfile`, `apps/relay/railway.toml`, `scripts/deploy-relay.sh`.
+- `npx @railway/cli whoami` → Unauthorized (need `railway login`).
+- `ngrok` → ERR_NGROK_4018 (need authtoken).
+- PLAN.md §2 notes pending public URL; local `ws://localhost:8080` works.
+- **Next for Tarush:** `npx @railway/cli login` then `./scripts/deploy-relay.sh`; paste `wss://` into PLAN §2.
+
+### 2026-09-12 — validate + figma + team.json
+
+```text
+pnpm -F relay validate ../../team.json
+OK …\team.json
+  user=tarush room=rho
+  relay=ws://localhost:8080
+  shell offers=2
+```
+
+- `scripts/figma-export.sh` present; bash `-n` syntax OK; refuses missing args / missing `FIGMA_TOKEN`.
+- Live Figma PNG/outline **not** run — `FIGMA_TOKEN` unset on this machine.
+- Local gitignored `team.json` + `scripts/team.json.starter` for mesh-init content.
+- MCP smoke snippet: `.local/cursor-mcp.snippet.json` (filesystem via npx). Merge into Cursor MCP settings when ready; add GitHub/Supabase keys for demo.
+
+### 2026-09-12 — S1 relay soak (daemon E2E still blocked)
+
+```text
+pnpm -F relay exec tsx src/soak-s1.ts
+asker received 80/80 output frames
+asker received result: true
+late joiner history outputs: 80, result: true
+SOAK OK
+```
+
+Full `ask_teammate` / `check_job` on `sleep 70` needs Dev’s daemon (still stub). No relay ordering issues found in soak.

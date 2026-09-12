@@ -131,7 +131,7 @@ export function handleWeb(req: IncomingMessage, res: ServerResponse, url: URL, d
     const room = url.searchParams.get("room") ?? "";
     const as = (url.searchParams.get("as") ?? "").toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 32);
     if (!ROOM_RE.test(room)) { res.writeHead(400).end("bad room name"); return true; }
-    const origin = publicOrigin(req);
+    const origin = publicOrigin(req).http;
     const asArg = as ? ` --as ${as}` : "";
     if (pathname === "/join.cmd") {
       const body = `@echo off\r\ntitle mesh: joining ${room}\r\necho Joining mesh room ${room}...\r\npowershell -NoProfile -ExecutionPolicy Bypass -Command "& ([scriptblock]::Create((irm ${origin}/install.ps1))) ${room}${asArg}"\r\necho.\r\necho Done. Restart your coding agent session once. You can close this window.\r\npause\r\n`;

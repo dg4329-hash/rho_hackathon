@@ -139,21 +139,23 @@ program
     });
     client.connect().catch(() => undefined);
 
+    // Register with the agents BEFORE the local server listens: `claude mcp get` / `codex mcp get` probe the URL,
+    // and a probe against our own not-yet-serving port fails fast instead of stalling the (blocked) event loop.
+    if (flags.register !== false) {
+      const results: RegisterResult[] = [
+        registerClaudeCode(port, cwd),
+        installClaudeHooks(cwd, port),
+        registerApproveAskRule(cwd),
+        registerCursor(port, cwd, flags.cursor),
+        registerCodex(port, flags.codex),
+      ];
+      console.log(chalk.dim("agents:"));
+      printRegister(results);
+      if (results.some((r) => r.status === "registered")) console.log(chalk.yellow("  ↻ restart your agent session so it picks up the mesh tools"));
+    }
     const server = createLocalServer();
     try {
       await server.start(core, port);
-      if (flags.register !== false) {
-        const results: RegisterResult[] = [
-          registerClaudeCode(port, cwd),
-          installClaudeHooks(cwd, port),
-          registerApproveAskRule(cwd),
-          registerCursor(port, cwd, flags.cursor),
-          registerCodex(port, flags.codex),
-        ];
-        console.log(chalk.dim("agents:"));
-        printRegister(results);
-        if (results.some((r) => r.status === "registered")) console.log(chalk.yellow("  ↻ restart your agent session so it picks up the mesh tools"));
-      }
     } catch (e) {
       fail(`local server failed to start on :${port}: ${(e as Error).message}`);
     }

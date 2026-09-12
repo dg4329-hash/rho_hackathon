@@ -190,6 +190,7 @@ export function createCore(opts: CoreOptions): DaemonCore & { client: RelayClien
     if (seenRequests.has(req.id)) return;
     const age = Date.now() - Date.parse(req.ts);
     if (!Number.isFinite(age) || age > REQUEST_MAX_AGE_MS) { debug(`ignoring stale request ${req.id} (${age} ms old)`); return; }
+    if (client.replaying) { debug(`ignoring replayed request ${req.id}`); return; }
     if (client.recent().some((h) => h.frame.type === "decision" && h.frame.id === req.id)) { debug(`ignoring already-decided request ${req.id}`); return; }
     seenRequests.add(req.id);
     if (seenRequests.size > 1000) seenRequests.delete(seenRequests.values().next().value as string);

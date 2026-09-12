@@ -152,17 +152,19 @@ export function installClaudeHooks(cwd: string, port: number): RegisterResult {
   const stable = path.join(homedir(), ".mesh", "emit.js");
   try { if (path.resolve(emit) !== path.resolve(stable)) { mkdirSync(path.dirname(stable), { recursive: true }); copyFileSync(emit, stable); } } catch { /* fall back to repo path */ }
   const script = existsSync(stable) ? stable : emit;
-  const env = port === 7337 ? "" : `MESH_DAEMON=http://localhost:${port} `;
-  const cmd = (kind: string) => `${env}node "${script}" ${kind}`;
+  const daemonArg = port === 7337 ? "" : ` --daemon http://localhost:${port}`;
+  const cmd = (kind: string) => `node "${script}" ${kind}${daemonArg}`;
   const file = path.join(cwd, ".claude", "settings.json");
   const cfg = readJson(file) ?? {};
   const hooks = (cfg.hooks as Record<string, Array<{ matcher?: string; hooks: Array<{ type: string; command: string; timeout?: number }> }>> | undefined) ?? {};
   const isMesh = (h: { command: string }) => /emit\.js/.test(h.command);
   const strip = (arr: typeof hooks[string] | undefined) => (arr ?? []).map((e) => ({ ...e, hooks: e.hooks.filter((h) => !isMesh(h)) })).filter((e) => e.hooks.length > 0);
   const entry = (kind: string, matcher?: string) => ({ ...(matcher ? { matcher } : {}), hooks: [{ type: "command", command: cmd(kind), timeout: 5 }] });
+  const before = JSON.stringify(hooks);
   hooks.UserPromptSubmit = [...strip(hooks.UserPromptSubmit), entry("prompt")];
   hooks.PostToolUse = [...strip(hooks.PostToolUse), entry("file_touched", "Edit|Write|MultiEdit"), entry("tool_call", "mcp__.*")];
   hooks.Stop = [...strip(hooks.Stop), entry("status")];
+  if (JSON.stringify(hooks) === before) return { tool: "Claude Code hooks", status: "already" };
   cfg.hooks = hooks;
   try { writeJson(file, cfg); } catch (e) { return { tool: "Claude Code hooks", status: "failed", note: (e as Error).message }; }
   return { tool: "Claude Code hooks", status: "registered", note: file };

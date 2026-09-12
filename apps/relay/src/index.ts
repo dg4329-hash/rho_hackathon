@@ -14,6 +14,7 @@
  * Presence lists only conns that have sent `hello`; a conn that connected but has not yet announced itself
  * is invisible so nobody ever sees a member with an empty offer list mid-handshake.
  */
+import { handleWeb } from "./web.js";
 import http from "node:http";
 import { URL } from "node:url";
 import { WebSocketServer, WebSocket, type RawData } from "ws";
@@ -95,8 +96,23 @@ function maybePrune(name: string, room: Room): void {
   if (room.conns.size === 0 && room.history.length === 0) rooms.delete(name);
 }
 
+const REPO_URL = process.env.MESH_REPO_URL ?? "https://github.com/dg4329-hash/rho_hackathon";
+const webDeps = {
+  getRoom: (name: string) => {
+    const room = rooms.get(name);
+    if (!room) return undefined;
+    return {
+      members: [...room.conns].filter((c) => c.helloed).map((c) => ({ user: c.user, role: c.role, offers: c.offers })),
+      history: room.history,
+    };
+  },
+  createRoom: (name: string) => { getOrCreateRoom(name); },
+  repoUrl: REPO_URL,
+};
+
 const server = http.createServer((req, res) => {
   const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+  if (handleWeb(req, res, url, webDeps)) return;
   if ((req.method === "GET" || req.method === "HEAD") && url.pathname === "/health") {
     res.writeHead(200, { "content-type": "application/json" });
     res.end(req.method === "HEAD" ? undefined : JSON.stringify(counts()));
@@ -208,7 +224,7 @@ const pingInterval = setInterval(() => {
 pingInterval.unref?.();
 
 server.listen(PORT, () => {
-  console.log(`mesh relay listening on :${PORT} (ws + GET /health)`);
+  console.log(`mesh relay listening on :${PORT} (ws + web UI at / + GET /health)`);
 });
 
 function shutdown(signal: string): void {

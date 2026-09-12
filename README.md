@@ -62,3 +62,10 @@ Do not write `pnpm -F daemon start -- join …`: pnpm 10 passes the `--` through
 
 Tests: `pnpm -F daemon test`, `pnpm -F daemon exec tsx test/mcp.test.ts`, `pnpm -F relay test` (28 checks),
 `RELAY_URL=ws://localhost:8090 pnpm -F relay soak` (relay must be running).
+
+## Hosting the relay (the public link)
+The relay serves the web front door on the same port: `/` starts a session, `/r/<room>` is the room page with join commands, who's online, and a live feed.
+
+**Now (stop-gap):** `./scripts/tunnel-relay.sh` on any Mac with ngrok → prints `https://…ngrok-free.dev`. Free ngrok shows a one-time "visit site" interstitial in browsers; the daemon's WebSocket is unaffected.
+
+**Permanent (Railway, ~5 min):** New Project → Deploy from GitHub repo → pick `dg4329-hash/rho_hackathon` (repo root; `railway.json` points at `apps/relay/Dockerfile`) → Settings → Networking → Generate Domain. The service reads `PORT` from Railway. Health check is `/health`. Vercel won't work: the relay needs a long-lived WebSocket server.

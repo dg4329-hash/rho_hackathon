@@ -118,6 +118,7 @@ IMG_URL=$(printf '%s' "$IMG_JSON" | node -e '
 
 curl -sS -fL -o "$OUT" "$IMG_URL" || { echo "PNG download failed from $IMG_URL" >&2; exit 1; }
 echo "PNG: $OUT"
+echo "MESH_FILE: $OUT"
 
 # --- Outline: GET /v1/files/:key/nodes?ids= → walk nodes[<id>].document.children ---
 NODES_JSON=$(curl -sS -f -H "$AUTH" "$API/v1/files/${FILE_KEY}/nodes?ids=${NODE_ENC}") || {

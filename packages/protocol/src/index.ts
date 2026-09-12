@@ -26,8 +26,19 @@ export type Offer = z.infer<typeof Offer>;
 export const Role = z.enum(["daemon", "feed"]);
 export type Role = z.infer<typeof Role>;
 
-export const EventKind = z.enum(["prompt", "tool_call", "file_touched", "status", "note", "message"]);
+export const EventKind = z.enum(["prompt", "tool_call", "file_touched", "status", "note", "message", "file"]);
 export type EventKind = z.infer<typeof EventKind>;
+
+/** A file produced on a teammate's machine, held by the relay for ~1 h (docs/FILES-API.md). */
+export const Artifact = z.object({
+  id: z.string(),
+  name: z.string(),
+  mime: z.string(),
+  size: z.number().int().nonnegative(),
+  url: z.string().url(),
+  sha256: z.string().optional(),
+});
+export type Artifact = z.infer<typeof Artifact>;
 
 const base = { from: z.string().min(1), ts: z.string() };
 
@@ -53,6 +64,8 @@ export const OutputFrame = z.object({
 export const ResultFrame = z.object({
   type: z.literal("result"), ...base,
   id: z.string(), exitCode: z.number().nullable(), durationMs: z.number(), timedOut: z.boolean(), tail: z.string(),
+  artifacts: z.array(Artifact).optional(),
+  artifactErrors: z.array(z.string()).optional(),
 });
 export const EventFrame = z.object({
   type: z.literal("event"), ...base,
@@ -131,8 +144,10 @@ export const SendMessageInput = z.object({
   to: z.string().min(1).describe("teammate handle, or 'all'"),
   text: z.string().min(1).max(2000),
 });
+export const SendFileInput = z.object({ to: z.string().min(1), path: z.string().min(1), note: z.string().max(500).optional() });
+export const FetchArtifactInput = z.object({ url: z.string().url().optional(), id: z.string().optional(), saveAs: z.string().optional() });
 export const InboxInput = z.object({ unreadOnly: z.boolean().default(true), sinceMinutes: z.number().int().positive().default(120) });
-export const InboxMessage = z.object({ id: z.string(), ts: z.string(), from: z.string(), to: z.string(), text: z.string(), read: z.boolean() });
+export const InboxMessage = z.object({ id: z.string(), ts: z.string(), from: z.string(), to: z.string(), text: z.string(), read: z.boolean(), artifact: Artifact.optional() });
 export type InboxMessage = z.infer<typeof InboxMessage>;
 export const TeamActivityInput = z.object({ sinceMinutes: z.number().int().positive().default(10) });
 /** approve_request tool / POST /decide: the owner's answer to a request parked in the daemon's pending queue. */
@@ -164,6 +179,8 @@ export const JobResult = z.object({
   output: z.string().optional(),
   durationMs: z.number().optional(),
   reason: z.string().optional(),
+  artifacts: z.array(Artifact).optional(),
+  artifactErrors: z.array(z.string()).optional(),
 });
 export type JobResult = z.infer<typeof JobResult>;
 
@@ -181,6 +198,10 @@ export const TOOL_DESCRIPTIONS = {
     "Send a short message to a teammate's agent ('all' for everyone). Use it to coordinate: what you're about to change, a fix idea for something you saw in team_activity, a question about their tool. Delivered live to their terminal and the room page, and into their agent's context on its next prompt (Claude Code) or when it calls inbox (Cursor).",
   inbox:
     "Unread messages from teammates addressed to you or to everyone. Call it when you start a task or when team_activity shows a message. Marks them read.",
+  send_file:
+    "Send a file from this machine to a teammate's agent ('all' = everyone). Path must be inside the project or ~/.mesh. The recipient's agent downloads it with fetch_artifact.",
+  fetch_artifact:
+    "Download an artifact a teammate produced (from ask_teammate results, inbox, or team_activity) into ./mesh-artifacts/. Images are also returned inline so you can look at them.",
   team_activity:
     "What teammates and their agents have done recently: prompts, tool calls, files touched, requests. Check before editing files others may be working on.",
   approve_request:

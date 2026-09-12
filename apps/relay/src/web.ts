@@ -13,7 +13,7 @@
  *   GET  /install.sh       bash installer with THIS relay's public origin baked in (from Host / X-Forwarded-*):
  *                            curl -fsSL https://<host>/install.sh | bash -s -- <room> [--as handle]
  *   GET  /install.ps1      PowerShell equivalent:
- *                            & ([scriptblock]::Create((irm https://<host>/install.ps1))) <room> [--as handle]
+ *                            & ([scriptblock]::Create((irm -Headers @{'ngrok-skip-browser-warning'='1'} https://<host>/install.ps1))) <room> [--as handle]
  */
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { randomBytes } from "node:crypto";
@@ -134,7 +134,7 @@ export function handleWeb(req: IncomingMessage, res: ServerResponse, url: URL, d
     const origin = publicOrigin(req).http;
     const asArg = as ? ` --as ${as}` : "";
     if (pathname === "/join.cmd") {
-      const body = `@echo off\r\ntitle mesh: joining ${room}\r\necho Joining mesh room ${room}...\r\npowershell -NoProfile -ExecutionPolicy Bypass -Command "& ([scriptblock]::Create((irm ${origin}/install.ps1))) ${room}${asArg}"\r\necho.\r\necho Done. Restart your coding agent session once. You can close this window.\r\npause\r\n`;
+      const body = `@echo off\r\ntitle mesh: joining ${room}\r\necho Joining mesh room ${room}...\r\npowershell -NoProfile -ExecutionPolicy Bypass -Command "& ([scriptblock]::Create((irm -Headers @{'ngrok-skip-browser-warning'='1'} ${origin}/install.ps1))) ${room}${asArg}"\r\necho.\r\necho Done. Restart your coding agent session once. You can close this window.\r\npause\r\n`;
       res.writeHead(200, { "content-type": "application/octet-stream", "content-disposition": `attachment; filename="mesh-join-${room}.cmd"`, "cache-control": "no-store" });
       res.end(body);
     } else {
@@ -226,11 +226,11 @@ exec node "$MESH_HOME/mesh.mjs" join "$ROOM" --relay "$RELAY" "$@"
 `;
 }
 
-/** PowerShell: `& ([scriptblock]::Create((irm <origin>/install.ps1))) <room> [--as handle]` */
+/** PowerShell: `& ([scriptblock]::Create((irm -Headers @{'ngrok-skip-browser-warning'='1'} <origin>/install.ps1))) <room> [--as handle]` */
 export function installPs1(o: { http: string; ws: string; host: string }): string {
   return `# mesh one-command join (PowerShell). Downloads the daemon bundle into %USERPROFILE%\\.mesh and joins a room.
 #
-#   & ([scriptblock]::Create((irm ${o.http}/install.ps1))) <room> [--as handle] [--port 7337]
+#   & ([scriptblock]::Create((irm -Headers @{'ngrok-skip-browser-warning'='1'} ${o.http}/install.ps1))) <room> [--as handle] [--port 7337]
 #
 # Needs: node >= 20 (https://nodejs.org). No clone, no pnpm, no npm account.
 $ErrorActionPreference = "Stop"
@@ -239,7 +239,7 @@ $Relay = "${o.ws}"
 $MeshHome = Join-Path $env:USERPROFILE ".mesh"
 
 if ($args.Count -lt 1 -or [string]::IsNullOrWhiteSpace([string]$args[0]) -or ([string]$args[0]).StartsWith("-")) {
-  Write-Error "usage: & ([scriptblock]::Create((irm $Origin/install.ps1))) <room> [--as handle] [--port 7337]"
+  Write-Error "usage: & ([scriptblock]::Create((irm -Headers @{'ngrok-skip-browser-warning'='1'} $Origin/install.ps1))) <room> [--as handle] [--port 7337]"
   exit 64
 }
 $Room = [string]$args[0]
@@ -344,7 +344,7 @@ if (!ROOM) {
   let shell = localStorage.getItem("mesh.shell") || "bash";
   const asFlag = () => (me ? " --as " + me : "");
   const joinCmd = (sh) => sh === "ps"
-    ? "& ([scriptblock]::Create((irm " + location.origin + "/install.ps1))) " + ROOM + asFlag()
+    ? "& ([scriptblock]::Create((irm -Headers @{'ngrok-skip-browser-warning'='1'} " + location.origin + "/install.ps1))) " + ROOM + asFlag()
     : "curl -fsSL " + location.origin + "/install.sh | bash -s -- " + ROOM + asFlag();
   const renderJoin = () => {
     const el = $("#join"); if (!el) return;

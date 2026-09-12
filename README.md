@@ -47,7 +47,7 @@ curl -fsSL https://<relay>/install.sh | bash -s -- <room> [--as <you>]
 ```
 ```powershell
 # Windows PowerShell
-& ([scriptblock]::Create((irm https://<relay>/install.ps1))) <room> [--as <you>]
+& ([scriptblock]::Create((irm -Headers @{'ngrok-skip-browser-warning'='1'} https://<relay>/install.ps1))) <room> [--as <you>]
 ```
 Needs Node 20+ and nothing else: no clone, no pnpm, no npm account, no `team.json`. It downloads the single-file
 daemon (`~/.mesh/mesh.mjs`, ~2.5 MB, served by the relay at `/mesh.mjs`) plus the hook emitter (`~/.mesh/emit.js`)

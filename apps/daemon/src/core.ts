@@ -215,6 +215,7 @@ export function createCore(opts: CoreOptions): DaemonCore & { client: RelayClien
     const id = typeof frame.data?.id === "string" ? frame.data.id : `${frame.from}:${frame.ts}:${text.slice(0, 40)}`;
     if (messages.has(id)) return;
     messages.set(id, { id, ts: frame.ts, from: frame.from, to, text, read: false });
+    pending.wakeAll();
     if (messages.size > 500) messages.delete(messages.keys().next().value as string);
     say(`${chalk.cyan("✉")} ${chalk.magenta(frame.from)}${to === "all" ? chalk.dim(" (to all)") : ""}: ${text.length > 300 ? text.slice(0, 299) + "…" : text}`);
     if (!opts.quiet && Math.abs(Date.now() - Date.parse(frame.ts)) < 5 * 60_000) { debug("notify", frame.from); nativeNotify(`mesh: message from ${frame.from}`, text); } // skip old replayed history (5 min window tolerates clock skew); tests run quiet
@@ -351,6 +352,15 @@ export function createCore(opts: CoreOptions): DaemonCore & { client: RelayClien
 
     pendingApprovals(waitMs: number) {
       return pending.poll(waitMs);
+    },
+
+    async watchPoll(waitMs: number) {
+      const unreadNow = () => core.inbox({ unreadOnly: false, sinceMinutes: 120 }).filter((m) => !m.read);
+      if (unreadNow().length > 0) {
+        return { pending: await pending.poll(0), messages: core.inbox({ unreadOnly: true, sinceMinutes: 120 }) };
+      }
+      const list = await pending.poll(waitMs);
+      return { pending: list, messages: core.inbox({ unreadOnly: true, sinceMinutes: 120 }) };
     },
 
     decide(id, decision, reason) {

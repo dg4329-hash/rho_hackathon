@@ -60,6 +60,11 @@ export class PendingApprovals {
    * Long-poll for a watcher. Resolves at once with the current list when it is non-empty (or waitMs ≤ 0),
    * otherwise when a request arrives or after waitMs. Every call marks a watcher as attached.
    */
+  /** Wake every long-poller now (used when a message arrives so the watcher can print it). */
+  wakeAll(): void {
+    for (const wake of [...this.pollers]) wake();
+  }
+
   poll(waitMs: number): Promise<PendingRequest[]> {
     this.lastPollAt = this.now();
     if (this.entries.size > 0 || waitMs <= 0) return Promise.resolve(this.list());

@@ -77,6 +77,37 @@ export function registerApproveAskRule(cwd: string): RegisterResult {
   return { tool: "Claude Code approve_request ask rule", status: "registered", note: file };
 }
 
+/**
+ * Claude Code plugin: download <relay>/plugin.tgz → ~/.mesh/marketplace, `claude plugin marketplace add` + `claude plugin install`.
+ * The plugin brings the MCP server, hooks, and the in-session approval/message watcher, so nothing else is needed.
+ */
+export async function registerClaudePlugin(relayWsUrl: string, cwd: string): Promise<RegisterResult> {
+  if (!onPath("claude")) return { tool: "Claude Code plugin", status: "skipped", note: "claude CLI not on PATH" };
+  if (meshPluginInstalled()) return { tool: "Claude Code plugin", status: "already" };
+  const origin = relayWsUrl.replace(/^wss:/, "https:").replace(/^ws:/, "http:");
+  const home = path.join(homedir(), ".mesh");
+  const market = path.join(home, "marketplace");
+  const tgz = path.join(home, "plugin.tgz");
+  try {
+    const r = await fetch(`${origin}/plugin.tgz`, { headers: { "ngrok-skip-browser-warning": "1" }, signal: AbortSignal.timeout(20_000) });
+    if (!r.ok) return { tool: "Claude Code plugin", status: "failed", note: `${origin}/plugin.tgz → HTTP ${r.status}` };
+    mkdirSync(market, { recursive: true });
+    writeFileSync(tgz, Buffer.from(await r.arrayBuffer()));
+    const x = spawnSync("tar", ["-xzf", tgz, "-C", market], { encoding: "utf8" });
+    if (x.status !== 0) return { tool: "Claude Code plugin", status: "failed", note: `tar: ${(x.stderr || "").trim().split("\n")[0]}` };
+  } catch (e) {
+    return { tool: "Claude Code plugin", status: "failed", note: (e as Error).message };
+  }
+  spawnSync("claude", ["plugin", "marketplace", "add", market], { cwd, encoding: "utf8" }); // idempotent-ish; errors if already added → fine
+  const inst = spawnSync("claude", ["plugin", "install", "mesh@mesh", "--scope", "project"], { cwd, encoding: "utf8" });
+  if (inst.status !== 0) {
+    const msg = (inst.stderr || inst.stdout || "").trim().split("\n").slice(-1)[0] ?? "";
+    if (/already installed/i.test(msg)) return { tool: "Claude Code plugin", status: "already" };
+    return { tool: "Claude Code plugin", status: "failed", note: msg };
+  }
+  return { tool: "Claude Code plugin", status: "registered", note: "mesh@mesh (project scope) — approvals and messages appear inside Claude Code" };
+}
+
 /** Claude Code: `claude mcp add` (local scope = this project). Falls back to skipped if the CLI isn't installed. */
 export function registerClaudeCode(port: number, cwd: string): RegisterResult {
   const url = `http://localhost:${port}/mcp`;

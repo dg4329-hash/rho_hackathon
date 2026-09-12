@@ -18,6 +18,7 @@
 import { handleWeb, type WebAssets } from "./web.js";
 import fs from "node:fs";
 import http from "node:http";
+import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { URL, fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket, type RawData } from "ws";
@@ -107,6 +108,17 @@ const REPO_URL = process.env.MESH_REPO_URL ?? "https://github.com/dg4329-hash/rh
  * can also run from a checkout that only has public/ populated (Docker). Missing files only warn:
  * the relay must still start without the bundle.
  */
+/** Tar up the Claude Code plugin + marketplace manifest so the daemon can auto-install it. Returns the tgz path ("" on failure). */
+function buildPluginTgz(repoRoot: string, publicDir: string): string {
+  const out = path.join(publicDir, "plugin.tgz");
+  try {
+    if (!fs.existsSync(path.join(repoRoot, "plugin")) || !fs.existsSync(path.join(repoRoot, ".claude-plugin/marketplace.json"))) return "";
+    fs.mkdirSync(publicDir, { recursive: true });
+    const r = spawnSync("tar", ["-czf", out, "-C", repoRoot, ".claude-plugin/marketplace.json", "plugin"], { stdio: "ignore" });
+    return r.status === 0 ? out : "";
+  } catch { return ""; }
+}
+
 function loadAssets(): WebAssets {
   const here = path.dirname(fileURLToPath(import.meta.url)); // apps/relay/src (or dist)
   const repoRoot = path.resolve(here, "../../..");
@@ -114,6 +126,7 @@ function loadAssets(): WebAssets {
   const sources: Array<{ name: keyof WebAssets; file: string; from: string; hint: string }> = [
     { name: "meshMjs", file: "mesh.mjs", from: path.join(repoRoot, "apps/daemon/dist/mesh.mjs"), hint: "run `pnpm -F daemon bundle`" },
     { name: "emitJs", file: "emit.js", from: path.join(repoRoot, "hooks/emit.js"), hint: "hooks/emit.js is missing" },
+    { name: "pluginTgz", file: "plugin.tgz", from: buildPluginTgz(repoRoot, publicDir), hint: "plugin/ or .claude-plugin/ missing" },
   ];
   const assets: WebAssets = {};
   for (const src of sources) {

@@ -27,6 +27,7 @@ export interface WebRoomView {
 export interface WebAssets {
   meshMjs?: Buffer;
   emitJs?: Buffer;
+  pluginTgz?: Buffer;
 }
 
 export interface WebDeps {
@@ -88,6 +89,10 @@ export function handleWeb(req: IncomingMessage, res: ServerResponse, url: URL, d
 
   if (method === "GET" && pathname === "/mesh.mjs") {
     asset(res, deps.assets.meshMjs, "mesh.mjs is not built on this relay: run `pnpm -F daemon bundle` and restart the relay", "text/javascript; charset=utf-8");
+    return true;
+  }
+  if (method === "GET" && pathname === "/plugin.tgz") {
+    asset(res, deps.assets.pluginTgz, "plugin.tgz is missing on this relay", "application/gzip");
     return true;
   }
   if (method === "GET" && pathname === "/emit.js") {

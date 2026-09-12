@@ -250,6 +250,7 @@ export function buildApp(core: DaemonCore): express.Express {
   app.get("/pending", async (req, res) => {
     const n = Number(req.query.wait);
     const waitSeconds = Number.isFinite(n) && n > 0 ? Math.min(60, n) : 0;
+    if (req.query.messages === "1") { res.json(await core.watchPoll(waitSeconds * 1000)); return; }
     res.json({ pending: await core.pendingApprovals(waitSeconds * 1000) });
   });
 

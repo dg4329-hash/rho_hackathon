@@ -59,6 +59,8 @@ export interface DaemonCore {
    * waitMs when empty. Calling it marks a watcher as attached, which routes new approvals here.
    */
   pendingApprovals(waitMs: number): Promise<PendingRequest[]>;
+  /** For `mesh watch`: pending approvals plus unread messages (marked read once handed to the watcher). */
+  watchPoll(waitMs: number): Promise<{ pending: PendingRequest[]; messages: InboxMessage[] }>;
   /** Answer a pending request. False when the id is not (or no longer) pending. */
   decide(id: string, decision: "approved" | "denied", reason?: string): boolean;
 }

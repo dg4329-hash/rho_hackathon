@@ -13,7 +13,7 @@ import { createCore } from "./core.js";
 import { createLocalServer } from "./local-server.js";
 import { createMcpImport } from "./mcp-import.js";
 import { resolveNotes, resolvePermission } from "./permissions.js";
-import { defaultHandle, installClaudeHooks, parseRoomArg, printRegister, registerApproveAskRule, registerClaudeCode, registerCodex, registerCursor, type RegisterResult } from "./register.js";
+import { defaultHandle, installClaudeHooks, parseRoomArg, printRegister, registerApproveAskRule, registerClaudeCode, registerClaudePlugin, registerCodex, registerCursor, type RegisterResult } from "./register.js";
 import { RelayClient } from "./relay-client.js";
 import { restoreTerminal } from "./approval.js";
 import { watchLine } from "./pending.js";
@@ -143,6 +143,7 @@ program
     // and a probe against our own not-yet-serving port fails fast instead of stalling the (blocked) event loop.
     if (flags.register !== false) {
       const results: RegisterResult[] = [
+        await registerClaudePlugin(config.relay, cwd),
         registerClaudeCode(port, cwd),
         installClaudeHooks(cwd, port),
         registerApproveAskRule(cwd),
@@ -258,8 +259,16 @@ program
     for (;;) {
       let list: PendingRequest[] | undefined;
       try {
-        const r = await fetch(`${base}/pending?wait=25`, { signal: AbortSignal.timeout(40_000) });
-        if (r.ok) list = ((await r.json()) as { pending?: PendingRequest[] }).pending ?? [];
+        const r = await fetch(`${base}/pending?wait=25&messages=1`, { signal: AbortSignal.timeout(40_000) });
+        if (r.ok) {
+          const body = (await r.json()) as { pending?: PendingRequest[]; messages?: Array<{ id: string; from: string; to: string; text: string }> };
+          list = body.pending ?? [];
+          for (const m of body.messages ?? []) {
+            if (printed.has("msg:" + m.id)) continue;
+            printed.add("msg:" + m.id);
+            console.log(`mesh: message from ${m.from}${m.to === "all" ? " (to everyone)" : ""}: ${JSON.stringify(m.text)}. Tell the user, and if a reply is needed use the mesh send_message tool (to: ${JSON.stringify(m.from)}).`);
+          }
+        }
       } catch { /* daemon down or restarting */ }
       if (!list) {
         if (!down) { console.error(`mesh watch: no daemon on :${port}; retrying every 3 s (mesh status / mesh join <room> --background)`); down = true; }

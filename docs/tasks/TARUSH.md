@@ -2,6 +2,8 @@
 
 # Tarush — `apps/relay`, deploy, `team.json` tooling, Figma script
 
+Session build log (detailed status + evidence): [`TARUSH-BUILD-LOG.md`](TARUSH-BUILD-LOG.md).
+
 Subscription: Cursor Pro (if you actually have the Claude Pro seat, swap files with Abhi; nothing else changes). Your relay unblocks everyone, so step 1 first and fast.
 
 ## Deliverables

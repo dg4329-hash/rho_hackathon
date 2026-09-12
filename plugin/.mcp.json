@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "mesh": {
+      "type": "http",
+      "url": "http://localhost:${MESH_PORT:-7337}/mcp"
+    }
+  }
+}

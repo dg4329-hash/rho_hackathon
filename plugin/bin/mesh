@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# mesh launcher used by the plugin's monitor and SessionStart hook (and on the Bash tool's PATH while the
+# plugin is enabled). Finds the daemon CLI, in order:
+#   1. $MESH_BIN                     explicit override (a command line, e.g. "node /x/mesh.mjs")
+#   2. ~/.mesh/mesh.mjs              the single-file bundle the relay's install one-liner downloads
+#   3. a repo checkout               <plugin>/../apps/daemon (this repo, or the marketplace clone) with node_modules
+#   4. `mesh` on PATH                a globally installed package
+set -u
+if [ -n "${MESH_BIN:-}" ]; then exec $MESH_BIN "$@"; fi
+if [ -f "$HOME/.mesh/mesh.mjs" ]; then exec node "$HOME/.mesh/mesh.mjs" "$@"; fi
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+for root in "$here/../.." "$HOME/.claude/plugins/marketplaces/mesh"; do
+  if [ -f "$root/apps/daemon/src/cli.ts" ] && [ -x "$root/node_modules/.bin/tsx" ]; then
+    exec "$root/node_modules/.bin/tsx" "$root/apps/daemon/src/cli.ts" "$@"
+  fi
+done
+if command -v mesh >/dev/null 2>&1 && [ "$(command -v mesh)" != "${BASH_SOURCE[0]}" ]; then exec mesh "$@"; fi
+echo "mesh: daemon CLI not found. Run the relay's install one-liner (puts ~/.mesh/mesh.mjs in place) or \`pnpm install\` in the mesh repo." >&2
+exit 127

@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# SessionStart hook. Idempotent and best-effort; prints one short line for Claude's context.
+#   1. make sure this project's .claude/settings.json has the approve_request ask rule (auto-mode backstop)
+#   2. if the daemon is running on $MESH_PORT → say so
+#   3. else, if ~/.mesh/config.json exists (written by `mesh join`) → restart it in the background, no re-registration
+set -u
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+port="${MESH_PORT:-7337}"
+project="${CLAUDE_PROJECT_DIR:-$PWD}"
+cfg="$HOME/.mesh/config.json"
+
+node "$here/../hooks/ensure-ask.js" "$project" >/dev/null 2>&1 || true
+
+health="$(curl -fsS --max-time 1 "http://localhost:$port/health" 2>/dev/null || true)"
+if [ -n "$health" ]; then
+  echo "mesh: daemon running on :$port ($health). Teammate requests arrive as mesh notifications; answer them by calling approve_request."
+  exit 0
+fi
+if [ ! -f "$cfg" ]; then
+  echo "mesh: no daemon on :$port and no ~/.mesh/config.json. Join once with: mesh join <room-link> --background (then this hook restarts it automatically)."
+  exit 0
+fi
+read -r room relay user cport < <(node -e '
+  const c = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+  console.log(c.room, c.relay, c.user || "", c.port || 7337);' "$cfg" 2>/dev/null) || true
+if [ -z "${room:-}" ] || [ -z "${relay:-}" ]; then
+  echo "mesh: ~/.mesh/config.json is unreadable; run mesh join <room-link> --background."
+  exit 0
+fi
+out="$("$here/mesh" join "$room" --relay "$relay" ${user:+--as "$user"} --port "${cport:-$port}" --background --no-register 2>&1 | tail -n 2 | tr '\n' ' ')"
+echo "mesh: restarted daemon for $user@$room via $relay — $out"
+exit 0

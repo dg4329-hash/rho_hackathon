@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Plugin monitor entry: one stdout line per teammate request waiting for approval (see monitors/monitors.json).
+# Claude Code delivers each line to Claude as a notification; Claude then calls approve_request, whose
+# permission prompt is where you say yes or no. Retries quietly while the daemon is down.
+set -u
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec "$here/mesh" watch --port "${MESH_PORT:-7337}"

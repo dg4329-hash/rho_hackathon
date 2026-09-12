@@ -215,7 +215,7 @@ export function createCore(opts: CoreOptions): DaemonCore & { client: RelayClien
     messages.set(id, { id, ts: frame.ts, from: frame.from, to, text, read: false });
     if (messages.size > 500) messages.delete(messages.keys().next().value as string);
     say(`${chalk.cyan("✉")} ${chalk.magenta(frame.from)}${to === "all" ? chalk.dim(" (to all)") : ""}: ${text.length > 300 ? text.slice(0, 299) + "…" : text}`);
-    if (Date.now() - Date.parse(frame.ts) < 60_000) nativeNotify(`mesh: message from ${frame.from}`, text); // skip replayed history
+    if (!opts.quiet && Date.now() - Date.parse(frame.ts) < 60_000) nativeNotify(`mesh: message from ${frame.from}`, text); // skip replayed history; tests run quiet
   }
 
   client.on("frame", (frame) => {

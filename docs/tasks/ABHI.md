@@ -11,9 +11,9 @@ Subscription: Claude Pro (if you actually have Cursor Pro, swap files with Tarus
 ## Step 4 — feed (acceptance: on a third laptop, shows request → approval → streamed output → result live, and presence changes)
 - Node 22, `ws`, `chalk`, optionally `ink` if you want boxes; plain chalk lines are fine and safer.
 - Connect `relay?room=&user=abhi&role=feed`, send `hello` with `offers: []`, then render every frame:
-  - `presence` → one line listing online users and their offer names.
+  - `presence` → one line per user: `● tarush  supabase(12) github(14) figma.export vercel.deploy` (group mcp offers by server with counts; list shell offers by name).
   - `event` → `HH:MM:SS  dev      › prompt: Implement onboarding step 2…` (kind-specific icons/colors: prompt 💬, tool_call 🔧, file_touched 📁, status ⏸, note 📝)
-  - `request` → `dev ──▶ tarush  figma-export 8fA 12:34   (why: need the frame)` in yellow
+  - `request` → shell: `dev ──▶ tarush  $ figma-export 8fA 12:34   (why: need the frame)`; mcp: `dev ──▶ tarush  supabase.run_sql {"query":"select …"}   (why: …)` in yellow, args truncated to one line
   - `decision` → `tarush ✅ approved` / `❌ denied (reason)` / `⚡ auto`
   - `output` → dim, indented, prefixed with the short id; cap at 20 lines per job on screen, then `…`
   - `result` → `tarush ✔ exit 0 in 2.1s` green, or red on nonzero/timeout

@@ -25,16 +25,27 @@ Frames clients send (all carry `from: user` and `ts`):
 ```ts
 type Frame =
   | { type: 'hello';    from; ts; role: 'daemon'|'feed'; offers: Offer[] }             // first frame after connect; relay caches offers for presence
-  | { type: 'request';  from; ts; id; to: string; command: string; why: string; offer?: string }
+  | { type: 'request';  from; ts; id; to: string; why: string;
+      command?: string;                                   // shell form
+      tool?: string; args?: Record<string, unknown> }     // mcp form: tool = offer name '<server>.<tool>'
   | { type: 'decision'; from; ts; id; decision: 'approved'|'denied'|'auto'; reason?: string }   // 'auto' = permission was 'always'
   | { type: 'output';   from; ts; id; stream: 'stdout'|'stderr'; chunk: string }       // chunk ≤ 4 KB
-  | { type: 'result';   from; ts; id; exitCode: number|null; durationMs: number; timedOut: boolean; tail: string } // tail = last 8 KB of combined output
+  | { type: 'result';   from; ts; id; exitCode: number|null; durationMs: number; timedOut: boolean; tail: string }
+      // command: tail = last 8 KB of combined output.  mcp: tail = tool result content flattened to text (≤ 8 KB), exitCode 0 ok / 1 isError
   | { type: 'event';    from; ts; kind: EventKind; summary: string; data?: Record<string, unknown> }
 ```
 
 ```ts
 type EventKind = 'prompt' | 'tool_call' | 'file_touched' | 'status' | 'note';
-interface Offer { name: string; description: string; permission: 'always'|'ask'|'never' }
+interface Offer {
+  kind: 'command' | 'mcp';
+  name: string;                 // command: 'figma.export'; mcp: '<server>.<tool>' e.g. 'supabase.run_sql'
+  description: string;          // mcp: the server's own tool description, verbatim
+  permission: 'always'|'ask'|'never';
+  inputSchema?: object;         // mcp: the tool's JSON Schema, verbatim
+  notes?: string;               // owner-written: when to use it, gotchas, examples
+  server?: string;              // mcp: server name from the owner's config
+}
 ```
 
 Routing: everything is broadcast. Daemons ignore `request` frames whose `to` isn't them. `id` ties request → decision → output* → result.
@@ -46,23 +57,47 @@ Routing: everything is broadcast. Daemons ignore `request` frames whose `to` isn
   "user": "tarush",
   "room": "rho",
   "relay": "wss://mesh-relay.up.railway.app",
-  "cwd": "/Users/tarush/code/our-app",       // commands run here
-  "timeoutSeconds": 120,                       // hard kill after this
-  "allowArbitrary": "ask",                     // 'ask' | 'never' — commands not matching an offer
+  "cwd": "/Users/tarush/code/our-app",       // shell commands run here
+  "timeoutSeconds": 120,
+  "allowArbitrary": "ask",                     // shell commands not matching an offer: 'ask' | 'never'
+
+  // Import the owner's existing MCP servers as offers. This is the universal path.
+  "import": {
+    "fromClaudeCode": true,                    // ~/.claude.json mcpServers (global + this project) and ./.mcp.json
+    "fromCursor": true,                        // ./.cursor/mcp.json and ~/.cursor/mcp.json
+    "servers": ["*"],                          // or a list of server names to import
+    "defaultPermission": "ask"                 // every imported tool starts here
+  },
+  // Per-tool overrides by glob on the offer name.
+  "permissions": {
+    "supabase.list_*": "always",
+    "supabase.run_sql": "ask",
+    "supabase.delete_*": "never",
+    "github.*": "always"
+  },
+  // Owner notes shown to the requesting agent via describe_capability. Optional but high-value.
+  "notes": {
+    "supabase.run_sql": "Read-only queries only; our prod DB. Table names are snake_case; users live in public.profiles.",
+    "figma.*": "File key for the app is 8fA2…; onboarding frames are under page 'Onboarding'."
+  },
+
+  // Shell offers, for things that aren't MCPs (or OAuth MCPs the daemon can't reach).
   "offers": [
     { "name": "figma.export", "command": "./scripts/figma-export.sh",
-      "description": "Export a Figma frame to PNG. Usage: figma-export.sh <fileKey> <nodeId>. Prints the PNG path and a text description of the frame.",
+      "description": "Export a Figma frame to PNG + text outline. Usage: figma-export.sh <fileKey> <nodeId>",
       "permission": "ask" },
-    { "name": "gh", "command": "gh", "description": "GitHub CLI, read-only usage preferred", "permission": "always" },
-    { "name": "vercel.deploy", "command": "vercel", "description": "Deploy this repo. Use --prod only if asked.", "permission": "ask" },
-    { "name": "rm", "command": "rm", "description": "", "permission": "never" }
+    { "name": "vercel.deploy", "command": "vercel", "description": "Deploy this repo. --prod only if asked.", "permission": "ask" }
   ]
 }
 ```
 
-Matching rule in the daemon: split the requested `command` with shell-words; the first token (basename) is compared to each offer's `command` basename. First match wins → that offer's permission. No match → `allowArbitrary`. `never` → immediate `decision: denied, reason: 'not offered'`. `always` → `decision: auto` and run. `ask` → prompt.
+**Import rule.** On `mesh join`, for each configured server: stdio servers are spawned by the daemon with the config's `command/args/env`; `http`/`sse` servers are connected without auth. Servers that fail (OAuth-only remotes like the official Figma MCP, missing binaries) are logged as `skipped: <reason>` and the owner is told to add a shell offer instead. Then `tools/list` → one offer per tool named `<server>.<tool>`, description and inputSchema verbatim, permission from `permissions` globs else `import.defaultPermission`, `notes` from the `notes` globs (first match).
 
-Spawn rule: `spawn('/bin/sh', ['-c', command], { cwd, env: process.env, timeout })`. Yes, `sh -c`. The approval prompt is the safety layer; the allowlist is convenience. Say this on stage rather than pretending otherwise.
+**Shell matching rule.** Split `command` with shell-words; first token's basename vs each shell offer's `command` basename. No match → `allowArbitrary`. `never` → `decision: denied`. `always` → `decision: auto`. `ask` → prompt.
+
+**Spawn rule (shell).** `spawn('/bin/sh', ['-c', command], { cwd, env: process.env, timeout })`. The approval prompt is the safety layer.
+
+**Call rule (mcp).** Validate `args` against `inputSchema` (reject with a helpful `denied` reason on mismatch, before prompting). Prompt shows `tarush ← dev wants to call supabase.run_sql {"query": "select …"}  why: …  [y/n]`. On approve: `client.callTool({ name, arguments: args })`; flatten `content` (text parts joined, images as `[image]`, resources as their uri) into `result.tail`; `isError` → exitCode 1.
 
 ## 3. Local MCP server (inside `apps/daemon`, streamable HTTP at `http://localhost:7337/mcp`)
 
@@ -76,19 +111,21 @@ Tools (names, inputs, outputs). Descriptions matter: they are the only thing tha
 
 | tool | input | returns |
 |---|---|---|
-| `list_teammates` | `{}` | `{ me: string, members: [{ user, online: true, offers: Offer[] }] }` |
-| `ask_teammate` | `{ who: string, command: string, why: string, waitSeconds?: number (default 45, max 120) }` | on completion: `{ jobId, status: 'completed', exitCode, output: string (tail ≤ 8 KB), durationMs }`; if still running at waitSeconds: `{ jobId, status: 'running' }`; if denied: `{ jobId, status: 'denied', reason }` |
+| `list_teammates` | `{}` | `{ me, members: [{ user, offers: [{ name, kind, permission, summary }] }] }` — `summary` = first 120 chars of description. One line per tool; keep it cheap. |
+| `describe_capability` | `{ who: string, name: string }` | `{ name, kind, permission, description, inputSchema?, notes?, usage: string }` — `usage` is a rendered example call the model can copy |
+| `ask_teammate` | `{ who: string, why: string, waitSeconds?: number (default 45, max 120), command?: string, tool?: string, args?: object }` — exactly one of `command` or `tool` | on completion: `{ jobId, status: 'completed', exitCode, output: string (tail ≤ 8 KB), durationMs }`; if still running at waitSeconds: `{ jobId, status: 'running' }`; if denied: `{ jobId, status: 'denied', reason }` |
 | `check_job` | `{ jobId: string, waitSeconds?: number }` | same shape as `ask_teammate` |
 | `post_event` | `{ kind: EventKind, summary: string, data? }` | `{ ok: true }` |
 | `team_activity` | `{ sinceMinutes?: number (default 10) }` | `{ events: Array<{ ts, from, type, summary }> }` — flattened, human-readable, newest last, ≤ 100 |
 
 Tool description text (copy into the server verbatim):
 
-- `list_teammates`: "List teammates currently online and the commands each one offers to run on their machine. Call this when you need a tool, credential, or environment you don't have (e.g. Figma, Vercel, a deploy key). Offers include usage notes; follow them exactly."
-- `ask_teammate`: "Run a shell command on a teammate's machine. They will see the command and your `why`, and must approve it (unless the offer is marked 'always'). Use the exact command syntax from their offer description. Returns stdout/stderr. If status is 'running', call check_job with the jobId. If 'denied', do not retry the same command; tell the user."
+- `list_teammates`: "List teammates currently online and every tool or command each one can run for you on their machine (their MCP servers: Supabase, Figma, Linear, GitHub, etc., plus shell commands). Call this whenever you need a tool, credential, dataset, or environment you don't have, before telling the user you can't do something. Then call describe_capability on the specific tool before using it."
+- `describe_capability`: "Full description, input schema, owner notes, and an example call for one teammate capability. Always call this before ask_teammate on a tool you haven't used in this session; the owner's notes contain project-specific details (IDs, table names, conventions) you cannot guess."
+- `ask_teammate`: "Use a teammate's tool (tool + args, from describe_capability) or run a shell command on their machine (command). They see exactly what you're asking and your `why`, and must approve unless the capability is marked 'always'. Returns the tool result or stdout/stderr. If status is 'running', call check_job with the jobId. If 'denied', do not retry the same request; tell the user why."
 - `team_activity`: "What teammates and their agents have done recently: prompts, tool calls, files touched, requests. Check before editing files others may be working on."
 
-`ask_teammate` implementation: emit `request`, wait for the `decision`/`result` frames with that `id`, buffer `output` chunks into a job record `{ id, to, command, status, chunks[], exitCode, ... }` kept in memory (Map). `check_job` reads the same Map.
+`ask_teammate` implementation: for `tool`, look up the offer in the last `presence` and validate `args` locally against `inputSchema` before emitting (fail fast with a readable error). Emit `request`, wait for the `decision`/`result` frames with that `id`, buffer `output` chunks into a job record `{ id, to, command, status, chunks[], exitCode, ... }` kept in memory (Map). `check_job` reads the same Map.
 
 ## 4. Hooks (`hooks/`, installed by Abhi's script into `.claude/settings.json`)
 
@@ -117,4 +154,4 @@ mesh init                                       # writes a starter team.json
 ```
 
 ## 7. Explicit non-goals
-Auth beyond room name, OAuth, P2P/NAT traversal, mirroring MCP servers, dynamic tool discovery, file locking, web dashboard (S3 only), persistence beyond the relay's 200-frame ring buffer.
+Auth beyond room name, OAuth, P2P/NAT traversal, exposing teammates' tools as first-class MCP tools in the requester's client (they are data returned by our static tools; this sidesteps client tool-list caching / list_changed), OAuth passthrough, file locking, web dashboard (S3 only), persistence beyond the relay's 200-frame ring buffer.

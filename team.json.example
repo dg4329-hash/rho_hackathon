@@ -5,9 +5,11 @@
   "cwd": ".",
   "timeoutSeconds": 120,
   "allowArbitrary": "ask",
+  "import": { "fromClaudeCode": true, "fromCursor": true, "servers": ["*"], "defaultPermission": "ask" },
+  "permissions": { "*.list_*": "always", "*.get_*": "always", "*.delete_*": "never" },
+  "notes": { "supabase.*": "Prod project ref abcd1234. Users are in public.profiles. Read-only unless the user says otherwise." },
   "offers": [
     { "name": "echo", "command": "echo", "description": "Echo text back. Usage: echo <text>", "permission": "always" },
-    { "name": "gh", "command": "gh", "description": "GitHub CLI. Prefer read-only subcommands.", "permission": "ask" },
-    { "name": "rm", "command": "rm", "description": "", "permission": "never" }
+    { "name": "gh", "command": "gh", "description": "GitHub CLI. Prefer read-only subcommands.", "permission": "ask" }
   ]
 }

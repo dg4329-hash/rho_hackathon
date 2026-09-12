@@ -6,7 +6,9 @@ Supersedes v1 (hosted server + sidecars). Decisions here are final for the hacka
 
 **One-liner:** *Borrow a teammate's machine, not their credentials.*
 
-**Longer:** Every developer's agent is single-player: their tools, their keys, their terminal. But the team owns far more than any one person. `mesh` lets your agent ask a teammate's laptop to run something it can't (Figma export, Vercel deploy, a script only they have set up). The teammate approves with one keypress, the output streams back, and the whole room watches it happen. No cloud workspace, no shared vault, no migration. One `npx` per laptop.
+**Longer:** Every developer's agent is single-player: their tools, their keys, their terminal. But the team owns far more than any one person. `mesh` reads the MCP servers each teammate already has configured (Supabase, Figma, Linear, GitHub, Vercel, anything) and lets any teammate's agent use them, through the owner's machine, with the owner's approval. The requesting agent gets the real tool descriptions, schemas, and the owner's notes, so it uses them as well as its own. The output streams back and the whole room watches it happen. No cloud workspace, no shared vault, no migration. One `npx` per laptop.
+
+**Universal by construction:** we don't integrate with Figma or Supabase. We import whatever MCP servers are in `~/.claude.json` / `.cursor/mcp.json` and re-offer their tools. Anything not an MCP (or an OAuth-only remote MCP) is offered as a shell command instead.
 
 **Judge Q: "Isn't this Superconductor / Cursor cloud / Zed Delta?"**
 Those move your team into a hosted sandbox and pool credentials in a vault. We connect the laptops you already use, and every request needs the owner's yes. See `docs/RESEARCH.md` §3.
@@ -32,10 +34,10 @@ Those move your team into a hosted sandbox and pool credentials in a vault. We c
 ```
 
 1. **relay** (`apps/relay`) — one Node file. WebSocket server. Rooms keyed by string. Fan-out of every message to room members. Keeps last 200 events per room for late joiners. No auth: the room name is the secret, and we say so on stage.
-2. **daemon** (`apps/daemon`) — `mesh join <room> --as <name>`. Connects to relay, announces the commands it *offers* from `team.json`, prints `<who> wants to run: <cmd>  [y/n]` on incoming requests, spawns the command with `child_process.spawn`, streams stdout/stderr back. Same process hosts a **local MCP server** (streamable HTTP on `localhost:7337`) exposing `list_teammates`, `ask_teammate`, `check_job`, `post_event`, `team_activity`.
+2. **daemon** (`apps/daemon`) — `mesh join <room> --as <name>`. Connects to relay. **Imports the owner's MCP servers as an MCP client** (spawns stdio servers from their config, `tools/list`), and announces every tool as an *offer* with its description and schema, plus any shell offers from `team.json`. On an incoming request it prints `<who> wants to call supabase.run_sql {…}  [y/n]`, then either calls the tool on the owner's server or spawns the shell command, and streams the result back. Same process hosts a **local MCP server** (streamable HTTP on `localhost:7337`) exposing six static tools: `list_teammates`, `describe_capability`, `ask_teammate`, `check_job`, `post_event`, `team_activity`.
 3. **feed** (`apps/feed`) — `mesh feed <room>`. Joins the room read-only and pretty-prints every event: presence, prompts, tool calls, files touched, requests, approvals, streamed output. This is what's on the projector. Plus the Claude Code hook scripts that emit prompt/file events.
 
-Not mirroring MCP servers. Not doing dynamic tool discovery. Every tool we care about is already a shell command or a 20-line script.
+Teammates' tools never appear as first-class tools in the requester's client (that's where client caching and `list_changed` bugs live). They come back as *data* from our six static tools, two-level: one line per tool from `list_teammates`, full schema + owner notes from `describe_capability` only when the agent decides to use one.
 
 ## 3. Build order (each step has an acceptance test; do not skip ahead)
 
@@ -45,9 +47,10 @@ Not mirroring MCP servers. Not doing dynamic tool discovery. Every tool we care 
 | 1 | Relay + two terminals echoing | Tarush | two `wscat` clients in room `x` see each other's `event` messages |
 | 2 | Daemon: join, offers, y/n, spawn, stream | Dev | Tarush's daemon runs `echo hi` requested from Dev's daemon CLI (`mesh ask tarush "echo hi"`), stdout appears on both |
 | 3 | MCP wrapper inside daemon | Dev | Claude Code on Dev's laptop calls `ask_teammate` and gets stdout back in the tool result |
+| 3b | Import owner's MCP servers as offers; `describe_capability`; mcp-form `ask_teammate` | Dev | Tarush's daemon imports a stdio MCP (e.g. `@modelcontextprotocol/server-filesystem` or Supabase); Dev's Claude Code lists it, describes it, calls it, gets the tool result |
 | 4 | Broadcast + `mesh feed` | Abhi | third laptop running `mesh feed` shows request → approval → output live |
 | 5 | Hooks: prompts, files touched | Abhi | typing a prompt in Claude Code on any laptop shows up in everyone's feed within 2s |
-| 6 | Figma export script offered by Tarush | Tarush | `./scripts/figma-export.sh <fileKey> <nodeId>` prints a PNG path/URL locally |
+| 6 | Real MCPs on Tarush's laptop for the demo (Supabase/Linear/GitHub stdio servers with keys) + Figma shell script as OAuth fallback | Tarush | each imports cleanly on `mesh join`; `describe_capability` output reads well; figma-export.sh works |
 | 7 | End-to-end demo rehearsal | all | the script in §5 runs clean twice in a row |
 | S1 | `check_job` for long commands | Tarush | `ask_teammate` on `sleep 70` returns a jobId; `check_job` returns exit 0 |
 | S2 | Deny path + `never` permission shown in demo | Dev | denied request returns a clear error to the agent |
@@ -80,7 +83,7 @@ Three laptops. Projector shows Abhi's `mesh feed` full-screen; Dev's and Tarush'
 ## 6. Decisions (don't re-open)
 
 - **Daemon + dumb relay, not hosted server + sidecars.** Local MCP server per laptop; relay is fan-out only.
-- **One tool that runs a command, not mirrored MCP servers / dynamic tool discovery.** Offers in `team.json` are strings the agent reads, not MCP tools it discovers.
+- **Universal via MCP-client import, not per-integration code.** The daemon imports the owner's MCP servers and re-offers their tools with verbatim descriptions/schemas + owner notes. Teammates' tools are *data* from six static tools, never first-class tools in the requester's client. Shell offers cover non-MCP and OAuth-only cases.
 - **Own job table in the daemon; no MCP Tasks extension.**
 - **Room name is the only auth.** Say it out loud.
 - **Feed shows observable events only** (prompts, tool calls, files, requests, output). Never hidden reasoning.

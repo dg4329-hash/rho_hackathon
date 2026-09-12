@@ -24,7 +24,13 @@ Test locally: `npx wscat -c "ws://localhost:8080/?room=x&user=a&role=daemon"` tw
 ## Deploy (right after step 1 passes)
 Railway or Fly, whichever you've used. Fallback: `ngrok http 8080` from your laptop and keep the terminal open. Post the URL. Verify from a phone hotspot that `/health` responds (the venue wifi may block ws on odd ports; Railway's 443 is safest).
 
-## Step 6 — `scripts/figma-export.sh <fileKey> <nodeId>` (acceptance: prints a PNG path and a one-paragraph description)
+## Step 6a — real MCP servers on your laptop (acceptance: `mesh join` prints them as imported; `describe_capability` output for 3 tools reads well)
+- Configure 2-3 stdio MCP servers with API keys in your `~/.claude.json` or `.cursor/mcp.json`: Supabase (`@supabase/mcp-server-supabase`), GitHub (`@modelcontextprotocol/server-github`), Linear, or whatever you already have. These are what Dev's agent will borrow in the demo.
+- Write `notes` in your `team.json` for the ones the demo uses: project IDs, table names, conventions. Good notes are the difference between the demo agent nailing the call and guessing.
+- Set `permissions`: reads `always`, writes `ask`, deletes `never`. We show all three on stage.
+- Confirm with Dev which servers imported and which were skipped (OAuth remotes will be).
+
+## Step 6b — `scripts/figma-export.sh <fileKey> <nodeId>` (OAuth fallback for Figma; acceptance: prints a PNG path and a one-paragraph description)
 - Needs `FIGMA_TOKEN` in your env only. Never commit it.
 - `GET https://api.figma.com/v1/images/:fileKey?ids=:nodeId&format=png&scale=2` → image URL → `curl -o /tmp/mesh-figma-<nodeId>.png`. Print the path.
 - `GET https://api.figma.com/v1/files/:fileKey/nodes?ids=:nodeId` → walk `children`, print names, text content, and bounding boxes as a short indented outline. This text is what Dev's agent actually uses to code the screen, so make it readable.

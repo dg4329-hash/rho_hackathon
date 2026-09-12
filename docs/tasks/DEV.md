@@ -25,10 +25,20 @@ Node 22, TypeScript, `tsx` for dev, `ws`, `@modelcontextprotocol/sdk` (Streamabl
 - Test: `claude mcp add --transport http mesh http://localhost:7337/mcp`, then in Claude Code: "list my teammates" → "ask tarush to run echo hello". Confirm the tool result contains `hello`.
 - Watch for: Claude Code caches tool lists per session — restart the session after changing tool schemas. MCP tool calls time out client-side; keep default `waitSeconds` at 45.
 
+## Step 3b — import the owner's MCP servers (acceptance: Tarush's daemon imports a stdio MCP; your Claude Code lists → describes → calls it and gets the tool result)
+- Config discovery: `~/.claude.json` (`mcpServers` at top level and under `projects[<cwd>].mcpServers`), `./.mcp.json`, `./.cursor/mcp.json`, `~/.cursor/mcp.json`. Merge; `import.servers` filters by name.
+- For each: `stdio` → `new Client(...)` + `StdioClientTransport({ command, args, env: { ...process.env, ...env } })`; `http`/`sse` → `StreamableHTTPClientTransport(url)` with no auth. Wrap in a 10 s timeout. On failure log `skipped <server>: <reason>` and continue. Keep clients open for the daemon's lifetime; reconnect lazily on call failure.
+- `client.listTools()` → offers named `<server>.<tool>`, `kind: 'mcp'`, description + inputSchema verbatim, permission from `permissions` globs (use `minimatch`) else `import.defaultPermission`, notes from `notes` globs.
+- Print an import summary on join: `imported 3 servers, 27 tools (supabase 12, github 14, linear 1); skipped figma: 401 (OAuth) — add a shell offer`.
+- Handling a `request` with `tool`: find offer; validate `args` with `ajv` against `inputSchema` (reject with `denied` + the ajv message, no prompt); permission check; prompt shows the tool name and pretty-printed args truncated to ~20 lines; `callTool` → flatten content into `result.tail`; `isError` → exitCode 1.
+- New MCP tool `describe_capability`: returns description, inputSchema, notes, and a `usage` string like `ask_teammate({ who: "tarush", tool: "supabase.run_sql", args: { query: "select …" }, why: "…" })` with example arg values derived from the schema (`example`/`default`/type placeholders).
+- `list_teammates` must stay cheap: one line per tool, summary ≤ 120 chars, no schemas.
+- Test servers you can use without keys: `@modelcontextprotocol/server-filesystem`, `@modelcontextprotocol/server-memory`, `@modelcontextprotocol/server-everything`.
+
 ## Don'ts
 - Don't touch `apps/relay`, `apps/feed`, `hooks/`, `scripts/`.
 - Don't add auth, config UIs, persistence, or a web server beyond `/mcp` + three routes.
 - Don't try to stream partial output into the MCP tool result; return on completion or `running`.
 
 ## Definition of done
-Steps 0, 2, 3 acceptance tests pass with Tarush's deployed relay, from two different laptops. `MESH_DEBUG=1` log of a full request→result cycle pasted into `docs/tasks/DEV.md` under "Evidence".
+Steps 0, 2, 3, 3b acceptance tests pass with Tarush's deployed relay, from two different laptops. `MESH_DEBUG=1` log of a full request→result cycle pasted into `docs/tasks/DEV.md` under "Evidence".

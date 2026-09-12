@@ -8,3 +8,5 @@ team.json
 .claude/settings.local.json
 .local/
 .cursor/rules/local-build-log.mdc
+.claude/settings.json
+.cursor/mcp.json

@@ -62,6 +62,9 @@ trap 'cleanup; exit 130' INT
 trap 'cleanup; exit 143' TERM
 
 cd "$ROOT"
+# Single-file daemon bundle the relay serves at /mesh.mjs (teammates join with curl …/install.sh | bash).
+echo "bundling daemon (pnpm -F daemon bundle) …"
+pnpm -F daemon bundle >"$LOG_DIR/bundle.log" 2>&1 || { echo "bundle failed — see $LOG_DIR/bundle.log" >&2; exit 1; }
 # Run node directly (no pnpm wrapper) so RELAY_PID is the relay itself and Ctrl-C/kill reach it.
 PORT="$PORT" node --import tsx apps/relay/src/index.ts >"$LOG_DIR/relay.log" 2>&1 &
 RELAY_PID=$!
@@ -108,8 +111,10 @@ echo "  relay is public"
 echo "  wss URL : $WSS_URL"
 echo "  health  : $PUBLIC_URL/health  →  $HEALTH"
 echo ""
-echo "  team.json  →  \"relay\": \"$WSS_URL\""
-echo "  or         →  mesh join <room> --as <user> --relay $WSS_URL"
+echo "  teammates  →  curl -fsSL $PUBLIC_URL/install.sh | bash -s -- <room> --as <user>"
+echo "  windows    →  & ([scriptblock]::Create((irm $PUBLIC_URL/install.ps1))) <room> --as <user>"
+echo "  room page  →  $PUBLIC_URL/r/<room>   (has the command with room + handle filled in)"
+echo "  from repo  →  mesh join <room> --as <user> --relay $WSS_URL"
 echo "================================================================"
 echo "Keep this terminal open. Ctrl-C stops the relay and the tunnel."
 echo ""

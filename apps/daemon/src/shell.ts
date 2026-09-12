@@ -38,6 +38,21 @@ export function matchShellOffer(command: string, config: TeamConfig): ShellMatch
   return { kind: "arbitrary", permission: config.allowArbitrary };
 }
 
+/**
+ * When a request matches an offer, run the OWNER's configured command (e.g. ./scripts/figma-export.sh),
+ * not whatever spelling the requester used for the first token (e.g. figma-export.sh).
+ * Everything after the first token is passed through untouched.
+ */
+export function resolveOfferCommand(command: string, offerCommand: string): string {
+  const m = command.match(/^\s*(\S+)([\s\S]*)$/);
+  if (!m) return command;
+  const first = m[1]!;
+  const rest = m[2] ?? "";
+  if (first === offerCommand) return command;
+  const needsQuote = /\s/.test(offerCommand) && !/^["']/.test(offerCommand);
+  return `${needsQuote ? `"${offerCommand}"` : offerCommand}${rest}`;
+}
+
 export interface RunOptions {
   cwd: string;
   timeoutSeconds: number;

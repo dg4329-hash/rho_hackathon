@@ -208,6 +208,7 @@ else
     echo "mesh: no 'zenity' on this Linux box, so approvals need a terminal; running in the foreground (install zenity for background mode)"
     exec node "$MESH_HOME/mesh.mjs" join "$ROOM" --relay "$RELAY" "$@" </dev/tty
   fi
+  node "$MESH_HOME/mesh.mjs" stop >/dev/null 2>&1 || true   # re-running the installer updates + restarts
   echo "mesh: joining room '$ROOM' via $RELAY in the background (approvals pop up as system dialogs)"
   node "$MESH_HOME/mesh.mjs" join "$ROOM" --relay "$RELAY" --background "$@"
   rc=$?
@@ -269,6 +270,7 @@ try {
   Write-Warning "mesh: emit.js not available on this relay; hooks will be skipped"
 }
 
+& node (Join-Path $MeshHome "mesh.mjs") stop 2>$null | Out-Null   # re-running the installer updates + restarts
 Write-Host "mesh: joining room '$Room' via $Relay in the background (approvals pop up as dialogs)"
 & node (Join-Path $MeshHome "mesh.mjs") join $Room --relay $Relay --background @Rest
 Write-Host "mesh: done. Restart your coding agent session once so it picks up the mesh tools.  (status: node $env:USERPROFILE\.mesh\mesh.mjs status)"

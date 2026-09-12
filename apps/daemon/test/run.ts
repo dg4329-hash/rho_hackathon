@@ -39,6 +39,7 @@ async function main(): Promise<void> {
       { name: "echo", command: "echo", description: "echo", permission: "always" },
       { name: "rm", command: "rm", description: "rm", permission: "never" },
       { name: "sleep", command: "sleep", description: "sleep", permission: "always" },
+      { name: "hello.script", command: "./test/fixtures/hello.sh", description: "Usage: hello.sh <name>", permission: "always" },
     ],
   });
   const configB = TeamConfig.parse({ user: "b", room, relay: relayUrl });
@@ -106,6 +107,10 @@ async function main(): Promise<void> {
   // 8. timeout kills the whole process group (no orphaned grandchildren)
   const r8 = await b.ask({ who: "a", command: "sleep 30 & sleep 30", why: "test", waitSeconds: 10 });
   check("timed-out job → completed with exitCode null", r8.status === "completed" && r8.exitCode === null, r8);
+
+  // 8b. offer command substitution: requester says `hello.sh bob`, owner runs ./test/fixtures/hello.sh bob
+  const r8b = await b.ask({ who: "a", command: "hello.sh bob", why: "test", waitSeconds: 10 });
+  check("offer basename → owner's real script path", r8b.status === "completed" && r8b.exitCode === 0 && (r8b.output ?? "").includes("hello bob"), r8b);
 
   // 9. messages: b → a (direct) and b → all; a's inbox sees both, marks read; b's own inbox is empty
   b.sendMessage("a", "fix idea: guard the null case in auth.ts");

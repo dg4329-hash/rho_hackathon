@@ -23,7 +23,7 @@ import { PendingApprovals } from "./pending.js";
 import { Jobs, toJobResult } from "./jobs.js";
 import { resolvePermission } from "./permissions.js";
 import { RelayClient, debug } from "./relay-client.js";
-import { CHUNK_CHARS, matchShellOffer, runShell } from "./shell.js";
+import { CHUNK_CHARS, matchShellOffer, resolveOfferCommand, runShell } from "./shell.js";
 
 export interface CoreOptions {
   config: TeamConfig;
@@ -125,8 +125,10 @@ export function createCore(opts: CoreOptions): DaemonCore & { client: RelayClien
     const reason = match.kind === "offer" ? `'${match.offer.name}' is not offered (permission: never)` : "arbitrary commands are not allowed on this machine";
     if (!(await decide(req, permission, reason))) return;
 
-    if (permission !== "always") say(chalk.dim(`  running for ${req.from}: ${command}`));
-    const result = await runShell(command, { cwd, timeoutSeconds: config.timeoutSeconds }, (stream, chunk) => {
+    // Substitute the owner's real command path for a matched offer (requester only knows the basename from the offer text).
+    const actual = match.kind === "offer" ? resolveOfferCommand(command, match.offer.command) : command;
+    if (permission !== "always") say(chalk.dim(`  running for ${req.from}: ${actual}`));
+    const result = await runShell(actual, { cwd, timeoutSeconds: config.timeoutSeconds }, (stream, chunk) => {
       client.send({ type: "output", id: req.id, stream, chunk });
     });
     client.send({ type: "result", id: req.id, ...result });

@@ -83,7 +83,22 @@ export function nativeNotify(title: string, body: string): void {
     } else if (process.platform === "linux" && has("notify-send")) {
       spawn("notify-send", [title, body.slice(0, 200)], { stdio: "ignore", detached: true }).unref();
     } else if (process.platform === "win32") {
-      const ps = `[void][System.Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms'); $n=New-Object System.Windows.Forms.NotifyIcon; $n.Icon=[System.Drawing.SystemIcons]::Information; $n.Visible=$true; $n.ShowBalloonTip(5000,$env:MESH_TITLE,$env:MESH_BODY,[System.Windows.Forms.ToolTipIcon]::Info); Start-Sleep 6; $n.Dispose()`;
+      // Native Windows 10/11 toast via WinRT (no modules needed). Falls back to a tray balloon if toasts are unavailable.
+      const ps = `
+$ErrorActionPreference = 'SilentlyContinue'
+try {
+  [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
+  [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] | Out-Null
+  $t = [System.Security.SecurityElement]::Escape($env:MESH_TITLE); $b = [System.Security.SecurityElement]::Escape($env:MESH_BODY)
+  $xml = New-Object Windows.Data.Xml.Dom.XmlDocument
+  $xml.LoadXml("<toast><visual><binding template='ToastGeneric'><text>$t</text><text>$b</text></binding></visual></toast>")
+  $appId = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe'
+  [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($appId).Show([Windows.UI.Notifications.ToastNotification]::new($xml))
+} catch {
+  [void][System.Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms')
+  $n = New-Object System.Windows.Forms.NotifyIcon; $n.Icon = [System.Drawing.SystemIcons]::Information; $n.Visible = $true
+  $n.ShowBalloonTip(5000, $env:MESH_TITLE, $env:MESH_BODY, [System.Windows.Forms.ToolTipIcon]::Info); Start-Sleep 6; $n.Dispose()
+}`;
       spawn("powershell", ["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", ps], { env: { ...process.env, MESH_TITLE: title, MESH_BODY: body.slice(0, 200) }, stdio: "ignore", detached: true, windowsHide: true }).unref();
     }
   } catch { /* best effort */ }

@@ -345,7 +345,7 @@ export const OVERLAY_JS: string = String.raw`(function (root) {
       el.innerHTML = list.map(function (p) {
         var body = p.command ? "$ " + p.command : (p.tool || "tool") + " " + pretty(p.args);
         var st = state.deciding[p.id];
-        return '<div class="req" data-id="' + esc(p.id) + '"><div class="who">' + esc(p.from) + ' <span>wants to run on ' + esc(p.to) + '</span></div>' +
+        return '<div class="req" data-id="' + esc(p.id) + '"><div class="who">' + esc(p.from) + ' <span>wants to use your machine</span></div>' +
           '<div class="why"><i>why:</i> ' + esc(p.why || "(no reason given)") + '</div><pre>' + esc(body) + '</pre>' +
           '<div class="acts"><button class="ok" data-d="approved"' + (st ? " disabled" : "") + '>Approve</button><button class="no" data-d="denied"' + (st ? " disabled" : "") + '>Deny</button>' +
           '<span class="st">' + (st ? esc(st) : fmtT(p.createdAt)) + '</span></div></div>';

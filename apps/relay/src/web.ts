@@ -251,7 +251,7 @@ if (-not $node) {
   Write-Error "mesh: node is not installed. Install Node.js 20 or newer from https://nodejs.org and re-run."
   exit 1
 }
-# `node -v` prints e.g. v24.13.1; parse in PowerShell (no quotes cross the process boundary — Windows PowerShell strips them).
+# node -v prints e.g. v24.13.1; parse in PowerShell (no quotes cross the process boundary; Windows PowerShell strips them).
 $ver = (& node -v).Trim().TrimStart('v')
 $major = [int]($ver.Split('.')[0])
 if ($major -lt 20) {

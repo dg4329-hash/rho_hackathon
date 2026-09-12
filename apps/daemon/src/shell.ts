@@ -1,5 +1,6 @@
 /** Shell offer matching (CONTRACT §2) and streaming command execution. */
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { parse as shellParse } from "shell-quote";
 import { OUTPUT_TAIL_BYTES, type Permission, type ShellOfferConfig, type TeamConfig } from "@mesh/protocol";
@@ -55,6 +56,18 @@ export type ChunkHandler = (stream: "stdout" | "stderr", chunk: string) => void;
  * spawn('/bin/sh', ['-c', command]) in cwd, stream stdout/stderr through onChunk
  * (coalesced with a 50 ms flush, each chunk ≤ 4096 chars), SIGKILL on timeout.
  */
+/** On Windows, find a POSIX-ish shell so offers written for `sh` still work; fall back to cmd.exe. */
+function windowsShell(): { cmd: string; args: string[] } {
+  const candidates = [
+    process.env.MESH_SHELL,
+    "C:\\Program Files\\Git\\bin\\bash.exe",
+    "C:\\Program Files\\Git\\usr\\bin\\bash.exe",
+    "C:\\Program Files (x86)\\Git\\bin\\bash.exe",
+  ].filter((x): x is string => !!x);
+  for (const c of candidates) if (existsSync(c)) return { cmd: c, args: ["-c"] };
+  return { cmd: process.env.ComSpec ?? "cmd.exe", args: ["/d", "/s", "/c"] };
+}
+
 export function runShell(command: string, opts: RunOptions, onChunk: ChunkHandler): Promise<RunResult> {
   return new Promise((resolve) => {
     const started = Date.now();
@@ -81,15 +94,19 @@ export function runShell(command: string, opts: RunOptions, onChunk: ChunkHandle
       else if (!flushTimer) flushTimer = setTimeout(flush, FLUSH_MS);
     };
 
-    const child = spawn("/bin/sh", ["-c", command], {
-      cwd: opts.cwd,
-      env: process.env,
-      stdio: ["ignore", "pipe", "pipe"],
-      detached: true, // own process group, so a timeout kills grandchildren too
-    });
+    const win = process.platform === "win32";
+    // POSIX: /bin/sh in its own process group so a timeout kills grandchildren too.
+    // Windows: prefer Git's bash.exe (so offers written for sh work), else cmd.exe via shell:true.
+    const child = win
+      ? spawn(windowsShell().cmd, [...windowsShell().args, command], { cwd: opts.cwd, env: process.env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true })
+      : spawn("/bin/sh", ["-c", command], { cwd: opts.cwd, env: process.env, stdio: ["ignore", "pipe", "pipe"], detached: true });
 
     const killTree = () => {
-      try { if (child.pid) process.kill(-child.pid, "SIGKILL"); } catch { /* already gone */ }
+      if (win) {
+        try { if (child.pid) spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true }); } catch { /* ignore */ }
+      } else {
+        try { if (child.pid) process.kill(-child.pid, "SIGKILL"); } catch { /* already gone */ }
+      }
       try { child.kill("SIGKILL"); } catch { /* already gone */ }
     };
     const killTimer = setTimeout(() => {

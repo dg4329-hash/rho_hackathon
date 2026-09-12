@@ -1,0 +1,13 @@
+{
+  "user": "dev",
+  "room": "rho",
+  "relay": "ws://localhost:8080",
+  "cwd": ".",
+  "timeoutSeconds": 120,
+  "allowArbitrary": "ask",
+  "offers": [
+    { "name": "echo", "command": "echo", "description": "Echo text back. Usage: echo <text>", "permission": "always" },
+    { "name": "gh", "command": "gh", "description": "GitHub CLI. Prefer read-only subcommands.", "permission": "ask" },
+    { "name": "rm", "command": "rm", "description": "", "permission": "never" }
+  ]
+}

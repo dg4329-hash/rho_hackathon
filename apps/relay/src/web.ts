@@ -127,6 +127,24 @@ export function handleWeb(req: IncomingMessage, res: ServerResponse, url: URL, d
     return true;
   }
 
+  if (method === "GET" && (pathname === "/join.cmd" || pathname === "/join.command")) {
+    const room = url.searchParams.get("room") ?? "";
+    const as = (url.searchParams.get("as") ?? "").toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 32);
+    if (!ROOM_RE.test(room)) { res.writeHead(400).end("bad room name"); return true; }
+    const origin = publicOrigin(req);
+    const asArg = as ? ` --as ${as}` : "";
+    if (pathname === "/join.cmd") {
+      const body = `@echo off\r\ntitle mesh: joining ${room}\r\necho Joining mesh room ${room}...\r\npowershell -NoProfile -ExecutionPolicy Bypass -Command "& ([scriptblock]::Create((irm ${origin}/install.ps1))) ${room}${asArg}"\r\necho.\r\necho Done. Restart your coding agent session once. You can close this window.\r\npause\r\n`;
+      res.writeHead(200, { "content-type": "application/octet-stream", "content-disposition": `attachment; filename="mesh-join-${room}.cmd"`, "cache-control": "no-store" });
+      res.end(body);
+    } else {
+      const body = `#!/bin/bash\n# mesh: joins room ${room}. Double-click to run (right-click → Open the first time on macOS).\ncurl -fsSL ${origin}/install.sh | bash -s -- ${room}${asArg}\necho\nread -r -p "Done. Restart your coding agent session once. Press enter to close."\n`;
+      res.writeHead(200, { "content-type": "application/octet-stream", "content-disposition": `attachment; filename="mesh-join-${room}.command"`, "cache-control": "no-store" });
+      res.end(body);
+    }
+    return true;
+  }
+
   m = pathname.match(/^\/r\/([^/]+)$/);
   if (method === "GET" && m) {
     const name = decodeURIComponent(m[1]!);
@@ -349,8 +367,17 @@ if (!ROOM) {
         <pre id="join"></pre>
         <p class="small dim">Downloads the mesh daemon into <code>~/.mesh</code> and joins this room. It reads your Claude Code / Cursor MCP config and offers those tools to the room (default permission <b>ask</b>). Keep the terminal open: that's where you approve requests. Re-run the same command to update.</p></div>
 
-      <div class="card"><h2>3 · restart your coding agent</h2>
-        <p class="small">The daemon registers itself with Claude Code, Cursor and Codex when it starts. Restart your agent session and it has the mesh tools; when it needs something a teammate has, it will ask them.</p>
+      <div class="card"><h2>2b · or download and double-click</h2>
+        <p class="small">Same thing as the command, as a file. <b>Windows:</b> <a id="dl-cmd" href="#">mesh-join-\${esc(ROOM)}.cmd</a> — double-click it. <b>macOS:</b> <a id="dl-command" href="#">mesh-join-\${esc(ROOM)}.command</a> — right-click → Open the first time (unsigned).</p></div>
+
+      <div class="card"><h2>3 · restart your coding agent, then check</h2>
+        <p class="small">The daemon registers itself with Claude Code, Cursor and Codex when it starts. Restart your agent session once. Then verify:</p>
+        <ul class="small">
+          <li><b>Codex CLI:</b> <code>codex mcp list</code> shows <code>mesh</code> enabled. In a new session ask: <i>list my mesh teammates</i>.</li>
+          <li><b>Claude Code:</b> <code>claude mcp list</code> shows <code>mesh … ✔ Connected</code>. Ask the same thing.</li>
+          <li><b>Cursor:</b> Settings → MCP → <code>mesh</code> with 9 tools. Ask the same thing in a new chat.</li>
+        </ul>
+        <p class="small"><b>What happens next:</b> when a teammate's agent asks your machine for something, a system dialog pops up (Approve / Deny). Messages from teammates arrive as a system notification; on Codex or Cursor ask your agent to <i>check my mesh inbox</i>. Manage the daemon with <code>node ~/.mesh/mesh.mjs status</code> / <code>stop</code>.</p>
         <details><summary>manual setup (if auto-registration didn't work)</summary>
         <p class="small">Claude Code (run in the project you're working on):</p>
         \${pre("claude mcp add --transport http mesh http://localhost:7337/mcp")}
@@ -363,7 +390,9 @@ if (!ROOM) {
 
       <div class="card"><h2>who's here <span id="watchers" class="pill" style="text-transform:none"></span></h2><div id="members" class="members"><span class="dim">nobody yet — run step 2</span></div></div>
       <div class="card"><h2>live</h2><div id="feed" class="feed"><span class="dim">requests, approvals and output will appear here</span></div></div>\`;
-    $("#me").oninput = (e) => { me = e.target.value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, ""); localStorage.setItem("mesh.user", me); renderJoin(); };
+    const dl = () => { const q = "?room=" + encodeURIComponent(ROOM) + (me ? "&as=" + encodeURIComponent(me) : ""); const a = $("#dl-cmd"), b = $("#dl-command"); if (a) a.href = "/join.cmd" + q; if (b) b.href = "/join.command" + q; };
+    dl();
+    $("#me").oninput = (e) => { me = e.target.value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, ""); localStorage.setItem("mesh.user", me); dl(); renderJoin(); };
     document.querySelectorAll(".tabs button").forEach((b) => { b.onclick = () => { shell = b.dataset.sh; localStorage.setItem("mesh.shell", shell); renderJoin(); }; });
     renderJoin();
   };

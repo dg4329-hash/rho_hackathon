@@ -9,10 +9,10 @@ Abhi is on the mic. Dev types. Tarush approves. Nobody else touches a keyboard.
 | who | check | command |
 |---|---|---|
 | Tarush | relay is up | `curl -s https://<relay>/health` or `wscat -c wss://<relay>/?room=rho&user=t&role=feed` |
-| Tarush | daemon joined, Figma script works | `pnpm -F daemon start -- join rho --as tarush` → shows `supabase(n) … figma.export`; `./scripts/figma-export.sh 8fA… 12:34` returns in <5 s |
-| Dev | daemon joined, MCP registered | `pnpm -F daemon start -- join rho --as dev`; `claude mcp list` shows `mesh` ✓ |
+| Tarush | daemon joined, Figma script works | `pnpm -F daemon start join rho --as tarush` → shows `supabase(n) … figma.export`; `./scripts/figma-export.sh 8fA… 12:34` returns in <5 s |
+| Dev | daemon joined, MCP registered | `pnpm -F daemon start join rho --as dev`; `claude mcp list` shows `mesh` ✓ |
 | Dev | hooks installed in the demo repo | `cat .claude/settings.json \| grep emit.js` |
-| Abhi | feed on projector, shows both daemons | `pnpm -F feed start -- rho --relay wss://<relay>` → presence shows `● tarush` and `● dev` |
+| Abhi | feed on projector, shows both daemons | `pnpm -F feed start rho --relay wss://<relay>` → presence shows `● tarush` and `● dev` |
 | Abhi | fixtures ready as fallback | `pnpm -F feed mock` works in a spare tab |
 | all | phones on silent, terminal font ≥ 24pt, dark background, no notifications | |
 
@@ -49,7 +49,7 @@ Go down one rung at a time. Abhi keeps talking through every switch; nobody says
 | symptom | fix | who | script line |
 |---|---|---|---|
 | Dev's agent doesn't call `ask_teammate` (goes off and does something else) | Dev types a more explicit prompt: *"Use the mesh tools to ask tarush to run figma-export for frame 12:34."* | Dev | "Let me be explicit with it." |
-| MCP call from Claude Code fails / hangs | Dev runs the same request by hand: `pnpm -F daemon start -- ask tarush "./scripts/figma-export.sh 8fA… 12:34" --why "need the frame"` | Dev | "Same request, from the CLI — the agent just does this for you." |
+| MCP call from Claude Code fails / hangs | Dev runs the same request by hand: `pnpm -F daemon start ask tarush "./scripts/figma-export.sh 8fA… 12:34" --why "need the frame"` | Dev | "Same request, from the CLI — the agent just does this for you." |
 | Relay unreachable (Railway down, venue wifi) | Tarush starts local relay + `ngrok http 8080`, everyone re-joins with `--relay wss://<ngrok>` | Tarush | "Relay is a stateless Node file — we just moved it." (~60 s) |
 | Figma API down / script errors | Tarush swaps the offer's command to `cat docs/fixtures/step2.txt` in `team.json`, re-joins. Output looks identical to the audience. | Tarush | nothing — no one notices |
 | Hooks don't fire (no `💬 prompt:` line) | Skip beat 0:35; Abhi narrates "Dev just typed …". Awareness beat becomes a spoken claim. | Abhi | — |

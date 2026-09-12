@@ -47,9 +47,9 @@ Feed running on the projector laptop through a full rehearsal; hooks installed o
 
 ### Step 4 — feed (against mock relay; real relay not up yet)
 ```
-pnpm -F @mesh/protocol build          # feed imports dist/
+# (no protocol build needed any more: @mesh/protocol exports src/ directly)
 pnpm -F feed mock                     # ws://localhost:8080, replays docs/fixtures/sample-frames.jsonl
-pnpm -F feed start -- rho             # second pane
+pnpm -F feed start rho                # second pane
 ```
 Output excerpt:
 ```
@@ -72,7 +72,7 @@ Covers: presence (join + leave), all 5 event kinds, shell + mcp requests, approv
 
 ### Step 5 — hooks (against mock daemon; Dev's daemon not up yet)
 ```
-pnpm -F feed mock && pnpm -F feed mock-daemon && pnpm -F feed start -- rho     # three panes
+pnpm -F feed mock && pnpm -F feed mock-daemon && pnpm -F feed start rho        # three panes
 echo '{"prompt":"Implement onboarding step 2…","cwd":"/Users/abhi/app"}' | node hooks/emit.js prompt
 echo '{"tool_name":"Edit","tool_input":{"file_path":"/Users/abhi/app/src/Step2.tsx"},"cwd":"/Users/abhi/app"}' | node hooks/emit.js file_touched
 ```

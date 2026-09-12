@@ -13,6 +13,8 @@ echo '{"prompt":"hello team","cwd":"/tmp","session_id":"abc123"}' | node hooks/e
 echo '{"tool_name":"Edit","tool_input":{"file_path":"/tmp/src/a.ts"},"cwd":"/tmp"}' | node hooks/emit.js file_touched
 ```
 
+Daemon on a non-default port? `MESH_DAEMON=http://localhost:7402 node hooks/emit.js prompt`.
+
 No daemon running? It exits 0 silently. Slow daemon? 1 s timeout, exits 0. The hook can never block the agent.
 
 Cursor has no hooks, so Cursor users appear in the feed only via requests and decisions.

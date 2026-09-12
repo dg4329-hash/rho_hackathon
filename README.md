@@ -38,11 +38,27 @@ docs/
 - Commit small, push often, `git pull --rebase` before push. No long-lived branches; work on `main`.
 - Each step in PLAN.md has an acceptance test. Don't move on until it passes.
 
-## Quick start (once things exist)
+## Quick start (verified end-to-end 2026-09-12)
+No build step: `@mesh/protocol` is imported straight from `src/` by `tsx`.
 ```bash
 pnpm install
-pnpm -F relay dev                              # Tarush's laptop or Railway
-pnpm -F daemon start join rho --as dev      # each laptop, reads ./team.json
-claude mcp add --transport http mesh http://localhost:7337/mcp
-pnpm -F feed start rho                      # optional second pane: live team feed
+pnpm -r typecheck                                        # all 4 packages
+
+# 1. relay — one laptop (Tarush), everyone else points at its URL
+./scripts/tunnel-relay.sh                                # relay on :8090 + ngrok, prints wss://<host>
+PORT=8090 pnpm -F relay start                            # or local-only: ws://localhost:8090
+
+# 2. daemon — every laptop (reads ./team.json; `pnpm -F daemon start init` writes a starter)
+pnpm -F daemon start join rho --as dev --relay wss://<host>     # [--config ./team.json] [--port 7337]
+claude mcp add --transport http mesh http://localhost:7337/mcp  # Claude Code gets list_teammates/ask_teammate/…
+
+# 3. feed — the projector pane
+pnpm -F feed start rho --relay wss://<host>
+
+# 4. hooks — prompts/files/tool calls from Claude Code show up in the feed
+hooks/install.sh /path/to/your/repo                      # writes .claude/settings.json (jq required)
 ```
+Do not write `pnpm -F daemon start -- join …`: pnpm 10 passes the `--` through and commander stops parsing.
+
+Tests: `pnpm -F daemon test`, `pnpm -F daemon exec tsx test/mcp.test.ts`, `pnpm -F relay test` (28 checks),
+`RELAY_URL=ws://localhost:8090 pnpm -F relay soak` (relay must be running).

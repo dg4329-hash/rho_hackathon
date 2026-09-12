@@ -1,7 +1,7 @@
 /**
  * mesh feed — the live team feed for the projector.
  *
- *   pnpm -F feed start -- <room> [--relay ws://host:port] [--user abhi]
+ *   pnpm -F feed start <room> [--relay ws://host:port] [--user abhi]
  *
  * Joins the room read-only (role=feed), sends one `hello`, then pretty-prints
  * every frame the relay forwards (CONTRACT §1). Designed for 24pt on a dark

@@ -43,20 +43,22 @@ Teammates' tools never appear as first-class tools in the requester's client (th
 
 ## 3. Build order (each step has an acceptance test; do not skip ahead)
 
-| step | what | owner | acceptance test |
-|---|---|---|---|
-| 0 | `packages/protocol` types + CONTRACT.md | Dev | `pnpm -r typecheck` passes; others can import |
-| 1 | Relay + two terminals echoing | Tarush | two `wscat` clients in room `x` see each other's `event` messages |
-| 2 | Daemon: join, offers, y/n, spawn, stream | Dev | Tarush's daemon runs `echo hi` requested from Dev's daemon CLI (`mesh ask tarush "echo hi"`), stdout appears on both |
-| 3 | MCP wrapper inside daemon | Dev | Claude Code on Dev's laptop calls `ask_teammate` and gets stdout back in the tool result |
-| 3b | Import owner's MCP servers as offers; `describe_capability`; mcp-form `ask_teammate` | Dev | Tarush's daemon imports a stdio MCP (e.g. `@modelcontextprotocol/server-filesystem` or Supabase); Dev's Claude Code lists it, describes it, calls it, gets the tool result |
-| 4 | Broadcast + `mesh feed` | Abhi | third laptop running `mesh feed` shows request → approval → output live |
-| 5 | Hooks: prompts, files touched | Abhi | typing a prompt in Claude Code on any laptop shows up in everyone's feed within 2s |
-| 6 | Real MCPs on Tarush's laptop for the demo (Supabase/Linear/GitHub stdio servers with keys) + Figma shell script as OAuth fallback | Tarush | each imports cleanly on `mesh join`; `describe_capability` output reads well; figma-export.sh works |
-| 7 | End-to-end demo rehearsal | all | the script in §5 runs clean twice in a row |
-| S1 | `check_job` for long commands | Tarush | `ask_teammate` on `sleep 70` returns a jobId; `check_job` returns exit 0 |
-| S2 | Deny path + `never` permission shown in demo | Dev | denied request returns a clear error to the agent |
-| S3 | Web dashboard | Abhi | only if 4-7 are done and rehearsed |
+Status as of 2026-09-12 (all three branches merged to `main`; single-machine integration run: relay :8090 + daemons tarush/dev + feed + hooks + MCP client, every step rendered in the feed).
+
+| step | what | owner | status | acceptance test |
+|---|---|---|---|---|
+| 0 | `packages/protocol` types + CONTRACT.md | Dev | done (exports `src/`, no build) | `pnpm -r typecheck` passes; others can import |
+| 1 | Relay + two terminals echoing | Tarush | done (28/28 contract checks, soak OK) | two `wscat` clients in room `x` see each other's `event` messages |
+| 2 | Daemon: join, offers, y/n, spawn, stream | Dev | done (daemon suite 20/20; live y/n verified) | Tarush's daemon runs `echo hi` requested from Dev's daemon CLI (`mesh ask tarush "echo hi"`), stdout appears on both |
+| 3 | MCP wrapper inside daemon | Dev | done (MCP client → `ask_teammate` → stdout, verified) | Claude Code on Dev's laptop calls `ask_teammate` and gets stdout back in the tool result |
+| 3b | Import owner's MCP servers as offers; `describe_capability`; mcp-form `ask_teammate` | Dev | done against fixture server; not yet against a real Supabase/Linear server | Tarush's daemon imports a stdio MCP (e.g. `@modelcontextprotocol/server-filesystem` or Supabase); Dev's Claude Code lists it, describes it, calls it, gets the tool result |
+| 4 | Broadcast + `mesh feed` | Abhi | done (real relay + daemons, not mocks) | third laptop running `mesh feed` shows request → approval → output live |
+| 5 | Hooks: prompts, files touched | Abhi | done (`emit.js prompt` → feed + `/activity`; `install.sh` verified) — not yet from a live Claude Code session | typing a prompt in Claude Code on any laptop shows up in everyone's feed within 2s |
+| 6 | Real MCPs on Tarush's laptop for the demo (Supabase/Linear/GitHub stdio servers with keys) + Figma shell script as OAuth fallback | Tarush | partial: figma-export.sh written, needs FIGMA_TOKEN run; real MCP import untested | each imports cleanly on `mesh join`; `describe_capability` output reads well; figma-export.sh works |
+| 7 | End-to-end demo rehearsal | all | not done (needs three laptops on the tunnel URL) | the script in §5 runs clean twice in a row |
+| S1 | `check_job` for long commands | Tarush | daemon side done (`check_job` returns running/completed); relay soak OK | `ask_teammate` on `sleep 70` returns a jobId; `check_job` returns exit 0 |
+| S2 | Deny path + `never` permission shown in demo | Dev | done (denied → `{status:"denied", reason}` verified) | denied request returns a clear error to the agent |
+| S3 | Web dashboard | Abhi | not started | only if 4-7 are done and rehearsed |
 
 Steps 1-2 are a working product with zero AI in it. If step 3 fights you, demo 1-2 plus the feed.
 

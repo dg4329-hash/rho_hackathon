@@ -16,8 +16,6 @@ RUN pnpm install --frozen-lockfile
 COPY packages/protocol packages/protocol
 COPY apps/relay apps/relay
 
-RUN pnpm -F @mesh/protocol build
-
 ENV NODE_ENV=production
 EXPOSE 8080
 CMD ["pnpm", "-F", "relay", "start"]

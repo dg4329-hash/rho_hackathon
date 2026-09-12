@@ -58,8 +58,7 @@ Relay deployed and stable for a 30-minute session with three laptops connected. 
 Commands:
 
 ```text
-pnpm -F @mesh/protocol build
-pnpm -F relay typecheck
+pnpm -F relay typecheck   # (protocol build was needed at the time; now exports src/, no build)
 pnpm -F relay start
 # Node WS clients (wscat-equivalent) in room x:
 B received A event: true

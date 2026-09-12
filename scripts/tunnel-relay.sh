@@ -8,7 +8,7 @@
 #   NGROK_DOMAIN=my-static.ngrok-free.app ./scripts/tunnel-relay.sh   # reuse a reserved domain
 #
 # Prerequisites: `ngrok` on PATH with an authtoken configured (`ngrok config add-authtoken …`),
-# pnpm install done, and `pnpm -F @mesh/protocol build` (done here automatically).
+# pnpm install done (@mesh/protocol is imported straight from src/, no build step).
 # This is the stop-gap until the Railway deploy (scripts/deploy-relay.sh) is set up.
 set -euo pipefail
 
@@ -57,7 +57,6 @@ trap 'cleanup; exit 130' INT
 trap 'cleanup; exit 143' TERM
 
 cd "$ROOT"
-pnpm -F @mesh/protocol build >/dev/null
 # Run node directly (no pnpm wrapper) so RELAY_PID is the relay itself and Ctrl-C/kill reach it.
 PORT="$PORT" node --import tsx apps/relay/src/index.ts >"$LOG_DIR/relay.log" 2>&1 &
 RELAY_PID=$!

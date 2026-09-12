@@ -81,7 +81,7 @@ team.json            local only (gitignored)
 
 ```bash
 npx pnpm@10.32.1 install
-npx pnpm@10.32.1 -F @mesh/protocol build   # required before relay start under tsx
+# (historical: protocol build was required then; since the dev/daemon merge @mesh/protocol exports src/ and has no build script)
 npx pnpm@10.32.1 -F relay start            # PORT=8080 default
 # or: pnpm -F relay dev
 ```
@@ -130,7 +130,7 @@ From `docs/tasks/TARUSH.md` + `docs/PLAN.md` §3:
 - `hello`: store offers, broadcast `presence`, replay history to joiner — do **not** put `hello` in history or forward it.
 - `presence` / `error` are relay-emitted.
 - Same HTTP server for `/health` and WS upgrade.
-- **Runtime:** `tsx` resolves `@mesh/protocol` to `dist/index.js` — always `pnpm -F @mesh/protocol build` before relay start.
+- **Runtime:** `tsx` resolves `@mesh/protocol` to `src/index.ts` (since the dev/daemon merge); no build step before relay start.
 - Import `HISTORY_LIMIT`; do not Zod-validate every client frame.
 - Do not touch daemon/feed/protocol.
 

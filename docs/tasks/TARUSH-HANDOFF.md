@@ -126,7 +126,7 @@ remaining risk for the headline demo.
 ## How to run what's here
 
 ```bash
-pnpm install && pnpm -F @mesh/protocol build
+pnpm install                            # no protocol build step (exports src/)
 pnpm -F relay test                      # contract acceptance (28 checks)
 ./scripts/tunnel-relay.sh               # public wss:// for the session (Ctrl-C stops both)
 pnpm -F relay validate ./team.json      # from the repo root

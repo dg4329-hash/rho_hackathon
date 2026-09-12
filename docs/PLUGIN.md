@@ -1,19 +1,28 @@
 # mesh as a Claude Code plugin — approvals inside Claude Code
 
-Branch `dev/plugin`, 2026-09-12. Implements the recommendation in `docs/UX-RESEARCH.md` §(b)/(c) ranks 1-3:
+On `main` since 2026-09-12 (`b04b75b`). Implements the recommendation in `docs/UX-RESEARCH.md` §(b)/(c) ranks 1-3:
 no separate daemon terminal, teammates' requests appear in your Claude Code session, and the yes/no is
-Claude Code's own permission prompt. One install command, no restart.
+Claude Code's own permission prompt. Installed automatically by `mesh join`; one `/reload-plugins` or session restart.
 
 ## Install
 
-Local checkout (what was verified):
+**Automatic (the default).** `mesh join` — and therefore the one-liner — downloads `<relay>/plugin.tgz` to `~/.mesh/plugin.tgz`,
+unpacks it into `~/.mesh/marketplace`, then runs `claude plugin marketplace add ~/.mesh/marketplace` and
+`claude plugin install mesh@mesh --scope project` in the join directory (`apps/daemon/src/register.ts`
+`registerClaudePlugin`). Join banner: `✓ Claude Code plugin: registered  mesh@mesh (project scope) — approvals and
+messages appear inside Claude Code`; on later joins `already registered`, and the `claude mcp add` / hooks rows read
+`the mesh plugin provides …`. The relay builds `plugin.tgz` from `plugin/` + `.claude-plugin/` at start
+(`apps/relay/src/index.ts`). Skipped when `claude` isn't on PATH; a failure is one line in the banner and the classic path
+(`claude mcp add` + hook merge) runs instead. No extra commands for Claude Code users.
+
+**Manual** (local checkout; what was first verified):
 
 ```bash
 claude plugin marketplace add /path/to/rho_hackathon      # the repo root holds .claude-plugin/marketplace.json
 claude plugin install mesh@mesh --scope project           # or --scope user; inside a session: /plugin install mesh@mesh
 ```
 
-GitHub form (same manifest, untested here because the branch is not on main yet):
+GitHub form (same manifest, untested):
 
 ```bash
 claude plugin marketplace add dg4329-hash/rho_hackathon
@@ -38,10 +47,10 @@ and the monitor / SessionStart hook pass `--port`.
 | file | role |
 |---|---|
 | `.claude-plugin/plugin.json` | manifest, name `mesh` → tools are `mcp__plugin_mesh_mesh__<tool>` |
-| `.mcp.json` | the daemon's streamable-HTTP MCP server (9 tools) |
+| `.mcp.json` | the daemon's streamable-HTTP MCP server (10 tools incl. `approve_request` and `wait_for_events`) |
 | `hooks/hooks.json` + `hooks/emit.js` | the four CONTRACT §4 hooks (copy of `hooks/emit.js`; keep in sync) and a SessionStart hook |
 | `bin/mesh-session-start` | SessionStart: ensure the ask rule, `GET /health`, else restart from `~/.mesh/config.json` |
-| `monitors/monitors.json` + `bin/mesh-watch` | background monitor running `mesh watch`; every stdout line reaches Claude as a notification |
+| `monitors/monitors.json` + `bin/mesh-watch` | background monitor running `mesh watch`; every stdout line (pending request, or a teammate message forwarded live) reaches Claude as a notification |
 | `hooks/ensure-ask.js` | writes `permissions.ask` for `approve_request` into `<project>/.claude/settings.json` |
 | `skills/mesh/SKILL.md` | tells Claude to act on the notification line and how the approve flow works |
 | `bin/mesh` | launcher (see Install) |
@@ -57,6 +66,8 @@ and the monitor / SessionStart hook pass `--port`.
 3. Watcher path: the request is parked in the pending queue (`GET /pending?wait=25` wakes), and `mesh watch`,
    run by the plugin monitor, prints one line:
    `mesh: bob wants to run \`date\` on this machine (why: …). Call approve_request({"id":"…","decision":"approved"}) now so the user gets the permission prompt; if they reject it, call it again with "decision":"denied".`
+   The same watcher forwards teammate messages live (`GET /pending?wait=25&messages=1`, default consumer marks them read):
+   `mesh: message from tarush: "…". Tell the user, and if a reply is needed use the mesh send_message tool (to: "tarush").`
 4. Claude calls `mcp__plugin_mesh_mesh__approve_request`. That tool is never allowlisted; it declares
    `_meta["anthropic/requiresUserInteraction"]: true` (Claude Code ≥ 2.1.199 prompts on every call, in auto and
    bypassPermissions too, no "don't ask again") and both tool names are in the project's `permissions.ask` as a
@@ -65,6 +76,9 @@ and the monitor / SessionStart hook pass `--port`.
 5. Nobody answers within 120 s, or the watcher stops polling (checked every 5 s): the daemon falls back to the
    native dialog / tty prompt exactly as before. `POST /decide {id, decision, reason?}` is the HTTP equivalent of
    the tool (used by the tests and by anything that is not Claude Code).
+6. The room-page **overlay** (shipping tonight, `docs/OVERLAY-API.md`) is a second watcher on the same queue: it
+   long-polls `/pending` with `consumer=overlay` and answers with `POST /decide`. Whichever surface answers first
+   wins; the other sees the id vanish. It is the universal path for Codex/Cursor owners; Claude Code owners get both.
 
 Daemon-side changes (all on this branch, `apps/daemon/src`): `pending.ts` (new), `approval.ts`, `api.ts`,
 `core.ts`, `local-server.ts`, `cli.ts`, `register.ts`; plus `packages/protocol/src/index.ts`

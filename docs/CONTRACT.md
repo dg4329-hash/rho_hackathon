@@ -13,7 +13,7 @@ Everything here is what the three apps agree on. `packages/protocol/src/index.ts
 
 Connect: `ws://<relay>/?room=<room>&user=<user>&role=daemon|feed`
 
-HTTP on the same port: `GET /health` → `{ rooms, connections }`; web front door `GET /` (start a session), `POST /api/rooms` → `{ room }`, `GET /api/rooms/:room` → `{ room, members, events }`, `GET /r/:room` (room page: one-liner with room filled in, who's online, live feed); installers `GET /install.sh`, `GET /install.ps1` (public origin baked in from `Host` / `X-Forwarded-Proto`), `GET /mesh.mjs` (daemon bundle), `GET /emit.js` (hook emitter). Rooms match `^[a-z0-9][a-z0-9-]{1,40}$`.
+HTTP on the same port: `GET /health` → `{ rooms, connections }`; web front door `GET /` (start a session, plain-words explanation), `POST /api/rooms` → `{ room }`, `GET /api/rooms/:room?since=<n>` → `{ room, members, watchers, events, next }`, `GET /r/:room` (beginner room page: pick a name, one-liner with room filled in, downloadable installer, "restart once" step with a self-check, who's online, live feed, **Pop out overlay** button), `GET /overlay?room=&port=` (the overlay page, shipping tonight; `docs/OVERLAY-API.md`); installers `GET /install.sh`, `GET /install.ps1` (public origin baked in from `Host` / `X-Forwarded-Proto`; both stop a running daemon before re-joining, so re-running updates + restarts), `GET /join.cmd?room=&as=` / `GET /join.command?room=&as=` (double-clickable wrappers around the same installers), `GET /mesh.mjs` (daemon bundle), `GET /emit.js` (hook emitter), `GET /plugin.tgz` (Claude Code plugin, built from `plugin/` + `.claude-plugin/` at relay start). Rooms match `^[a-z0-9][a-z0-9-]{1,40}$`.
 
 The relay is dumb: it validates `room`/`user` on connect, stamps nothing, and forwards every frame it receives to **every other** connection in the room. It also keeps the last 200 frames per room and replays them to a new connection on join (as-is, in order). Two frames the relay itself emits:
 
@@ -97,11 +97,11 @@ Routing: everything is broadcast. Daemons ignore `request` frames whose `to` isn
 
 **Import rule.** On `mesh join`, for each configured server (the daemon's own `mesh` entry and any `http://localhost:*/mcp` URL are skipped so it never imports itself): stdio servers are spawned by the daemon with the config's `command/args/env`; `http`/`sse` servers are connected without auth. Servers that fail (OAuth-only remotes like the official Figma MCP, missing binaries) are logged as `skipped: <reason>` and the owner is told to add a shell offer instead. Then `tools/list` → one offer per tool named `<server>.<tool>`, description and inputSchema verbatim, permission from `permissions` globs else `import.defaultPermission`, `notes` from the `notes` globs (first match).
 
-**Shell matching rule.** Split `command` with shell-words; first token's basename vs each shell offer's `command` basename. No match → `allowArbitrary`. `never` → `decision: denied`. `always` → `decision: auto`. `ask` → prompt.
+**Shell matching rule.** Split `command` with shell-words; first token's basename vs each shell offer's `command` basename. No match → `allowArbitrary`. `never` → `decision: denied`. `always` → `decision: auto`. `ask` → prompt. **Compound commands** (any `;`, `&&`, `||`, `|`, redirection, backticks, `$( )`, newline, or unparseable input) never inherit an offer's `always`: they are treated as `ask` (or `never` when `allowArbitrary` is `never`). An offer's `never` stays `never`.
 
 **Spawn rule (shell).** POSIX: `spawn('/bin/sh', ['-c', command], { cwd, env: process.env, detached })`, process group killed at `timeoutSeconds`. Windows: Git's `bash.exe` if installed (so offers written for `sh` work), else `cmd.exe`. The approval prompt is the safety layer.
 
-**Approval rule.** Prompts are serialized, one at a time. Order: (1) native OS dialog — macOS `osascript display dialog`, Windows PowerShell `MessageBox`, Linux `zenity` — buttons Deny/Approve, 90 s timeout → `denied` with reason `owner did not answer in 90 s`; (2) if no dialog is possible (or `MESH_APPROVE=tty`), a terminal `[y/n]` single keypress; (3) no TTY either → `denied`, reason `no tty and no dialog available`. Deny reason is always `owner declined`; there is no typed reason. Incoming `message` events trigger a native notification (macOS `display notification`, Linux `notify-send`, Windows balloon).
+**Approval rule.** Prompts are serialized, one at a time. Order: (0) **watcher** — if anything long-polled `GET /pending` in the last 60 s (the room-page overlay, or `mesh watch` run by the Claude Code plugin monitor), the request is parked in the pending queue and answered via `POST /decide` (overlay buttons) or the `approve_request` tool (Claude Code's own permission prompt); no answer in 120 s, or the watcher stops polling → fall through; (1) native OS dialog — macOS `osascript display dialog`, Windows PowerShell `MessageBox`, Linux `zenity` — buttons Deny/Approve, 90 s timeout → `denied` with reason `owner did not answer in 90 s`; (2) if no dialog is possible (or `MESH_APPROVE=tty`), a terminal `[y/n]` single keypress; (3) no TTY either → `denied`, reason `no tty and no dialog available`. `MESH_APPROVE=watcher|dialog|tty` forces one surface. Deny from a dialog is `owner declined` (no typed reason); the overlay and `approve_request` may carry a short `reason`. Incoming `message` events trigger a native notification (macOS `display notification`, Linux `notify-send`, Windows a small always-on-top message box; `MESH_TOAST=1` for a toast), skipped for replayed history older than 5 min, and wake every `/pending` long-poller (overlay, watcher, `wait_for_events`).
 
 **Call rule (mcp).** Validate `args` against `inputSchema` (reject with a helpful `denied` reason on mismatch, before prompting). Prompt shows `tarush ← dev wants to call supabase.run_sql {"query": "select …"}  why: …  [y/n]`. On approve: `client.callTool({ name, arguments: args })`; flatten `content` (text parts joined, images as `[image]`, resources as their uri) into `result.tail`; `isError` → exitCode 1.
 
@@ -111,14 +111,16 @@ Registration is automatic on `mesh join` (best-effort, one line each, never bloc
 
 | agent | how | when |
 |---|---|---|
-| Claude Code | `claude mcp add --transport http mesh http://localhost:<port>/mcp` in `cwd` (project scope; replaces a stale `mesh` entry) | `claude` on PATH |
-| Claude Code hooks | merged into `<cwd>/.claude/settings.json` (§4) | `claude` on PATH and an `emit.js` found |
+| Claude Code plugin | download `<relay>/plugin.tgz` → `~/.mesh/marketplace`, then `claude plugin marketplace add` + `claude plugin install mesh@mesh --scope project` in `cwd`. Brings the MCP server, the §4 hooks and the `mesh watch` monitor; the next two rows are then skipped (`the mesh plugin provides …`) | `claude` on PATH |
+| Claude Code | `claude mcp add --transport http mesh http://localhost:<port>/mcp` in `cwd` (project scope; replaces a stale `mesh` entry) | `claude` on PATH and no plugin |
+| Claude Code hooks | merged into `<cwd>/.claude/settings.json` (§4) | `claude` on PATH, an `emit.js` found, no plugin |
+| Claude Code ask rule | `permissions.ask` for `approve_request` (both tool-name forms) in `<cwd>/.claude/settings.json` | `claude` on PATH |
 | Codex | `codex mcp add mesh --url http://localhost:<port>/mcp` (verified codex-cli 0.154); else `[mcp_servers.mesh] url = …` written to `~/.codex/config.toml` | `codex` on PATH or `~/.codex` exists, or `--codex` |
 | Cursor | `mesh` merged into `<cwd>/.cursor/mcp.json` `{ "mcpServers": { "mesh": { "url": … } } }` | `<cwd>/.cursor` or `~/.cursor` exists, or `--cursor` |
 
-Every client caches its tool list: the agent session must be restarted once after registration. Manual equivalent: `claude mcp add --transport http mesh http://localhost:7337/mcp`.
+Every client caches its tool list: the agent session must be restarted once after registration (Claude Code: or `/reload-plugins`). Manual equivalent: `claude mcp add --transport http mesh http://localhost:7337/mcp`.
 
-Tools (names, inputs, outputs). Descriptions matter: they are the only thing that teaches the model when to use us.
+Ten tools (names, inputs, outputs). Descriptions matter: they are the only thing that teaches the model when to use us.
 
 | tool | input | returns |
 |---|---|---|
@@ -130,6 +132,8 @@ Tools (names, inputs, outputs). Descriptions matter: they are the only thing tha
 | `send_message` | `{ to: user \| 'all', text }` | `{ ok: true }` — emits `event` kind `message`; recipient daemon prints it live and queues it for `inbox` / the prompt hook |
 | `inbox` | `{ unreadOnly?: true, sinceMinutes?: 120 }` | `{ messages: [{ id, ts, from, to, text, read }] }` — marks returned messages read when unreadOnly |
 | `team_activity` | `{ sinceMinutes?: number (default 10) }` | `{ events: Array<{ ts, from, type, summary }> }` — flattened, human-readable, newest last, ≤ 100 |
+| `approve_request` | `{ id: string, decision: 'approved' \| 'denied', reason?: string }` | `{ ok, id, decision }`; error text if the id is no longer pending. Declares `_meta["anthropic/requiresUserInteraction"]`, so in Claude Code the permission prompt for this call is the owner's yes/no; never allowlisted |
+| `wait_for_events` | `{ timeoutSeconds?: number (default 60) }` | `{ messages: InboxMessage[], pending: PendingRequest[] }` — long-poll; returns on the next teammate message or pending request, or empty arrays at timeout. Codex/Cursor's substitute for push (shipping tonight). Never decides anything |
 
 Tool description text (copy into the server verbatim):
 
@@ -141,14 +145,16 @@ Tool description text (copy into the server verbatim):
 - `send_message`: "Send a short message to a teammate's agent ('all' for everyone). Use it to coordinate: what you're about to change, a fix idea for something you saw in team_activity, a question about their tool. Delivered live to their terminal and the room page, and into their agent's context on its next prompt (Claude Code) or when it calls inbox (Cursor)."
 - `inbox`: "Unread messages from teammates addressed to you or to everyone. Call it when you start a task or when team_activity shows a message. Marks them read."
 - `team_activity`: "What teammates and their agents have done recently: prompts, tool calls, files touched, requests. Check before editing files others may be working on."
+- `approve_request`: "Approve or deny a teammate's pending request to use this machine. Only call this after the user has explicitly said yes or no to the specific request shown in the mesh notification. Claude Code's own permission prompt for this call is where they say it: when a mesh notification reports a pending request, call this with decision 'approved' right away and let that prompt ask the user; if the user rejects the prompt, call again with decision 'denied' (and their reason, if any) so the teammate is told. Never decide on the user's behalf."
+- `wait_for_events`: "Wait for the next teammate message or request to use this machine (long-poll, up to timeoutSeconds). Returns messages and pending requests as information; approvals are decided by the user in the mesh overlay or dialog, never by you. Loop on this when the user asks you to watch mesh."
 
-`send_message` rejects an offline `to` (other than `all`). The recipient daemon keeps the last 500 messages in memory, prints each live, fires a native notification (skipped for replayed history older than 60 s), and serves them via `inbox` / `GET /inbox`.
+`send_message` rejects an offline `to` (other than `all`). The recipient daemon keeps the last 500 messages in memory, prints each live, fires a native notification (skipped for replayed history older than 5 min), wakes `/pending` long-pollers (the overlay shows it with a reply box; the Claude Code watcher prints `mesh: message from <who>: …` into the session; `wait_for_events` returns it), and serves them via `inbox` / `GET /inbox`.
 
 `ask_teammate` implementation: for `tool`, look up the offer in the last `presence` and validate `args` locally against `inputSchema` before emitting (fail fast with a readable error). Emit `request`, wait for the `decision`/`result` frames with that `id`, buffer `output` chunks into a job record `{ id, to, command, status, chunks[], exitCode, ... }` kept in memory (Map). `check_job` reads the same Map.
 
-## 4. Hooks (Claude Code only; installed by `mesh join` into `<cwd>/.claude/settings.json`)
+## 4. Hooks (Claude Code only; shipped by the plugin, else installed by `mesh join` into `<cwd>/.claude/settings.json`)
 
-`mesh join` copies `hooks/emit.js` to `~/.mesh/emit.js` (the installer downloads it from the relay's `/emit.js`) and merges four entries into the project's `.claude/settings.json`, replacing previous mesh entries and keeping everything else (`hooks/install.sh <repo>` does the same by hand; needs `jq`). Each hook is `node ~/.mesh/emit.js <kind>` (prefixed `MESH_DAEMON=http://localhost:<port>` when the port isn't 7337), timeout 5 s, reading the hook's stdin JSON and POSTing `{ kind, summary, data }` to `POST http://localhost:7337/event`. The daemon forwards it as an `event` frame. Hooks never fail the agent: errors are swallowed, exit 0, 1 s HTTP timeout.
+When the Claude Code plugin is installed it ships these same four hooks (`plugin/hooks/hooks.json`, same `emit.js`) plus a SessionStart hook, and `mesh join` skips the merge below. Otherwise `mesh join` copies `hooks/emit.js` to `~/.mesh/emit.js` (the installer downloads it from the relay's `/emit.js`) and merges four entries into the project's `.claude/settings.json`, replacing previous mesh entries and keeping everything else (`hooks/install.sh <repo>` does the same by hand; needs `jq`). Each hook is `node ~/.mesh/emit.js <kind>` (prefixed `MESH_DAEMON=http://localhost:<port>` when the port isn't 7337), timeout 5 s, reading the hook's stdin JSON and POSTing `{ kind, summary, data }` to `POST http://localhost:7337/event`. The daemon forwards it as an `event` frame. Hooks never fail the agent: errors are swallowed, exit 0, 1 s HTTP timeout.
 
 | hook | kind | summary |
 |---|---|---|
@@ -164,6 +170,10 @@ Tool description text (copy into the server verbatim):
 - `POST /event` — `{ kind, summary, data? }`, see §4. 400 on a bad body.
 - `GET /inbox?unread=1` — `{ messages }`, same as `inbox` (`unread=0` returns read ones too; look-back 120 min).
 - `GET /activity?sinceMinutes=10` — `{ events }`, same as `team_activity`.
+- `GET /pending?wait=25&messages=1&consumer=overlay&since=<ISO>` — `{ pending: PendingRequest[], messages: InboxMessage[] }`; long-poll ≤ 25 s, returns early on a new request or message. Any caller counts as an attached watcher for 60 s (§2 approval rule). `consumer=overlay` + `since` returns messages newer than `since` without marking them read; the default consumer (the Claude Code watcher) marks them read.
+- `POST /decide` — `{ id, decision: 'approved'|'denied', reason? }` → `{ ok, id, decision }`; 404 if the id is not pending. Same effect as `approve_request`.
+- `POST /message` — `{ to, text }` → `{ ok: true }`; same as `send_message` (the overlay's reply box).
+- CORS: allowed for the relay's origin only, so the overlay page can call the daemon. Bound to 127.0.0.1.
 - `GET /health` — `{ user, room, relay: 'connected'|'disconnected', members: n }`. Also how `mesh status` / `--background` decide the daemon is alive.
 
 ## 6. CLI surface
@@ -173,6 +183,7 @@ mesh join <room | https://<relay>/r/<room>> [--as <user>] [--relay wss://…] [-
 mesh status                                     # background daemon: user@room, relay state, members, pid, log path (exit 1 if none)
 mesh stop                                       # SIGTERM the background daemon, remove ~/.mesh/daemon.json
 mesh log                                        # print ~/.mesh/daemon.log
+mesh watch [--port 7337]                        # one line per pending request / teammate message; run by the Claude Code plugin monitor
 mesh ask <who> "<command>" [--why "…"] [--room] [--as] [--relay] [--config] [--wait 120]   # human-driven request; exit = remote exit code, 2 = denied/timeout
 mesh init                                       # writes a starter team.json in the current directory
 mesh feed <room> [--relay …]                    # Abhi's app
@@ -184,4 +195,4 @@ mesh feed <room> [--relay …]                    # Abhi's app
 - Installed form: `node ~/.mesh/mesh.mjs <command> …` (the bundle has no `mesh` on PATH). Installers run `join <room> --relay <baked origin> --background [--as …]`.
 
 ## 7. Explicit non-goals
-Auth beyond room name, OAuth, P2P/NAT traversal, exposing teammates' tools as first-class MCP tools in the requester's client (they are data returned by our static tools; this sidesteps client tool-list caching / list_changed), OAuth passthrough, file locking, web dashboard (S3 only), persistence beyond the relay's 200-frame ring buffer.
+Auth beyond room name, OAuth, P2P/NAT traversal, exposing teammates' tools as first-class MCP tools in the requester's client (they are data returned by our static tools; this sidesteps client tool-list caching / list_changed), OAuth passthrough, file locking, a web dashboard beyond the room page and the overlay, persistence beyond the relay's 200-frame ring buffer.

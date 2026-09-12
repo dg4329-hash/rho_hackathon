@@ -3,8 +3,9 @@
 > Working name. Rename freely; nothing depends on it.
 
 Your coding agent (Claude Code, Codex, Cursor) can ask a teammate's laptop to run a command or an MCP tool
-it doesn't have the tools or credentials for. The teammate gets a system dialog `dev wants to run: figma-export …
-[Deny] [Approve]`, clicks **Approve**, and the output streams back to your agent. Credentials never leave the
+it doesn't have the tools or credentials for. The teammate sees `dev wants to run: figma-export … [Deny] [Approve]` in the
+mesh overlay (a small always-on-top window popped out of the room page; system dialog as fallback), clicks **Approve**,
+and the output streams back to your agent. Credentials never leave the
 owner's machine. Agents can also message each other, and every terminal in the room sees what every agent is doing.
 
 ## Assignments
@@ -21,22 +22,24 @@ Agents: read `AGENTS.md` first. It tells you which files you may touch.
 2. `docs/CONTRACT.md` — the wire protocol, MCP tools, CLI, and `team.json`. Everyone codes against this.
 3. `docs/NEXT.md` — what is done, what is left, in priority order
 4. Your task file: `docs/tasks/DEV.md`, `docs/tasks/TARUSH.md`, `docs/tasks/ABHI.md`
-5. `docs/RESEARCH.md` — competitors and why we're different (read before the pitch); `docs/UX-RESEARCH.md` — in-tool approvals, the plugin path (in progress on `dev/plugin`)
+5. `docs/PLUGIN.md` — the Claude Code plugin (auto-installed by `mesh join`); `docs/OVERLAY-API.md` — overlay ↔ daemon contract (shipping tonight)
+6. `docs/RESEARCH.md` — competitors and why we're different (read before the pitch); `docs/UX-RESEARCH.md` — why approvals moved into the tool
 
 ## Layout
 ```
-apps/relay      WebSocket relay + web front door + installers    — Tarush
+apps/relay      WebSocket relay + web front door + installers + overlay — Tarush
 apps/daemon     `mesh join` + local MCP server + approvals       — Dev
 apps/feed       `mesh feed`, hooks, demo                          — Abhi
 packages/protocol   shared TS types for every message/tool       — Dev writes, everyone imports
 scripts/        figma-export.sh, tunnel-relay.sh                  — Tarush
+plugin/         Claude Code plugin (MCP server, hooks, watcher); relay serves it as /plugin.tgz — Dev
 docs/
 ```
 
 ## Rules that keep three agents from colliding
 - Only edit your own `apps/<yours>` dir, `scripts/` (Tarush), and `docs/tasks/<YOU>.md`.
 - `packages/protocol` and `docs/CONTRACT.md` change only by editing CONTRACT.md **and telling the other two**.
-- Commit small, push often, `git pull --rebase` before push. Work on `main` (the plugin is the one exception, on `dev/plugin`).
+- Commit small, push often, `git pull --rebase` before push. Work on `main`.
 - Each step in PLAN.md has an acceptance test. Don't move on until it passes.
 
 ## Quick start for teammates (one command, no clone)
@@ -54,13 +57,27 @@ daemon (`~/.mesh/mesh.mjs`, ~2.5 MB, served by the relay at `/mesh.mjs`) plus th
 and runs `mesh join <room> --background`. That:
 - picks your handle from `git config user.name` (override with `--as`);
 - imports every MCP server in your Claude Code / Cursor configs and offers its tools to the room (permission **ask**);
-- registers the mesh MCP server with Claude Code (`claude mcp add`, project scope), Codex (`codex mcp add`), and
-  Cursor (`.cursor/mcp.json`, if a `.cursor` dir exists), and installs the Claude Code hooks into `.claude/settings.json`;
-- stays running in the background. **Restart your agent session once** so it picks up the mesh tools (tool lists are cached).
+- Claude Code: installs the mesh **plugin** from `<relay>/plugin.tgz` (`claude plugin marketplace add` + `claude plugin install
+  mesh@mesh`, project scope) — MCP server, hooks and the in-session watcher in one step, no extra commands; falls back to
+  `claude mcp add` + a hook merge into `.claude/settings.json` if the plugin can't be installed;
+- registers the mesh MCP server with Codex (`codex mcp add`) and Cursor (`.cursor/mcp.json`, if a `.cursor` dir exists);
+- stays running in the background. **Restart your agent session once** (Claude Code: or `/reload-plugins`) so it picks up the mesh tools.
 
-Approvals pop up as a native OS dialog (macOS, Windows, Linux with zenity); no answer in 90 s = denied. Messages from
-teammates arrive as a notification. Manage the daemon with `node ~/.mesh/mesh.mjs status | stop | log`; re-run the
-one-liner to update. Run `join` without `--background` (or with `MESH_APPROVE=tty`) to approve in the terminal instead.
+Re-running the one-liner updates the bundle and stops + restarts a running daemon. Prefer a file? The room page offers
+`mesh-join-<room>.cmd` (Windows, double-click) and `mesh-join-<room>.command` (Mac, right-click → Open).
+
+**Approvals.** On the room page click **Pop out overlay** (shipping tonight): a small always-on-top window (Chrome/Edge
+Document Picture-in-Picture, popup fallback) with pending requests + Approve/Deny, teammate messages with a reply box, and
+the live feed. While it is open the daemon routes approvals there instead of the modal OS dialog; no answer in 120 s → the
+OS dialog appears as fallback. Same path for Codex, Cursor and Claude Code users. Without the overlay: native OS dialog
+(macOS, Windows message box, Linux zenity), no answer in 90 s = denied. Claude Code users additionally get requests and
+messages delivered inside their session by the plugin monitor. `MESH_APPROVE=tty` (or `join` without `--background`)
+approves in the terminal instead.
+
+**Messages.** Arrive in the overlay, as an OS notification (Windows: a small message box), live in Claude Code, and via the
+`inbox` tool. Codex/Cursor: *"Codex, watch mesh for the next 10 minutes"* makes the agent loop on `wait_for_events`
+(shipping tonight) and report each message or request as it lands; approvals stay with you. Manage the daemon with
+`node ~/.mesh/mesh.mjs status | stop | log`.
 
 ## Quick start for developers of mesh (from the repo)
 No build step for dev: `@mesh/protocol` is imported straight from `src/` by `tsx`.
@@ -91,8 +108,9 @@ Tests: `pnpm -F daemon test`, `pnpm -F daemon exec tsx test/mcp.test.ts`, `pnpm 
 
 ## Hosting the relay (the public link)
 The relay serves the web front door on the same port: `/` starts a session, `/r/<room>` is the room page with the join
-command, who's online, and a live feed; `/api/rooms` backs it. The same port serves the one-command join: `/install.sh`,
-`/install.ps1`, `/mesh.mjs` (the daemon bundle) and `/emit.js`. The install scripts bake in the relay's public origin from
+command, who's online, and a live feed; `/api/rooms` backs it; `/overlay?room=&port=` is the pop-out approval window
+(shipping tonight). The same port serves the one-command join: `/install.sh`, `/install.ps1`, `/join.cmd`, `/join.command`,
+`/mesh.mjs` (the daemon bundle), `/emit.js` and `/plugin.tgz` (the Claude Code plugin, built from `plugin/` at relay start). The install scripts bake in the relay's public origin from
 the request's `Host` / `X-Forwarded-Proto` headers, so they work behind ngrok and Railway without configuration.
 
 **Now:** `./scripts/tunnel-relay.sh` on Dev's Mac (relay `:8090` + ngrok). The hostname has been stable for this ngrok
@@ -105,13 +123,15 @@ the installers send `ngrok-skip-browser-warning: 1` and the daemon's WebSocket i
 work: the relay needs a long-lived WebSocket server.
 
 ## Verified (2026-09-12)
-Mac↔Mac and Mac↔Windows (Git `bash.exe` for shell offers) over the public relay: install one-liner, shell request →
-native dialog → output back, agent-to-agent messages both ways, Codex registration with codex-cli 0.154.
+Mac↔Mac and Mac↔Windows over the public relay: install one-liner (bash, and PowerShell on a real Windows box), shell
+request → native dialog (macOS; Windows MessageBox) → output back, Windows message-box notifications, agent-to-agent
+messages both ways, Codex registration with codex-cli 0.154, plugin auto-install during `mesh join` on Dev's Mac (which
+imports and offers Playwright, 24 tools, + filesystem, 14). Overlay and `wait_for_events`: shipping tonight, not yet verified.
 
 ## Known limits
 - Room name is the only auth.
-- Codex and Cursor owners get messages pull-only (`inbox` tool); only Claude Code has the prompt hook that injects them.
-- Windows PowerShell installer and the Windows dialog are untested on a real Windows box (the Mac↔Windows run used Git Bash).
+- Codex and Cursor agents get messages by pulling (`inbox`) or by looping on `wait_for_events`; only Claude Code has push
+  delivery (plugin monitor + prompt hook). Humans on any tool get them in the overlay.
+- The overlay needs Chrome/Edge for the always-on-top PiP window; other browsers get a plain popup.
 - Codex tool calls not exercised (no login); OAuth remote MCPs (official Figma, Linear) can't be imported — use a shell offer.
-- Agent sessions must restart once after registration (client tool-list caching). The Claude Code plugin path
-  (`docs/UX-RESEARCH.md`, branch `dev/plugin`) is in progress and removes that.
+- Agent sessions must restart once after registration (client tool-list caching; Claude Code: `/reload-plugins`).

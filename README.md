@@ -38,19 +38,36 @@ docs/
 - Commit small, push often, `git pull --rebase` before push. No long-lived branches; work on `main`.
 - Each step in PLAN.md has an acceptance test. Don't move on until it passes.
 
-## Quick start (verified end-to-end 2026-09-12)
-No build step: `@mesh/protocol` is imported straight from `src/` by `tsx`.
+## Quick start for teammates (one command, no clone)
+Open the room link someone shared (`https://<relay>/r/<room>`), type your handle, and run the command it shows.
+It needs Node 20+ and nothing else: no clone, no pnpm, no npm account.
+```bash
+# macOS / Linux
+curl -fsSL https://<relay>/install.sh | bash -s -- <room> --as <you>
+```
+```powershell
+# Windows PowerShell
+& ([scriptblock]::Create((irm https://<relay>/install.ps1))) <room> --as <you>
+```
+It downloads the single-file daemon (`~/.mesh/mesh.mjs`, served by the relay at `/mesh.mjs`) plus the hook
+emitter (`~/.mesh/emit.js`), joins the room, offers your Claude Code / Cursor MCP servers to teammates (default
+permission **ask**), and registers itself with Claude Code / Cursor / Codex. Restart your agent session and it has
+the mesh tools. Keep the terminal open: that is where you approve requests. Re-run the same command to update.
+
+## Quick start for developers of mesh (from the repo, verified end-to-end 2026-09-12)
+No build step for dev: `@mesh/protocol` is imported straight from `src/` by `tsx`.
 ```bash
 pnpm install
 pnpm -r typecheck                                        # all 4 packages
 
 # 1. relay — one laptop (Tarush), everyone else points at its URL
-./scripts/tunnel-relay.sh                                # relay on :8090 + ngrok, prints wss://<host>
-PORT=8090 pnpm -F relay start                            # or local-only: ws://localhost:8090
+./scripts/tunnel-relay.sh                                # bundles the daemon, relay on :8090 + ngrok, prints the install one-liner
+PORT=8090 pnpm -F relay start                            # or local-only: ws://localhost:8090 (warns if the bundle is missing)
+pnpm -F daemon bundle                                    # apps/daemon/dist/mesh.mjs (esbuild); the relay copies it to apps/relay/public/
 
 # 2. daemon — every laptop (reads ./team.json; `pnpm -F daemon start init` writes a starter)
 pnpm -F daemon start join rho --as dev --relay wss://<host>     # [--config ./team.json] [--port 7337]
-claude mcp add --transport http mesh http://localhost:7337/mcp  # Claude Code gets list_teammates/ask_teammate/…
+claude mcp add --transport http mesh http://localhost:7337/mcp  # manual; `mesh join` normally registers itself
 
 # 3. feed — the projector pane
 pnpm -F feed start rho --relay wss://<host>
@@ -66,6 +83,8 @@ Tests: `pnpm -F daemon test`, `pnpm -F daemon exec tsx test/mcp.test.ts`, `pnpm 
 ## Hosting the relay (the public link)
 The relay serves the web front door on the same port: `/` starts a session, `/r/<room>` is the room page with join commands, who's online, and a live feed.
 
-**Now (stop-gap):** `./scripts/tunnel-relay.sh` on any Mac with ngrok → prints `https://…ngrok-free.dev`. Free ngrok shows a one-time "visit site" interstitial in browsers; the daemon's WebSocket is unaffected.
+The same port also serves the one-command join: `/install.sh`, `/install.ps1`, `/mesh.mjs` (the daemon bundle) and `/emit.js`. The install scripts bake in the relay's public origin from the request's `Host` / `X-Forwarded-Proto` headers, so they work behind ngrok and Railway without configuration.
 
-**Permanent (Railway, ~5 min):** New Project → Deploy from GitHub repo → pick `dg4329-hash/rho_hackathon` (repo root; `railway.json` points at `apps/relay/Dockerfile`) → Settings → Networking → Generate Domain. The service reads `PORT` from Railway. Health check is `/health`. Vercel won't work: the relay needs a long-lived WebSocket server.
+**Now (stop-gap):** `./scripts/tunnel-relay.sh` on any Mac with ngrok → prints `https://…ngrok-free.dev` and the install one-liner. Free ngrok shows a one-time "visit site" interstitial in browsers; the installer sends `ngrok-skip-browser-warning: 1` and the daemon's WebSocket is unaffected.
+
+**Permanent (Railway, ~5 min):** New Project → Deploy from GitHub repo → pick `dg4329-hash/rho_hackathon` (repo root; `railway.json` points at `apps/relay/Dockerfile`, which runs `pnpm -F daemon bundle` so the image serves `/mesh.mjs`) → Settings → Networking → Generate Domain. The service reads `PORT` from Railway. Health check is `/health`. Vercel won't work: the relay needs a long-lived WebSocket server.

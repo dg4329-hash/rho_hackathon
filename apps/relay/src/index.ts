@@ -10,13 +10,16 @@
  *   close    remove conn, broadcast `presence`.
  *   ping     every PING_MS; a socket that missed the previous pong is terminated.
  *   GET /health  → { rooms, connections }   (same port as the WebSocket server)
+ *   GET /, /r/:room, /api/rooms…, /install.sh, /install.ps1, /mesh.mjs, /emit.js  → web.ts (front door + one-command join)
  *
  * Presence lists only conns that have sent `hello`; a conn that connected but has not yet announced itself
  * is invisible so nobody ever sees a member with an empty offer list mid-handshake.
  */
-import { handleWeb } from "./web.js";
+import { handleWeb, type WebAssets } from "./web.js";
+import fs from "node:fs";
 import http from "node:http";
-import { URL } from "node:url";
+import path from "node:path";
+import { URL, fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket, type RawData } from "ws";
 import { HISTORY_LIMIT, type Offer, type Role } from "@mesh/protocol";
 
@@ -97,6 +100,42 @@ function maybePrune(name: string, room: Room): void {
 }
 
 const REPO_URL = process.env.MESH_REPO_URL ?? "https://github.com/dg4329-hash/rho_hackathon";
+
+/**
+ * Static files for the one-command join, loaded once at start. `pnpm -F daemon bundle` writes
+ * apps/daemon/dist/mesh.mjs; we copy it (and hooks/emit.js) into apps/relay/public/ so the relay
+ * can also run from a checkout that only has public/ populated (Docker). Missing files only warn:
+ * the relay must still start without the bundle.
+ */
+function loadAssets(): WebAssets {
+  const here = path.dirname(fileURLToPath(import.meta.url)); // apps/relay/src (or dist)
+  const repoRoot = path.resolve(here, "../../..");
+  const publicDir = path.resolve(here, "../public");
+  const sources: Array<{ name: keyof WebAssets; file: string; from: string; hint: string }> = [
+    { name: "meshMjs", file: "mesh.mjs", from: path.join(repoRoot, "apps/daemon/dist/mesh.mjs"), hint: "run `pnpm -F daemon bundle`" },
+    { name: "emitJs", file: "emit.js", from: path.join(repoRoot, "hooks/emit.js"), hint: "hooks/emit.js is missing" },
+  ];
+  const assets: WebAssets = {};
+  for (const src of sources) {
+    const dest = path.join(publicDir, src.file);
+    try {
+      if (fs.existsSync(src.from) && (!fs.existsSync(dest) || fs.statSync(src.from).mtimeMs >= fs.statSync(dest).mtimeMs)) {
+        fs.mkdirSync(publicDir, { recursive: true });
+        fs.copyFileSync(src.from, dest);
+      }
+    } catch (e) {
+      console.warn(`! could not copy ${src.from} → ${dest}: ${(e as Error).message}`);
+    }
+    try {
+      assets[src.name] = fs.readFileSync(dest);
+      console.log(`  serving /${src.file} (${(assets[src.name]!.length / 1024).toFixed(0)} KB)`);
+    } catch {
+      console.warn(`! /${src.file} unavailable: ${dest} not found (${src.hint}); one-command join will not work on this relay`);
+    }
+  }
+  return assets;
+}
+
 const webDeps = {
   getRoom: (name: string) => {
     const room = rooms.get(name);
@@ -108,6 +147,7 @@ const webDeps = {
   },
   createRoom: (name: string) => { getOrCreateRoom(name); },
   repoUrl: REPO_URL,
+  assets: loadAssets(),
 };
 
 const server = http.createServer((req, res) => {
@@ -224,7 +264,7 @@ const pingInterval = setInterval(() => {
 pingInterval.unref?.();
 
 server.listen(PORT, () => {
-  console.log(`mesh relay listening on :${PORT} (ws + web UI at / + GET /health)`);
+  console.log(`mesh relay listening on :${PORT} (ws + web UI at / + GET /health + /install.sh)`);
 });
 
 function shutdown(signal: string): void {

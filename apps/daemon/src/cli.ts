@@ -11,6 +11,7 @@ import { createCore } from "./core.js";
 import { createLocalServer } from "./local-server.js";
 import { createMcpImport } from "./mcp-import.js";
 import { resolveNotes, resolvePermission } from "./permissions.js";
+import { defaultHandle, installClaudeHooks, parseRoomArg, printRegister, registerClaudeCode, registerCodex, registerCursor, type RegisterResult } from "./register.js";
 import { RelayClient } from "./relay-client.js";
 import { restoreTerminal } from "./approval.js";
 
@@ -46,24 +47,31 @@ function loadWithFlags(room: string | undefined, flags: CommonFlags): { config: 
     const loaded = loadConfig(flags.config, overrides);
     return { config: loaded.config, cwd: loaded.cwd, source: loaded.path };
   } catch (e) {
-    // No file but all three flags given (typical for `mesh ask` from a scratch dir): synthesize a config.
-    if (!flags.config && flags.as && room && flags.relay) {
-      return { config: configFromFlags(flags.as, room, flags.relay), cwd: userCwd(), source: "flags" };
+    // No file: synthesize a config from flags/defaults (zero-config join; `mesh ask` from a scratch dir).
+    const relay = flags.relay ?? process.env.MESH_RELAY;
+    if (!flags.config && room && relay) {
+      return { config: configFromFlags(flags.as ?? defaultHandle(), room, relay), cwd: userCwd(), source: "defaults (no team.json)" };
     }
-    return fail((e as Error).message);
+    return fail((e as Error).message + (relay ? "" : "\n  hint: pass the room link (https://<relay>/r/<room>) or --relay wss://<host>"));
   }
 }
 
 // ---------- join ----------
 program
   .command("join")
-  .description("join a room as a daemon and serve your offers")
-  .argument("<room>")
-  .requiredOption("--as <user>", "your handle")
-  .option("--relay <url>", "relay websocket url")
+  .description("join a room (name or room link) and serve your offers; registers the mesh MCP server with your agents")
+  .argument("<room>", "room name, or a room link like https://<relay>/r/<room>")
+  .option("--as <user>", "your handle (default: git user.name)")
+  .option("--relay <url>", "relay websocket url (derived from a room link)")
   .option("--config <path>", "path to team.json")
   .option("--port <n>", "local MCP/HTTP port", String(DEFAULT_PORT))
-  .action(async (room: string, flags: CommonFlags & { port: string }) => {
+  .option("--no-register", "don't touch Claude Code / Cursor / Codex config or hooks")
+  .option("--cursor", "force Cursor registration even if no .cursor dir is present")
+  .option("--codex", "force Codex registration even if codex isn't installed")
+  .action(async (roomArg: string, flags: CommonFlags & { port: string; register: boolean; cursor?: boolean; codex?: boolean }) => {
+    const target = parseRoomArg(roomArg);
+    const room = target.room;
+    if (target.relay && !flags.relay) flags.relay = target.relay;
     const { config, cwd, source } = loadWithFlags(room, flags);
     const port = Number(flags.port) || DEFAULT_PORT;
 
@@ -100,6 +108,17 @@ program
     const server = createLocalServer();
     try {
       await server.start(core, port);
+      if (flags.register !== false) {
+        const results: RegisterResult[] = [
+          registerClaudeCode(port, cwd),
+          installClaudeHooks(cwd, port),
+          registerCursor(port, cwd, flags.cursor),
+          registerCodex(port, flags.codex),
+        ];
+        console.log(chalk.dim("agents:"));
+        printRegister(results);
+        if (results.some((r) => r.status === "registered")) console.log(chalk.yellow("  ↻ restart your agent session so it picks up the mesh tools"));
+      }
     } catch (e) {
       fail(`local server failed to start on :${port}: ${(e as Error).message}`);
     }

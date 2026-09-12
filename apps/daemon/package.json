@@ -3,13 +3,16 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "bin": { "mesh": "./dist/cli.js" },
+  "bin": {
+    "mesh": "./dist/cli.js"
+  },
   "scripts": {
     "dev": "tsx watch src/cli.ts",
     "start": "tsx src/cli.ts",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "tsx test/run.ts"
+    "test": "tsx test/run.ts",
+    "bundle": "node build.mjs"
   },
   "dependencies": {
     "@mesh/protocol": "workspace:*",
@@ -26,6 +29,7 @@
   "devDependencies": {
     "@types/express": "^4.17.21",
     "@types/shell-quote": "^1.7.5",
-    "@types/ws": "^8.5.12"
+    "@types/ws": "^8.5.12",
+    "esbuild": "^0.28.2"
   }
 }

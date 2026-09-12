@@ -14,7 +14,12 @@ COPY apps/feed/package.json apps/feed/
 RUN pnpm install --frozen-lockfile
 
 COPY packages/protocol packages/protocol
+COPY apps/daemon apps/daemon
+COPY hooks hooks
 COPY apps/relay apps/relay
+
+# Single-file daemon bundle, served at GET /mesh.mjs for the one-command join (curl …/install.sh | bash).
+RUN pnpm -F daemon bundle
 
 ENV NODE_ENV=production
 EXPOSE 8080

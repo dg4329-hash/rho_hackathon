@@ -6,3 +6,5 @@ dist/
 team.json
 *.log
 .claude/settings.local.json
+.local/
+.cursor/rules/local-build-log.mdc

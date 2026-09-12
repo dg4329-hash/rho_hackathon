@@ -1,0 +1,39 @@
+{
+  "user": "tarush",
+  "room": "rho",
+  "relay": "wss://REPLACE_WITH_DEPLOYED_RELAY",
+  "cwd": ".",
+  "timeoutSeconds": 120,
+  "allowArbitrary": "ask",
+  "import": {
+    "fromClaudeCode": true,
+    "fromCursor": true,
+    "servers": ["*"],
+    "defaultPermission": "ask"
+  },
+  "permissions": {
+    "*.list_*": "always",
+    "*.get_*": "always",
+    "*.read_*": "always",
+    "*.delete_*": "never",
+    "figma.*": "ask"
+  },
+  "notes": {
+    "figma.*": "Use shell offer figma.export with <fileKey> <nodeId>.",
+    "supabase.*": "Add project-specific table notes before the demo."
+  },
+  "offers": [
+    {
+      "name": "figma.export",
+      "command": "./scripts/figma-export.sh",
+      "description": "Export a Figma frame to PNG + text outline. Usage: figma-export.sh <fileKey> <nodeId>",
+      "permission": "ask"
+    },
+    {
+      "name": "echo",
+      "command": "echo",
+      "description": "Echo text back. Usage: echo <text>",
+      "permission": "always"
+    }
+  ]
+}

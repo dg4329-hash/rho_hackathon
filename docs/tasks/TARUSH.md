@@ -2,6 +2,8 @@
 
 # Tarush — `apps/relay`, deploy, `team.json` tooling, Figma script
 
+Session build log (detailed status + evidence): [`TARUSH-BUILD-LOG.md`](TARUSH-BUILD-LOG.md).
+
 Subscription: Cursor Pro (if you actually have the Claude Pro seat, swap files with Abhi; nothing else changes). Your relay unblocks everyone, so step 1 first and fast.
 
 ## Deliverables
@@ -48,3 +50,83 @@ With Dev: `ask_teammate` on `sleep 70 && echo done` must return `{ status: 'runn
 
 ## Definition of done
 Relay deployed and stable for a 30-minute session with three laptops connected. Figma script demoed to the team. Paste `wscat` transcript and Figma script output under "Evidence" below.
+
+## Evidence
+
+### 2026-09-12 — Step 1 relay (local acceptance)
+
+Commands:
+
+```text
+pnpm -F @mesh/protocol build
+pnpm -F relay typecheck
+pnpm -F relay start
+# Node WS clients (wscat-equivalent) in room x:
+B received A event: true
+C got presence: true
+C got history replay: true
+OK true
+curl.exe http://localhost:8080/health → {"rooms":…,"connections":…}
+```
+
+Relay implements rooms, hello→presence+history replay, verbatim fan-out, ping/25s, GET /health.
+
+### 2026-09-12 — Deploy
+
+- Added `apps/relay/Dockerfile`, `apps/relay/railway.toml`, `scripts/deploy-relay.sh`.
+- `npx @railway/cli whoami` → Unauthorized (need `railway login`).
+- `ngrok` → ERR_NGROK_4018 (need authtoken).
+- PLAN.md §2 notes pending public URL; local `ws://localhost:8080` works.
+- **Next for Tarush:** `npx @railway/cli login` then `./scripts/deploy-relay.sh`; paste `wss://` into PLAN §2.
+
+### 2026-09-12 — validate + figma + team.json
+
+```text
+pnpm -F relay validate ../../team.json
+OK …\team.json
+  user=tarush room=rho
+  relay=ws://localhost:8080
+  shell offers=2
+```
+
+- `scripts/figma-export.sh` present; bash `-n` syntax OK; refuses missing args / missing `FIGMA_TOKEN`.
+- Live Figma PNG/outline **not** run — `FIGMA_TOKEN` unset on this machine.
+- Local gitignored `team.json` + `scripts/team.json.starter` for mesh-init content.
+- MCP smoke snippet: `.local/cursor-mcp.snippet.json` (filesystem via npx). Merge into Cursor MCP settings when ready; add GitHub/Supabase keys for demo.
+
+### 2026-09-12 — S1 relay soak (daemon E2E still blocked)
+
+```text
+pnpm -F relay exec tsx src/soak-s1.ts
+asker received 80/80 output frames
+asker received result: true
+late joiner history outputs: 80, result: true
+SOAK OK
+```
+
+Full `ask_teammate` / `check_job` on `sleep 70` needs Dev’s daemon (still stub). No relay ordering issues found in soak.
+
+### 2026-09-12 — verification + fixes by Dev's agent (see `TARUSH-HANDOFF.md` for the full record)
+
+- Relay re-verified against CONTRACT §1 with `pnpm -F relay test` (28 checks, `apps/relay/test/relay.test.ts`): the `a4c32a3` relay failed 5 (presence listed conns before their `hello`; replay on every `hello`; presence sent before replay; malformed frames stored + forwarded). All fixed in `apps/relay/src/index.ts`; suite is 28/28 locally and over `wss://` ngrok.
+- Real daemon E2E (`dev/daemon` @ `44d66cf`) through this relay:
+
+```text
+pnpm -F daemon start join verify --as a --config <scratch team.json> --port 7411
+● connected to ws://localhost:8090 room=verify as a
+
+pnpm -F daemon start ask a "echo relay-ok" --why test --room verify --as b --relay ws://localhost:8090
+relay-ok
+← exit 0 in 3 ms                         EXIT=0
+
+pnpm -F daemon start ask a "sleep 70 && echo done" --wait 80 …   (S1)
+done
+← exit 0 in 70010 ms                     EXIT=0
+
+late joiner replay: ["request","decision","output","result", …, "presence"]; presence lists a with echo:always,sleep:always; drops members on close; rooms isolated.
+```
+
+- Public URL: `./scripts/tunnel-relay.sh` (relay :8090 + ngrok) → `wss://<host>.ngrok-free.dev`; `/health` 200 through the tunnel; `ask … --relay wss://…` → exit 0; `RELAY_URL=wss://… pnpm -F relay test` → PASS; `pnpm -F relay soak` → `SOAK OK`. URL rotates per launch, so it lives in the launcher output, not in docs. Railway still blocked (no CLI/Docker on Dev's machine).
+- `figma-export.sh` dry-verified against a local mock of both endpoints (correct URLs, token header, PNG written, readable outline). **Live run pending `FIGMA_TOKEN`.**
+- `pnpm -F relay validate ./team.json` now works from the repo root (`INIT_CWD`).
+

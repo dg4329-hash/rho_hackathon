@@ -20,7 +20,7 @@ Everything else (`docs/CONTRACT.md`, `docs/PLAN.md`, `README.md`, root configs, 
 4. `docs/PLAN.md` §3 for where your step sits in the build order.
 
 ## Step 3 — how to work
-- Small commits, push often: `git pull --rebase origin main && git push`. No feature branches unless your user asks.
+- Small commits, push often: `git pull --rebase origin main && git push`. No feature branches unless your user asks (current exception: the Claude Code plugin on `dev/plugin`).
 - Commit message prefix: `relay:`, `daemon:`, `feed:`, `hooks:`, `protocol:`, `docs:`.
 - Run `pnpm typecheck` before every push. Don't push red.
 - Node 22, pnpm 10, TypeScript, ESM. `tsx` for dev. No new top-level dependencies without noting them in your task file.
@@ -29,4 +29,6 @@ Everything else (`docs/CONTRACT.md`, `docs/PLAN.md`, `README.md`, root configs, 
 - If you're blocked on another person's piece, build against a mock (Abhi's fixtures, Dev's `mesh ask` CLI, a local relay) and say so in your Evidence note.
 
 ## What this project is (30 seconds)
-`mesh` lets one teammate's coding agent use another teammate's tools and MCP servers through that teammate's own machine, with a y/n approval, without credentials ever moving. Three processes: a dumb WebSocket **relay** (Tarush), a per-laptop **daemon** that imports the owner's MCP servers and hosts a local MCP server for the IDE agent (Dev), and a terminal **feed** plus hooks that make it visible (Abhi). Pitch: *borrow a teammate's machine, not their credentials.*
+`mesh` lets one teammate's coding agent use another teammate's tools and MCP servers through that teammate's own machine, with an owner approval (native OS dialog, or `[y/n]` in the terminal), without credentials ever moving. Three processes: a dumb WebSocket **relay** that also serves the room page and the one-command installers (Tarush), a per-laptop **daemon** installed by one `curl` that imports the owner's MCP servers, registers itself with Claude Code / Codex / Cursor, and hosts a local MCP server with eight tools (Dev), and a terminal **feed** plus hooks that make it visible (Abhi). Pitch: *borrow a teammate's machine, not their credentials.*
+
+Facts that changed recently (keep docs consistent with these): join is zero-config (room name or room link, no `team.json` needed); registration and hooks are installed by `mesh join`; approvals are native dialogs first, TTY second; `mesh join --background` / `status` / `stop` / `log` exist; tools are eight (`send_message`, `inbox` added). `docs/CONTRACT.md` is authoritative.

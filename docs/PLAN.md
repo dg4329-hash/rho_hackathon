@@ -17,48 +17,54 @@ Those move your team into a hosted sandbox and pool credentials in a vault. We c
 
 ## 2. What it is (three processes, one you barely write)
 
-**Public relay URL (Tarush):** provided at runtime — Tarush runs `./scripts/tunnel-relay.sh` (relay on `:8090` + ngrok) and it prints the session's `wss://<host>.ngrok-free.dev` URL, which goes into everyone's `team.json` `"relay"` (or `mesh join --relay …`) and the group chat. The URL changes every launch on the free ngrok plan, so it is deliberately not written here. Local dev: `ws://localhost:8080` (`pnpm -F relay start`). Railway (`scripts/deploy-relay.sh`, Dockerfile in `apps/relay/`) is blocked until someone has the Railway CLI + Docker; once deployed, replace this line with the permanent `wss://<host>`.
+**Public relay URL:** Dev runs `./scripts/tunnel-relay.sh` on his Mac (bundles the daemon, relay on `:8090` + ngrok) and it prints `https://<host>.ngrok-free.dev` plus the install one-liners; the hostname has been stable for this ngrok account (`NGROK_DOMAIN=…` pins it). Teammates join from the room page `https://<host>/r/<room>`; nothing needs to be pasted into a config. Local dev: `ws://localhost:8090`. Railway (`railway.json` → `apps/relay/Dockerfile`, deploy from GitHub in the dashboard, no CLI needed) is still to do; once deployed, replace this line with the permanent host.
 
 ```
- Dev's laptop                        Tarush's laptop
- ┌──────────────┐                    ┌──────────────┐
- │ Claude Code  │                    │ Cursor       │
- │   │ MCP (http localhost:7337)     │   │ MCP       │
- │ ┌─▼────────┐ │      WebSocket     │ ┌─▼────────┐ │
- │ │ daemon   │◄├────────┐  ┌────────┤►│ daemon   │ │
- │ │ team.json│ │        │  │        │ │ team.json│ │
- │ └──────────┘ │      ┌─▼──▼─┐      │ └────┬─────┘ │
- └──────────────┘      │relay │      │  y/n │ spawn │
-                       │rooms │      │  figma-export│
-                       └──▲───┘      └──────────────┘
-                          │
-                    Abhi: `mesh feed` (prints everything in the room)
+ Dev's laptop                                Tarush's laptop
+ ┌────────────────────┐                      ┌────────────────────┐
+ │ Claude Code        │                      │ Cursor / Codex     │
+ │   │ MCP http://localhost:7337/mcp         │   │ MCP             │
+ │ ┌─▼──────────────┐ │      WebSocket       │ ┌─▼──────────────┐ │
+ │ │ daemon         │◄├─────────┐  ┌─────────┤►│ daemon         │ │
+ │ │ (~/.mesh)      │ │         │  │         │ │ imported MCPs  │ │
+ │ └────────────────┘ │       ┌─▼──▼─┐       │ └───────┬────────┘ │
+ └────────────────────┘       │relay │       │  OS dialog │ spawn │
+                              │rooms │       │  Approve   │ figma-export
+                              │ /r/… │       └────────────────────┘
+                              └──▲───┘
+                                 │
+                    Abhi: `mesh feed` + the room page (everything in the room)
 ```
 
-1. **relay** (`apps/relay`) — one Node file. WebSocket server. Rooms keyed by string. Fan-out of every message to room members. Keeps last 200 events per room for late joiners. No auth: the room name is the secret, and we say so on stage.
-2. **daemon** (`apps/daemon`) — `mesh join <room> --as <name>`. Connects to relay. **Imports the owner's MCP servers as an MCP client** (spawns stdio servers from their config, `tools/list`), and announces every tool as an *offer* with its description and schema, plus any shell offers from `team.json`. On an incoming request it prints `<who> wants to call supabase.run_sql {…}  [y/n]`, then either calls the tool on the owner's server or spawns the shell command, and streams the result back. Same process hosts a **local MCP server** (streamable HTTP on `localhost:7337`) exposing six static tools: `list_teammates`, `describe_capability`, `ask_teammate`, `check_job`, `post_event`, `team_activity`.
-3. **feed** (`apps/feed`) — `mesh feed <room>`. Joins the room read-only and pretty-prints every event: presence, prompts, tool calls, files touched, requests, approvals, streamed output. This is what's on the projector. Plus the Claude Code hook scripts that emit prompt/file events.
+1. **relay** (`apps/relay`) — one Node process. WebSocket server with rooms, fan-out of every frame, last 200 frames replayed to late joiners. Same port serves the web front door (`/`, `/r/<room>` room page with the join command, who's online, live feed) and the installers (`/install.sh`, `/install.ps1`, `/mesh.mjs`, `/emit.js`). No auth: the room name is the secret, and we say so on stage.
+2. **daemon** (`apps/daemon`) — one command per laptop: `curl -fsSL https://<relay>/install.sh | bash -s -- <room>` (PowerShell equivalent on Windows) downloads a single 2.5 MB bundle to `~/.mesh` and runs `mesh join <room> --background`. Zero-config: handle from `git user.name`, no `team.json` needed (honoured if present). It **imports the owner's MCP servers as an MCP client** (Claude Code / Cursor configs, `tools/list`) and announces every tool as an *offer* with its description and schema (permission `ask`), plus any shell offers. It **registers itself** with Claude Code (`claude mcp add` + hooks), Codex (`codex mcp add`) and Cursor (`.cursor/mcp.json`); one session restart later the agent has the tools. On an incoming request the owner gets a **native OS dialog** (`dev wants to run: figma-export … [Deny] [Approve]`, 90 s → denied; terminal `[y/n]` when there's no dialog), then the daemon calls the tool on the owner's server or spawns the shell command and streams the result back. Messages between agents arrive as notifications. `mesh status` / `stop` / `log` manage the background daemon. Same process hosts a **local MCP server** (streamable HTTP on `localhost:7337`) exposing eight static tools: `list_teammates`, `describe_capability`, `ask_teammate`, `check_job`, `post_event`, `team_activity`, `send_message`, `inbox`.
+3. **feed** (`apps/feed`) — `mesh feed <room>`. Joins the room read-only and pretty-prints every event: presence, prompts, tool calls, files touched, requests, approvals, streamed output, messages. This is what's on the projector (the relay's room page shows the same in a browser). Plus the Claude Code hook scripts (`hooks/emit.js`, installed by `mesh join`) that emit prompt/file events and inject unread messages + team activity into every prompt.
 
-Teammates' tools never appear as first-class tools in the requester's client (that's where client caching and `list_changed` bugs live). They come back as *data* from our six static tools, two-level: one line per tool from `list_teammates`, full schema + owner notes from `describe_capability` only when the agent decides to use one.
+Teammates' tools never appear as first-class tools in the requester's client (that's where client caching and `list_changed` bugs live). They come back as *data* from our static tools, two-level: one line per tool from `list_teammates`, full schema + owner notes from `describe_capability` only when the agent decides to use one.
+
+In progress on branch `dev/plugin`: a Claude Code plugin (`docs/UX-RESEARCH.md`) that delivers requests into the owner's Claude Code session and removes the restart. Not part of the demo path until it lands.
 
 ## 3. Build order (each step has an acceptance test; do not skip ahead)
 
-Status as of 2026-09-12 (all three branches merged to `main`; single-machine integration run: relay :8090 + daemons tarush/dev + feed + hooks + MCP client, every step rendered in the feed).
+Status as of 2026-09-12 (late evening, `main` @ `df4a70e`): cross-laptop proven over the public relay, Mac↔Mac and Mac↔Windows, with the one-command install, native dialogs and agent-to-agent messages both ways.
 
 | step | what | owner | status | acceptance test |
 |---|---|---|---|---|
-| 0 | `packages/protocol` types + CONTRACT.md | Dev | done (exports `src/`, no build) | `pnpm -r typecheck` passes; others can import |
-| 1 | Relay + two terminals echoing | Tarush | done (28/28 contract checks, soak OK) | two `wscat` clients in room `x` see each other's `event` messages |
-| 2 | Daemon: join, offers, y/n, spawn, stream | Dev | done (daemon suite 20/20; live y/n verified) | Tarush's daemon runs `echo hi` requested from Dev's daemon CLI (`mesh ask tarush "echo hi"`), stdout appears on both |
-| 3 | MCP wrapper inside daemon | Dev | done (MCP client → `ask_teammate` → stdout, verified) | Claude Code on Dev's laptop calls `ask_teammate` and gets stdout back in the tool result |
-| 3b | Import owner's MCP servers as offers; `describe_capability`; mcp-form `ask_teammate` | Dev | done against fixture server; not yet against a real Supabase/Linear server | Tarush's daemon imports a stdio MCP (e.g. `@modelcontextprotocol/server-filesystem` or Supabase); Dev's Claude Code lists it, describes it, calls it, gets the tool result |
-| 4 | Broadcast + `mesh feed` | Abhi | done (real relay + daemons, not mocks) | third laptop running `mesh feed` shows request → approval → output live |
-| 5 | Hooks: prompts, files touched | Abhi | done (`emit.js prompt` → feed + `/activity`; `install.sh` verified) — not yet from a live Claude Code session | typing a prompt in Claude Code on any laptop shows up in everyone's feed within 2s |
-| 6 | Real MCPs on Tarush's laptop for the demo (Supabase/Linear/GitHub stdio servers with keys) + Figma shell script as OAuth fallback | Tarush | partial: figma-export.sh written, needs FIGMA_TOKEN run; real MCP import untested | each imports cleanly on `mesh join`; `describe_capability` output reads well; figma-export.sh works |
-| 7 | End-to-end demo rehearsal | all | not done (needs three laptops on the tunnel URL) | the script in §5 runs clean twice in a row |
-| S1 | `check_job` for long commands | Tarush | daemon side done (`check_job` returns running/completed); relay soak OK | `ask_teammate` on `sleep 70` returns a jobId; `check_job` returns exit 0 |
-| S2 | Deny path + `never` permission shown in demo | Dev | done (denied → `{status:"denied", reason}` verified) | denied request returns a clear error to the agent |
-| S3 | Web dashboard | Abhi | not started | only if 4-7 are done and rehearsed |
+| 0 | `packages/protocol` types + CONTRACT.md | Dev | done (8 tools, `message` event) | `pnpm -r typecheck` passes; others can import |
+| 1 | Relay + two terminals echoing | Tarush | done (28/28 contract checks, soak OK); + web front door, room page, installers; public via ngrok on Dev's Mac; **Railway not done** | two `wscat` clients in room `x` see each other's `event` messages |
+| 2 | Daemon: join, offers, approve, spawn, stream | Dev | done; **cross-laptop with two humans, Mac↔Mac and Mac↔Windows** (Git `bash.exe`); native dialog on macOS verified, Windows dialog + PowerShell installer **untested on a real Windows box** | Tarush's daemon runs `echo hi` requested from Dev's laptop, stdout appears on both |
+| 2b | One-command install, zero-config join, auto-registration, background mode | Dev | done (`install.sh` verified macOS + Git Bash; `claude mcp add`, hooks, `codex mcp add` with codex-cli 0.154, `.cursor/mcp.json`); session restart still required | fresh laptop: one-liner → `mesh status` shows running → agent lists mesh tools after restart |
+| 3 | Local MCP server in the daemon | Dev | done; called from live Claude Code; **Codex tool calls not exercised (no login)** | Claude Code on Dev's laptop calls `ask_teammate` and gets stdout back in the tool result |
+| 3b | Import owner's MCP servers as offers; `describe_capability`; mcp-form `ask_teammate` | Dev | done (real Claude Code / Cursor configs imported by default; self-import excluded); **no keyed server (Supabase/GitHub) borrowed yet**; OAuth remotes can't be imported | Dev's Claude Code lists, describes, calls a tool imported on Tarush's laptop, gets the tool result |
+| 3c | Agent-to-agent messages (`send_message` / `inbox`, prompt-hook injection, notifications) | Dev | done cross-laptop both ways; Codex/Cursor pull-only | message sent from Dev's agent shows in Tarush's terminal + notification, and in his agent's next prompt / `inbox` |
+| 4 | Broadcast + `mesh feed` (+ room page) | Abhi | done (real relay + daemons); **not yet on the projector** | third laptop running `mesh feed` shows request → approval → output live |
+| 5 | Hooks: prompts, files touched | Abhi | done; installed automatically by `mesh join`; **prompt → feed not yet timed from live Claude Code on two laptops** | typing a prompt in Claude Code on any laptop shows up in everyone's feed within 2 s |
+| 6 | Real MCPs on Tarush's laptop + Figma shell script | Tarush | partial: `figma-export.sh` supports name lookup (`"Onboarding/Step 2"`, `FIGMA_FILE_KEY`), dry-verified against a mock; **no live `FIGMA_TOKEN` run; no keyed MCP server configured** | each imports cleanly on `mesh join`; `describe_capability` reads well; `figma-export.sh "<frame>"` returns in < 5 s |
+| 7 | End-to-end demo rehearsal | all | not done | the script in §5 runs clean twice in a row |
+| S1 | `check_job` for long commands | Tarush | done (`sleep 70` → running → `check_job` → done; relay soak OK) | `ask_teammate` on `sleep 70` returns a jobId; `check_job` returns exit 0 |
+| S2 | Deny path + `never` permission shown in demo | Dev | done in tests and once by hand; **never on stage** | denied request returns a clear error to the agent |
+| S3 | Web dashboard | Abhi | superseded by the relay's room page (`/r/<room>`) | — |
+| P | Claude Code plugin (in-session approvals, no restart) | Dev | in progress on `dev/plugin`; not on the demo path | `/plugin install` → request appears in the owner's Claude Code session |
 
 Steps 1-2 are a working product with zero AI in it. If step 3 fights you, demo 1-2 plus the feed.
 
@@ -74,20 +80,22 @@ Detailed specs: `docs/tasks/DEV.md`, `docs/tasks/TARUSH.md`, `docs/tasks/ABHI.md
 
 ## 5. Demo script (target)
 
-Three laptops. Projector shows Abhi's `mesh feed` full-screen; Dev's and Tarush's terminals on the side.
+Three laptops. Projector shows Abhi's `mesh feed` full-screen (or the room page); Dev's and Tarush's screens on the side. Full run of show in `docs/DEMO.md`.
 
+0. (Optional opener, 20 s) Tarush's laptop is fresh: he pastes the one-liner from the room page, a dialog-capable daemon is up in the background, his MCP servers appear in presence.
 1. Abhi: "Every one of us has a coding agent. None of them can talk to each other. Dev's agent has no Figma. Tarush's does."
 2. Dev types into Claude Code: *"Implement onboarding step 2 to match the Figma frame `Onboarding/Step 2`."*
-3. Feed shows: `dev › prompt: Implement onboarding step 2…` then `dev › ask tarush: figma-export 8fA… 12:34  (why: need the frame to match)`.
-4. Tarush's terminal: `dev wants to run: figma-export 8fA… 12:34  [y/n]` → **y**. Feed: `tarush › approved`. Output streams. Feed: `tarush › done (exit 0, 2.1s)`.
-5. Dev's agent continues coding with the description/PNG. Dev did not stop. Tarush did not stop.
-6. Abhi: "Now the part nobody else does." Dev's agent asks Tarush for `vercel --prod`. Tarush hits **n**. Feed: `tarush › denied`. Dev's agent says so and moves on. *"Credentials never moved. Every request needed a yes."*
-7. Close: "One npx per laptop. No cloud workspace, no shared vault. Your team's machines become your agent's tools."
+3. Feed shows: `dev 💬 prompt: Implement onboarding step 2…` then `dev ──▶ tarush $ figma-export.sh "Onboarding/Step 2"  (why: need the frame to match)`.
+4. Tarush's screen: system dialog `mesh: dev is asking — run: figma-export.sh "Onboarding/Step 2" — why: …  [Deny] [Approve]` → **Approve**. Feed: `tarush ✅ approved`. Output streams. Feed: `tarush ✔ exit 0 in 2.1s`.
+5. Dev's agent continues coding from the outline. Dev did not stop. Tarush did not stop.
+6. Abhi: "Now the part nobody else does." Dev's agent asks Tarush for `vercel --prod`. Tarush clicks **Deny**. Feed: `tarush ❌ denied (owner declined)`. Dev's agent says so and moves on. *"Credentials never moved. Every request needed a yes."*
+7. (If time) Dev's agent `send_message`s Tarush's agent what it changed; the notification pops on Tarush's screen; it's in his agent's next prompt.
+8. Close: "One command per laptop, nothing to install. No cloud workspace, no shared vault, no new IDE. Your team's machines become your agent's tools."
 
 ## 6. Decisions (don't re-open)
 
 - **Daemon + dumb relay, not hosted server + sidecars.** Local MCP server per laptop; relay is fan-out only.
-- **Universal via MCP-client import, not per-integration code.** The daemon imports the owner's MCP servers and re-offers their tools with verbatim descriptions/schemas + owner notes. Teammates' tools are *data* from six static tools, never first-class tools in the requester's client. Shell offers cover non-MCP and OAuth-only cases.
+- **Universal via MCP-client import, not per-integration code.** The daemon imports the owner's MCP servers and re-offers their tools with verbatim descriptions/schemas + owner notes. Teammates' tools are *data* from eight static tools, never first-class tools in the requester's client. Shell offers cover non-MCP and OAuth-only cases.
 - **Own job table in the daemon; no MCP Tasks extension.**
 - **Room name is the only auth.** Say it out loud.
 - **Feed shows observable events only** (prompts, tool calls, files, requests, output). Never hidden reasoning.

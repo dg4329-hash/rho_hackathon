@@ -16,15 +16,16 @@ export interface LoadedConfig {
 }
 
 export function candidatePaths(flag?: string): string[] {
+  const base = userCwd();
   const list: string[] = [];
-  if (flag) list.push(path.resolve(flag));
-  list.push(path.resolve("team.json"));
+  if (flag) list.push(path.resolve(base, flag));
+  list.push(path.resolve(base, "team.json"));
   list.push(path.join(homedir(), ".mesh", "team.json"));
   return list;
 }
 
 export function findConfigPath(flag?: string): string | undefined {
-  if (flag) return path.resolve(flag);
+  if (flag) return path.resolve(userCwd(), flag);
   return candidatePaths().find((p) => existsSync(p));
 }
 
@@ -32,6 +33,11 @@ export function findConfigPath(flag?: string): string | undefined {
  * Load and validate team.json. `overrides` (from CLI flags) are applied before validation so flags win.
  * Throws an Error with a readable message on any failure.
  */
+/** Where the user actually ran the command. `pnpm -F daemon start …` sets cwd to apps/daemon but exports INIT_CWD. */
+export function userCwd(): string {
+  return process.env.INIT_CWD || process.cwd();
+}
+
 export function loadConfig(flag?: string, overrides: Partial<Record<"user" | "room" | "relay", string>> = {}): LoadedConfig {
   const file = findConfigPath(flag);
   if (!file || !existsSync(file)) {
@@ -59,7 +65,7 @@ export function loadConfig(flag?: string, overrides: Partial<Record<"user" | "ro
     }
     throw e;
   }
-  const cwd = config.cwd ? path.resolve(path.dirname(file), config.cwd) : process.cwd();
+  const cwd = config.cwd ? path.resolve(path.dirname(file), config.cwd) : userCwd();
   return { config, path: file, cwd };
 }
 

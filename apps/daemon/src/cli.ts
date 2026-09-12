@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import chalk from "chalk";
 import { DEFAULT_PORT, type Offer, type TeamConfig } from "@mesh/protocol";
-import { configFromFlags, loadConfig } from "./config.js";
+import { configFromFlags, loadConfig, userCwd } from "./config.js";
 import { createCore } from "./core.js";
 import { createLocalServer } from "./local-server.js";
 import { createMcpImport } from "./mcp-import.js";
@@ -48,7 +48,7 @@ function loadWithFlags(room: string | undefined, flags: CommonFlags): { config: 
   } catch (e) {
     // No file but all three flags given (typical for `mesh ask` from a scratch dir): synthesize a config.
     if (!flags.config && flags.as && room && flags.relay) {
-      return { config: configFromFlags(flags.as, room, flags.relay), cwd: process.cwd(), source: "flags" };
+      return { config: configFromFlags(flags.as, room, flags.relay), cwd: userCwd(), source: "flags" };
     }
     return fail((e as Error).message);
   }
@@ -173,13 +173,13 @@ program
   .command("init")
   .description("write a starter team.json in the current directory")
   .action(() => {
-    const target = path.resolve("team.json");
+    const target = path.resolve(userCwd(), "team.json");
     if (existsSync(target)) return console.log(chalk.yellow(`${target} already exists; leaving it alone`));
     const here = path.dirname(fileURLToPath(import.meta.url));
     const candidates = [
       path.resolve(here, "../../../team.json.example"), // repo root from apps/daemon/{src,dist}
       path.resolve(here, "../team.json.example"),
-      path.resolve("team.json.example"),
+      path.resolve(userCwd(), "team.json.example"),
     ];
     const example = candidates.find((p) => existsSync(p));
     if (!example) return fail("team.json.example not found; copy one from the repo root");

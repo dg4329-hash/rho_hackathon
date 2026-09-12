@@ -110,6 +110,11 @@ export function discoverServers(config: TeamConfig, cwd: string): ServerEntry[] 
   for (const [name, raw] of Object.entries(merged)) {
     if (!all && !wanted.includes(name)) continue;
     const e = toEntry(name, raw);
+    // Never re-import our own local MCP server (would loop: mesh → mesh.ask_teammate → …).
+    if (e && (name === "mesh" || (e.kind !== "stdio" && /^https?:\/\/(localhost|127\.0\.0\.1):\d+\/mcp\/?$/.test(String((e as { url?: string }).url ?? ""))))) {
+      debug(`skipping ${name}: that's mesh itself`);
+      continue;
+    }
     if (e) entries.push(e);
     else debug(`ignoring server ${name}: no command or url`);
   }

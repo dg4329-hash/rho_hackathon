@@ -31,6 +31,11 @@ if command -v lsof >/dev/null 2>&1 && lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/
   exit 1
 fi
 
+if curl -fsS "$NGROK_API/api/tunnels" >/dev/null 2>&1; then
+  echo "another ngrok is already running (API at $NGROK_API); stop it first: pkill -x ngrok" >&2
+  exit 1
+fi
+
 RELAY_PID=""
 NGROK_PID=""
 # Kill a process and everything it spawned (pnpm/tsx wrappers, ngrok workers).

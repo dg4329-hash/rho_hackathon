@@ -2,7 +2,7 @@
  * OS-level approval dialogs and notifications. Universal: works no matter which coding tool the
  * owner uses (Claude Code, Codex, Cursor, plain CLI) because the coding tool is not involved.
  *   macOS   osascript `display dialog` / `display notification`
- *   Windows PowerShell MessageBox (WPF) / balloon-less: falls back to console print
+ *   Windows PowerShell WPF approval dialogs / native topmost message alerts
  *   Linux   zenity --question / notify-send
  * Every function is best-effort and returns null when the platform has no usable UI.
  */
@@ -83,10 +83,98 @@ export function nativeNotify(title: string, body: string): void {
     } else if (process.platform === "linux" && has("notify-send")) {
       spawn("notify-send", [title, body.slice(0, 200)], { stdio: "ignore", detached: true }).unref();
     } else if (process.platform === "win32" && process.env.MESH_TOAST !== "1") {
-      // A small always-on-top message box: the same mechanism as approvals, which is known to render from the
-      // background daemon on Windows. Toasts (MESH_TOAST=1) are nicer but unverified from a hidden process.
-      const ps = `Add-Type -AssemblyName PresentationFramework; [void][System.Windows.MessageBox]::Show($env:MESH_BODY, $env:MESH_TITLE, 'OK', 'Information', 'OK', 'DefaultDesktopOnly')`;
-      spawn("powershell", ["-NoProfile", "-NonInteractive", "-Command", ps], { env: { ...process.env, MESH_TITLE: title, MESH_BODY: body.slice(0, 400) }, stdio: "ignore", detached: true, windowsHide: true }).unref();
+      // The daemon can inherit a noninteractive desktop even in the owner's Windows session. Launch the
+      // alert on winsta0\default and use a native topmost MessageBox owned by the foreground window.
+      // WPF windows can register in the taskbar here without rendering any usable content.
+      const ps = `
+$ErrorActionPreference = 'Stop'
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class MeshNativeAlert {
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int MessageBoxW(IntPtr owner, string body, string title, uint flags);
+}
+'@
+$owner = [MeshNativeAlert]::GetForegroundWindow()
+[void][MeshNativeAlert]::MessageBoxW($owner, $env:MESH_BODY, $env:MESH_TITLE, [uint32]0x00050040)
+`;
+      const launch = `
+$ErrorActionPreference = 'Stop'
+Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using System.Text;
+public static class MeshDesktopLaunch {
+  [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)]
+  public struct StartupInfo {
+    public int cb;
+    public string lpReserved;
+    public string lpDesktop;
+    public string lpTitle;
+    public int dwX;
+    public int dwY;
+    public int dwXSize;
+    public int dwYSize;
+    public int dwXCountChars;
+    public int dwYCountChars;
+    public int dwFillAttribute;
+    public int dwFlags;
+    public short wShowWindow;
+    public short cbReserved2;
+    public IntPtr lpReserved2;
+    public IntPtr hStdInput;
+    public IntPtr hStdOutput;
+    public IntPtr hStdError;
+  }
+  [StructLayout(LayoutKind.Sequential)]
+  public struct ProcessInfo {
+    public IntPtr hProcess;
+    public IntPtr hThread;
+    public int dwProcessId;
+    public int dwThreadId;
+  }
+  [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+  private static extern bool CreateProcessW(string app, StringBuilder command, IntPtr pa, IntPtr ta, bool inherit,
+    int flags, IntPtr environment, string cwd, ref StartupInfo startup, out ProcessInfo process);
+  [DllImport("kernel32.dll")]
+  private static extern bool CloseHandle(IntPtr handle);
+  public static int Launch(string app, string encodedCommand) {
+    var startup = new StartupInfo();
+    startup.cb = Marshal.SizeOf(typeof(StartupInfo));
+    startup.lpDesktop = @"winsta0\\default";
+    var command = new StringBuilder(((char)34) + app + ((char)34) + " -NoProfile -NonInteractive -STA -EncodedCommand " + encodedCommand);
+    ProcessInfo process;
+    if (!CreateProcessW(app, command, IntPtr.Zero, IntPtr.Zero, false, 0x08000000, IntPtr.Zero, null, ref startup, out process))
+      throw new Win32Exception(Marshal.GetLastWin32Error());
+    CloseHandle(process.hThread);
+    CloseHandle(process.hProcess);
+    return process.dwProcessId;
+  }
+}
+'@
+Write-Output ([MeshDesktopLaunch]::Launch((Join-Path $PSHOME 'powershell.exe'), $env:MESH_ALERT_SCRIPT))
+`;
+      const child = spawn("powershell", ["-NoProfile", "-NonInteractive", "-Command", launch], {
+        env: {
+          ...process.env,
+          MESH_TITLE: title,
+          MESH_BODY: body.slice(0, 400),
+          MESH_ALERT_SCRIPT: Buffer.from(ps, "utf16le").toString("base64"),
+        },
+        stdio: ["ignore", "pipe", "pipe"], windowsHide: true,
+      });
+      let errorOutput = "";
+      child.stdout.on("data", (data: Buffer) => {
+        if (process.env.MESH_ALERT_DIAGNOSTICS === "1") console.warn(`mesh: Windows message alert pid ${data.toString().trim()}`);
+      });
+      child.stderr.on("data", (data: Buffer) => { errorOutput = (errorOutput + data.toString()).slice(-2000); });
+      child.on("error", (err) => console.warn(`mesh: Windows message alert failed: ${err.message}`));
+      child.on("close", (code) => {
+        if (code !== 0) console.warn(`mesh: Windows message alert exited (${code}): ${errorOutput.trim()}`);
+      });
+      child.unref();
     } else if (process.platform === "win32") {
       // Native Windows 10/11 toast via WinRT (no modules needed). Falls back to a tray balloon if toasts are unavailable.
       const ps = `

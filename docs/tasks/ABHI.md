@@ -40,3 +40,32 @@ Subscription: Claude Pro (if you actually have Cursor Pro, swap files with Tarus
 
 ## Definition of done
 Feed running on the projector laptop through a full rehearsal; hooks installed on Dev's and your laptops; DEMO.md rehearsed twice with timings recorded under "Evidence" below.
+
+---
+
+## Evidence
+
+### Step 4 — feed (against mock relay; real relay not up yet)
+```
+pnpm -F @mesh/protocol build          # feed imports dist/
+pnpm -F feed mock                     # ws://localhost:8080, replays docs/fixtures/sample-frames.jsonl
+pnpm -F feed start -- rho             # second pane
+```
+Output excerpt:
+```
+─── team ─────────────────────────────────────────────
+●  tarush    supabase(3)  github(2)  figma.export  vercel.deploy
+●  dev       echo  gh
+○  abhi      (watching)
+10:02:03  dev       💬 prompt: Implement onboarding step 2 to match the Figma frame…
+10:02:15  dev       ──▶  tarush    $ ./scripts/figma-export.sh 8fA2kQ9x 12:34  #0001
+                    why: need the frame outline and PNG to match the design
+10:02:19  tarush    ✅ approved  #0001
+                    #0001 ▏ Fetching node 12:34 from file 8fA2kQ9x…
+                    #0001 ▏ Saved exports/onboarding-step2.png (184 KB)
+10:02:21  tarush    ✔ exit 0 in 2.1s  #0001
+10:02:50  tarush    ⚡ auto-approved  #0002
+10:03:36  tarush    ❌ denied  (not shipping to prod mid-sprint, use a preview deploy)  #0004
+10:05:51  tarush    ✘ timed out after 120.0s  #0005
+```
+Covers: presence (join + leave), all 5 event kinds, shell + mcp requests, approved / auto / denied, streamed stdout+stderr, exit 0, timeout, mcp JSON result pretty-printed, reconnect with backoff when relay is down. Remaining for acceptance: run against Tarush's relay on a third laptop.

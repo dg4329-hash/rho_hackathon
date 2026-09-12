@@ -7,6 +7,15 @@ it doesn't have the tools or credentials for. The teammate sees `dev wants to ru
 hits **y**, and the output streams back to your agent. Credentials never leave the owner's machine.
 Every terminal in the room sees what every agent is doing.
 
+## Assignments
+| person | role | task file |
+|---|---|---|
+| **Dev** | `packages/protocol`, `apps/daemon` (join, approvals, MCP import, local MCP server) | [docs/tasks/DEV.md](docs/tasks/DEV.md) |
+| **Tarush** | `apps/relay`, deploy, real MCP servers on his laptop, `scripts/figma-export.sh` | [docs/tasks/TARUSH.md](docs/tasks/TARUSH.md) |
+| **Abhi** | `apps/feed`, `hooks/`, `docs/DEMO.md`, pitch | [docs/tasks/ABHI.md](docs/tasks/ABHI.md) |
+
+Agents: read `AGENTS.md` first. It tells you which files you may touch.
+
 **Read in this order:**
 1. `docs/PLAN.md` — pitch, architecture, build order, checkpoints, demo script
 2. `docs/CONTRACT.md` — the wire protocol, MCP tools, and `team.json`. Everyone codes against this.

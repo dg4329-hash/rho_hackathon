@@ -91,3 +91,12 @@ Team activity (last 10 min):
 ```
 Failure modes: no daemon → exit 0 in 0.5 s, no output. Garbage stdin → exit 0. `hooks/install.sh <repo>` backs up, merges, keeps existing hooks, idempotent on re-run.
 Remaining for acceptance: install on Dev's laptop against the real daemon, time prompt → feed.
+
+## Next (post-merge)
+Source of truth for ordering and acceptance: `docs/NEXT.md`. Your items, in order. You also run the pre-flight checklist on demo day.
+
+1. **Feed on the real relay, on the real screen** (1 h). `pnpm -F feed start rho-1 --relay wss://<host>` on the projector/TV at ≥ 24 pt, ≥ 100 columns. Check `chalk.dim` lines (output, timestamps) are readable from the back of the room; if not, swap `dim` for a light gray on output lines (`apps/feed/src/index.ts` `c.output`/`c.time`). Accept: in the three-laptop test the feed shows `dev ──▶ tarush $ echo hi`, `✅ approved`, `▏ hi`, `✔ exit 0`, and both daemons in presence; output lines legible at 5 m.
+2. **Hooks from live Claude Code on two laptops** (1 h): `hooks/install.sh` in your clone and in Dev's demo repo. Accept: prompt typed → `💬 prompt:` on the feed in < 2 s by stopwatch; an `Edit` → `📁 file:`; your second prompt's transcript (`ctrl-o`) shows `Team activity (last 10 min):` with Dev's lines — screenshot it for the deck.
+3. **Fixtures that match reality** (45 min): commit the real Figma outline as `docs/fixtures/step2.txt` (referenced by DEMO.md but missing) and regenerate `docs/fixtures/sample-frames.jsonl` from rehearsal run 2 so `pnpm -F feed mock` replays what the narration says. Accept: mock replay reads beat-for-beat with DEMO.md §1, including `❌ denied (owner declined)` (the real reason text; there is no typed reason).
+4. **Fix DEMO.md claims** (30 min) per NEXT.md Found #5-#9: deny has no typed reason; Figma fallback is `FIGMA_FIXTURE`, not swapping the offer command; "Railway down" row → "hotspot + restart tunnel + rejoin"; awareness lands in *your* (Claude Code) agent, not Tarush's Cursor; the PNG stays on Tarush's laptop, the outline travels. Add the "reset the room" procedure and `date -u` clock check to §0. Accept: every §1/§2 line matches something you have seen on the feed.
+5. **Pitch** (1 h): 90-second script from NEXT.md, the honest-limitations slide, the five Q&A cards. Accept: delivered twice against the stopwatch at ≤ 1:30 without the feed, then twice with it during rehearsal (item 7), "actual" timings written into DEMO.md §1.

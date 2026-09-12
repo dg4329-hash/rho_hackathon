@@ -63,3 +63,13 @@ pnpm -F daemon start join rho --as dev --relay ws://<relay> --config ./team.json
 claude mcp add --transport http mesh http://localhost:7337/mcp
 pnpm -F daemon start ask tarush "echo hi" --why test --room rho --as dev --relay ws://<relay>
 ```
+
+## Next (post-merge)
+Source of truth for ordering and acceptance: `docs/NEXT.md`. Your items, in order.
+
+1. **Demo repo + Claude Code wiring** (1 h). Small app with `src/onboarding/Step1.tsx` on your laptop. In it: `claude mcp add --transport http mesh http://localhost:7337/mcp`, `hooks/install.sh .`, and a `CLAUDE.md` line telling the agent it has no Figma/Supabase access and must use the `mesh` MCP tools. Accept: fresh `claude` → `/mcp` shows `mesh ✔`; the exact demo prompt *"Implement onboarding step 2 to match the Figma frame Onboarding/Step 2."* triggers `list_teammates → describe_capability → ask_teammate` unprompted in 3/3 fresh sessions.
+2. **Your `team.json`** (15 min): `"import": { "servers": [] }` (else the daemon imports your `mobbin`/`posthog` and the `mesh` entry it just added), offers `echo` + `gh`, launched with an absolute `--config` (relative paths resolve against `apps/daemon/`, NEXT.md Found #3). Accept: join banner `imported 0 servers, 0 tools`, no `skipped` line; feed presence `● dev echo gh`.
+3. **Three-laptop test** (with Tarush + Abhi, NEXT.md item 1). Accept: `ask tarush "echo hi"` over `wss://` → `hi`, `exit 0` on your terminal; then a second ask that Tarush denies → `denied: owner declined`, exit 2.
+4. **Real MCP borrow from Claude Code** (after Tarush's item 3). Accept: *"list my teammates, describe tarush's supabase.list_tables, call it"* → tool result contains real table names; feed shows `⚡ auto-approved`. Then `supabase.execute_sql` → Tarush sees `[y/n]`.
+5. **Deny beat** (30 min). Second prompt *"Ship onboarding step 2 to production."* Accept: feed `dev ──▶ tarush $ vercel --prod` → `❌ denied (owner declined)`; transcript shows exactly one `ask_teammate`, and the agent tells you Tarush denied it.
+6. **Rehearsal ×2** (NEXT.md item 7). You type, hands off the keyboard after each prompt. Accept: two consecutive clean runs ≤ 3:00.

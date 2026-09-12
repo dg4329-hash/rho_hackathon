@@ -93,17 +93,17 @@ npx pnpm@10.32.1 -F relay start            # PORT=8080 default
 | Piece | Owner | Status |
 |---|---|---|
 | `packages/protocol/src/index.ts` | Dev | **Done.** |
-| `apps/relay/src/index.ts` | Tarush | **Done locally.** Fan-out, history≤200, presence, ping, `/health`. Acceptance OK. |
-| `apps/relay` validate + soak | Tarush | **Done.** `pnpm -F relay validate`; `soak-s1.ts` 80/80 OK |
-| Deploy public `wss://` | Tarush | **Blocked** on Railway login / ngrok authtoken. Dockerfile + deploy script ready. |
-| `scripts/figma-export.sh` | Tarush | **Written**; syntax OK; live run blocked on `FIGMA_TOKEN` |
+| `apps/relay/src/index.ts` | Tarush | **Done.** Verified against CONTRACT §1 (`pnpm -F relay test`, 28 checks) and the real daemon; 5 bugs fixed 2026-09-12 — see `TARUSH-HANDOFF.md`. |
+| `apps/relay` validate + soak + test | Tarush | **Done.** `pnpm -F relay validate ./team.json` (from repo root); `pnpm -F relay soak` 80/80; `pnpm -F relay test` 28/28 |
+| Deploy public `wss://` | Tarush | **Done via ngrok** — `./scripts/tunnel-relay.sh` prints the session URL; verified with the real daemon over `wss://`. Railway still blocked (no CLI/Docker). |
+| `scripts/figma-export.sh` | Tarush | **Written + mock-verified** (both endpoints, PNG, outline); live run pending `FIGMA_TOKEN` |
 | Local `team.json` | Tarush | **Created** (gitignored); starter in `scripts/team.json.starter` |
 | Cursor MCP | Tarush | Snippet in `.local/cursor-mcp.snippet.json` — merge + add real keys |
-| `apps/daemon` | Dev | Stub — blocks full S1 / mesh join import check |
+| `apps/daemon` | Dev | **Real** on `dev/daemon` (`44d66cf`); S1 `sleep 70` E2E passed through this relay |
 | `apps/feed` | Abhi | Stub |
 | This build log | Tarush | Was `.local/BUILD-LOG.md`; now committed as this file on `tarush` |
 
-**Critical path left:** public `wss://` deploy → then Dev’s daemon can join across laptops.
+**Critical path left:** Tarush runs `./scripts/tunnel-relay.sh` and shares the URL; live Figma run with a token; real MCP servers on Tarush's laptop (6a).
 
 ---
 
@@ -113,11 +113,11 @@ From `docs/tasks/TARUSH.md` + `docs/PLAN.md` §3:
 
 | Step | Status | Notes |
 |---|---|---|
-| 1. Relay | **DONE (local)** | `apps/relay/src/index.ts` |
-| 2. Deploy | **BLOCKED** | Need Railway login or ngrok authtoken; PLAN §2 pending |
+| 1. Relay | **DONE** | `apps/relay/src/index.ts`; contract test in `apps/relay/test/` |
+| 2. Deploy | **DONE (ngrok)** | `scripts/tunnel-relay.sh`; PLAN §2 points at it; Railway later |
 | 6a. MCP + team.json | **PARTIAL** | Local team.json OK; real MCP keys + Dev import TBD |
-| 6b. figma-export | **PARTIAL** | Script OK; needs `FIGMA_TOKEN` + real frame |
-| S1 long jobs | **PARTIAL** | Relay soak OK; full path needs Dev daemon |
+| 6b. figma-export | **PARTIAL** | Mock-verified; needs `FIGMA_TOKEN` + real frame for the live run |
+| S1 long jobs | **DONE** | `ask a "sleep 70 && echo done" --wait 80` → done, exit 0 via relay |
 | team.json validate | **DONE** | `pnpm -F relay validate` + starter JSON |
 
 **Definition of done (task file):** not fully met yet (no public relay, no live Figma demo, no 30-min three-laptop session).
@@ -276,3 +276,8 @@ figma-export.sh: bash -n OK; Usage without args; "FIGMA_TOKEN is not set" with a
 4. Dev daemon for real S1 (`sleep 70` → `check_job`).
 
 **Next action:** Finish Railway/ngrok auth → deploy → update PLAN URL; set FIGMA_TOKEN; ping Dev when daemon is ready.
+
+### 2026-09-12 — Dev's agent: verification, fixes, ngrok launcher
+
+Full record: [`TARUSH-HANDOFF.md`](TARUSH-HANDOFF.md). Summary: relay fixed (presence before hello, replay-on-every-hello, replay/presence order, malformed frames, room history retention, double cleanup); `apps/relay/test/relay.test.ts` added; `validate.ts` resolves from `INIT_CWD`; `scripts/tunnel-relay.sh` added and verified with the real daemon over `wss://`; `figma-export.sh` hardened and mock-verified; `docs/PLAN.md` §2 updated. Open: Railway, `FIGMA_TOKEN` live run, 6a MCP servers, three-laptop soak.
+

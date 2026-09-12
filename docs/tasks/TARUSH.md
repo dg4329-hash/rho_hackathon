@@ -105,3 +105,28 @@ SOAK OK
 ```
 
 Full `ask_teammate` / `check_job` on `sleep 70` needs Dev’s daemon (still stub). No relay ordering issues found in soak.
+
+### 2026-09-12 — verification + fixes by Dev's agent (see `TARUSH-HANDOFF.md` for the full record)
+
+- Relay re-verified against CONTRACT §1 with `pnpm -F relay test` (28 checks, `apps/relay/test/relay.test.ts`): the `a4c32a3` relay failed 5 (presence listed conns before their `hello`; replay on every `hello`; presence sent before replay; malformed frames stored + forwarded). All fixed in `apps/relay/src/index.ts`; suite is 28/28 locally and over `wss://` ngrok.
+- Real daemon E2E (`dev/daemon` @ `44d66cf`) through this relay:
+
+```text
+pnpm -F daemon start join verify --as a --config <scratch team.json> --port 7411
+● connected to ws://localhost:8090 room=verify as a
+
+pnpm -F daemon start ask a "echo relay-ok" --why test --room verify --as b --relay ws://localhost:8090
+relay-ok
+← exit 0 in 3 ms                         EXIT=0
+
+pnpm -F daemon start ask a "sleep 70 && echo done" --wait 80 …   (S1)
+done
+← exit 0 in 70010 ms                     EXIT=0
+
+late joiner replay: ["request","decision","output","result", …, "presence"]; presence lists a with echo:always,sleep:always; drops members on close; rooms isolated.
+```
+
+- Public URL: `./scripts/tunnel-relay.sh` (relay :8090 + ngrok) → `wss://<host>.ngrok-free.dev`; `/health` 200 through the tunnel; `ask … --relay wss://…` → exit 0; `RELAY_URL=wss://… pnpm -F relay test` → PASS; `pnpm -F relay soak` → `SOAK OK`. URL rotates per launch, so it lives in the launcher output, not in docs. Railway still blocked (no CLI/Docker on Dev's machine).
+- `figma-export.sh` dry-verified against a local mock of both endpoints (correct URLs, token header, PNG written, readable outline). **Live run pending `FIGMA_TOKEN`.**
+- `pnpm -F relay validate ./team.json` now works from the repo root (`INIT_CWD`).
+

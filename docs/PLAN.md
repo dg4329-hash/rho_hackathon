@@ -17,7 +17,7 @@ Those move your team into a hosted sandbox and pool credentials in a vault. We c
 
 ## 2. What it is (three processes, one you barely write)
 
-**Public relay URL (Tarush):** pending Railway login — use `ws://localhost:8080` until deployed. Deploy: `scripts/deploy-relay.sh` (Dockerfile in `apps/relay/`). After deploy, replace this line with `wss://<host>` and tell the group chat.
+**Public relay URL (Tarush):** provided at runtime — Tarush runs `./scripts/tunnel-relay.sh` (relay on `:8090` + ngrok) and it prints the session's `wss://<host>.ngrok-free.dev` URL, which goes into everyone's `team.json` `"relay"` (or `mesh join --relay …`) and the group chat. The URL changes every launch on the free ngrok plan, so it is deliberately not written here. Local dev: `ws://localhost:8080` (`pnpm -F relay start`). Railway (`scripts/deploy-relay.sh`, Dockerfile in `apps/relay/`) is blocked until someone has the Railway CLI + Docker; once deployed, replace this line with the permanent `wss://<host>`.
 
 ```
  Dev's laptop                        Tarush's laptop

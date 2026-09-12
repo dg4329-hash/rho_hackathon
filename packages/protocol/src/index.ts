@@ -148,8 +148,8 @@ export const TOOL_DESCRIPTIONS = {
   describe_capability:
     "Full description, input schema, owner notes, and an example call for one teammate capability. Always call this before ask_teammate on a tool you haven't used in this session; the owner's notes contain project-specific details (IDs, table names, conventions) you cannot guess.",
   ask_teammate:
-    "Use a teammate's tool (tool + args, from describe_capability) or run a shell command on their machine (command). They see exactly what you're asking and your `why`, and must approve unless the capability is marked 'always'. Returns the tool result or stdout/stderr. If status is 'running', call check_job with the jobId. If 'denied', do not retry the same request; tell the user why.",
-  check_job: "Check on, or wait for, a job started by ask_teammate.",
+    "Use a teammate's tool (tool + args, from describe_capability) or run a shell command on their machine (command). They see exactly what you're asking and your `why`, and must approve unless the capability is marked 'always'. Shell commands run in the owner's configured working directory with their environment. Returns { status, exitCode, output }: exitCode 0 = success, 1 = the tool reported an error, null = killed at the owner's timeout. If status is 'running', call check_job with the jobId. If 'denied', do not retry the same request; tell the user why.",
+  check_job: "Check on, or wait for, a job started by ask_teammate. waitSeconds blocks up to that long for completion (0 = return immediately). Same result shape as ask_teammate; exitCode null means it was killed at the owner's timeout.",
   post_event: "Post a short note to the team activity feed (what you're doing, what you found).",
   team_activity:
     "What teammates and their agents have done recently: prompts, tool calls, files touched, requests. Check before editing files others may be working on.",

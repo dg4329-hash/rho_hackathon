@@ -42,7 +42,7 @@ docs/
 ```bash
 pnpm install
 pnpm -F relay dev                              # Tarush's laptop or Railway
-pnpm -F daemon start -- join rho --as dev      # each laptop, reads ./team.json
+pnpm -F daemon start join rho --as dev      # each laptop, reads ./team.json
 claude mcp add --transport http mesh http://localhost:7337/mcp
-pnpm -F feed start -- rho                      # optional second pane: live team feed
+pnpm -F feed start rho                      # optional second pane: live team feed
 ```

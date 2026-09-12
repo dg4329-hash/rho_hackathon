@@ -334,9 +334,13 @@ export const OVERLAY_JS: string = String.raw`(function (root) {
       setTitle();
     }
 
+    var lastPendingSig = null;
     function renderPending(newIds) {
       var el = $("mo-pending"); if (!el) return;
       var list = state.pending.filter(function (p) { return !state.decided[p.id]; });
+      var sig = list.map(function (p) { return p.id + ":" + (state.deciding[p.id] || ""); }).join("|");
+      if (sig === lastPendingSig && !newIds) return; // unchanged: don't rebuild DOM under the user's cursor
+      lastPendingSig = sig;
       if (!list.length) { el.innerHTML = '<div class="empty">nothing waiting on you</div>'; return; }
       el.innerHTML = list.map(function (p) {
         var body = p.command ? "$ " + p.command : (p.tool || "tool") + " " + pretty(p.args);
@@ -488,7 +492,8 @@ export const OVERLAY_JS: string = String.raw`(function (root) {
       state.port = p; ls.set("mesh.port", String(p));
       net = createNet({ daemonBase: "http://localhost:" + p, relayOrigin: relayOrigin, fetch: opts.fetch });
       state.gen++; state.daemonOk = null; state.pending = []; state.decided = {}; state.deciding = {};
-      setTitle(); renderPending(); renderStatus();
+      state.messages = []; state.seenMsg = {}; state.since = null; state.unread = 0; lastPendingSig = null;
+      setTitle(); renderPending(); renderMessages(); renderStatus();
       daemonLoop(state.gen);
     }
     function stop() { state.stopped = true; state.gen++; }

@@ -219,7 +219,8 @@ export function buildApp(core: DaemonCore): express.Express {
   const relayOrigin = core.config.relay.replace(/^wss:/, "https:").replace(/^ws:/, "http:").replace(/\/+$/, "");
   app.use((req: Request, res: Response, next) => {
     const origin = req.headers.origin;
-    if (origin && (origin === relayOrigin || /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin))) {
+    const allowed = new Set([relayOrigin, relayOrigin.replace("://localhost", "://127.0.0.1"), relayOrigin.replace("://127.0.0.1", "://localhost")]);
+    if (origin && allowed.has(origin)) {
       res.setHeader("Access-Control-Allow-Origin", origin);
       res.setHeader("Vary", "Origin");
       res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");

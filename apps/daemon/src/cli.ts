@@ -85,6 +85,7 @@ program
         return;
       }
       const args = process.argv.slice(1).filter((a) => a !== "--background");
+      mkdirSync(meshHome(), { recursive: true });
       const log = openSync(logPath(), "a");
       const child = spawn(process.execPath, [...process.execArgv, ...args], {
         cwd: userCwd(), env: { ...process.env, INIT_CWD: userCwd(), MESH_BACKGROUND: "1" }, detached: true, stdio: ["ignore", log, log], windowsHide: true,

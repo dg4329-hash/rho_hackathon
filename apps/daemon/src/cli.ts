@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 /** `mesh` CLI: join / ask / init (CONTRACT §6). */
-import { copyFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import chalk from "chalk";
+import { spawn } from "node:child_process";
+import { copyFileSync, existsSync, mkdirSync, openSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { DEFAULT_PORT, type Offer, type TeamConfig } from "@mesh/protocol";
 import { configFromFlags, loadConfig, userCwd } from "./config.js";
 import { createCore } from "./core.js";
@@ -68,12 +70,40 @@ program
   .option("--no-register", "don't touch Claude Code / Cursor / Codex config or hooks")
   .option("--cursor", "force Cursor registration even if no .cursor dir is present")
   .option("--codex", "force Codex registration even if codex isn't installed")
-  .action(async (roomArg: string, flags: CommonFlags & { port: string; register: boolean; cursor?: boolean; codex?: boolean }) => {
+  .option("--background", "run detached in the background (approvals via native OS dialogs); see `mesh status` / `mesh stop`")
+  .action(async (roomArg: string, flags: CommonFlags & { port: string; register: boolean; cursor?: boolean; codex?: boolean; background?: boolean }) => {
     const target = parseRoomArg(roomArg);
     const room = target.room;
     if (target.relay && !flags.relay) flags.relay = target.relay;
     const { config, cwd, source } = loadWithFlags(room, flags);
     const port = Number(flags.port) || DEFAULT_PORT;
+
+    if (flags.background) {
+      const running = await readState(port);
+      if (running) {
+        console.log(chalk.green(`mesh is already running`) + chalk.dim(`  ${running.user}@${running.room} pid ${running.pid} port ${running.port}  (mesh stop to end it)`));
+        return;
+      }
+      const args = process.argv.slice(1).filter((a) => a !== "--background");
+      const log = openSync(logPath(), "a");
+      const child = spawn(process.execPath, [...process.execArgv, ...args], {
+        cwd: userCwd(), env: { ...process.env, INIT_CWD: userCwd(), MESH_BACKGROUND: "1" }, detached: true, stdio: ["ignore", log, log], windowsHide: true,
+      });
+      child.unref();
+      writeState({ pid: child.pid ?? 0, port, room: config.room, relay: config.relay, user: config.user, cwd, startedAt: new Date().toISOString() });
+      // wait briefly for /health so the user gets a definite answer
+      const ok = await waitHealth(port, 15_000);
+      if (ok) {
+        console.log(chalk.green(`● mesh running in the background`) + chalk.dim(`  ${config.user}@${config.room}  mcp=http://localhost:${port}/mcp  pid ${child.pid}`));
+        console.log(chalk.dim(`  approvals pop up as system dialogs; log: ${logPath()}; \`mesh status\` / \`mesh stop\``));
+        const tail = readFileSync(logPath(), "utf8").split("\n").filter((l) => /registered|already registered|restart your agent/.test(l)).slice(-6);
+        for (const l of tail) console.log(l);
+      } else {
+        console.log(chalk.red(`mesh did not come up within 15 s; see ${logPath()}`));
+        process.exitCode = 1;
+      }
+      return;
+    }
 
     const mcpImport = createMcpImport();
     const imported = await mcpImport.start(config, cwd);
@@ -205,5 +235,56 @@ program
     copyFileSync(example, target);
     console.log(chalk.green(`wrote ${target}`) + chalk.dim(" — edit user/room/relay/cwd, then `mesh join <room> --as <user>`"));
   });
+
+// ---------- background state ----------
+interface DaemonState { pid: number; port: number; room: string; relay: string; user: string; cwd: string; startedAt: string }
+const meshHome = () => path.join(homedir(), ".mesh");
+const statePath = () => path.join(meshHome(), "daemon.json");
+const logPath = () => path.join(meshHome(), "daemon.log");
+function writeState(st: DaemonState): void { mkdirSync(meshHome(), { recursive: true }); writeFileSync(statePath(), JSON.stringify(st, null, 2)); }
+function loadState(): DaemonState | undefined { try { return JSON.parse(readFileSync(statePath(), "utf8")) as DaemonState; } catch { return undefined; } }
+async function health(port: number): Promise<Record<string, unknown> | undefined> {
+  try { const r = await fetch(`http://localhost:${port}/health`, { signal: AbortSignal.timeout(1500) }); return r.ok ? (await r.json()) as Record<string, unknown> : undefined; } catch { return undefined; }
+}
+async function waitHealth(port: number, ms: number): Promise<boolean> {
+  const until = Date.now() + ms;
+  while (Date.now() < until) { if (await health(port)) return true; await new Promise((r) => setTimeout(r, 400)); }
+  return false;
+}
+/** State file + a live /health on that port → running. Stale file → cleaned up. */
+async function readState(port?: number): Promise<DaemonState | undefined> {
+  const st = loadState();
+  if (!st) return undefined;
+  if (port && st.port !== port) return undefined;
+  if (await health(st.port)) return st;
+  try { unlinkSync(statePath()); } catch { /* ignore */ }
+  return undefined;
+}
+
+program
+  .command("status")
+  .description("is the background daemon running?")
+  .action(async () => {
+    const st = await readState();
+    if (!st) { console.log(chalk.dim("mesh is not running in the background") + chalk.dim("  (mesh join <room> --background)")); process.exitCode = 1; return; }
+    const h = await health(st.port);
+    console.log(chalk.green("● running") + `  ${st.user}@${st.room}  relay=${String(h?.relay)}  members=${String(h?.members)}  mcp=http://localhost:${st.port}/mcp  pid ${st.pid}`);
+    console.log(chalk.dim(`  since ${st.startedAt}  log ${logPath()}`));
+  });
+
+program
+  .command("stop")
+  .description("stop the background daemon")
+  .action(async () => {
+    const st = loadState();
+    if (!st) { console.log(chalk.dim("nothing to stop")); return; }
+    try { process.kill(st.pid, "SIGTERM"); console.log(chalk.green(`stopped mesh (pid ${st.pid})`)); } catch { console.log(chalk.dim(`process ${st.pid} was not running`)); }
+    try { unlinkSync(statePath()); } catch { /* ignore */ }
+  });
+
+program
+  .command("log")
+  .description("print the background daemon's log")
+  .action(() => { if (existsSync(logPath())) process.stdout.write(readFileSync(logPath(), "utf8")); else console.log(chalk.dim("no log yet")); });
 
 program.parseAsync(process.argv).catch((e) => fail((e as Error).message));

@@ -3,6 +3,7 @@
  * Without a TTY every prompt is auto-denied with reason "no tty".
  */
 import chalk from "chalk";
+import { nativeApprove, nativeDialogAvailable } from "./native.js";
 
 export interface ApprovalRequest {
   from: string;
@@ -79,7 +80,19 @@ let queue: Promise<unknown> = Promise.resolve();
 /** Ask the owner. Prompts are serialized so two never overlap. */
 export function askApproval(req: ApprovalRequest): Promise<ApprovalAnswer> {
   const run = async (): Promise<ApprovalAnswer> => {
-    if (!hasTty()) return { approved: false, reason: "no tty" };
+    // 1. Native OS dialog (works with any coding tool, and when the daemon runs in the background).
+    if (nativeDialogAvailable()) {
+      const what = req.command ? `run:  ${safeText(req.command, 400)}` : `call: ${safeText(req.tool ?? "?", 100)} ${safeText(prettyArgs(req.args), 600)}`;
+      const body = `${what}\n\nwhy: ${safeText(req.why, 300)}`;
+      process.stdout.write(`\n${chalk.yellow("⚡")} ${chalk.magenta(safeText(req.from, 32))} ${chalk.bold(req.command ? "wants to run:" : "wants to call")} ${chalk.cyan(safeText(req.command ?? req.tool ?? "?", 200))}  ${chalk.dim("(dialog)")}\n`);
+      const r = await nativeApprove({ title: `mesh: ${safeText(req.from, 32)} is asking`, body, timeoutSeconds: 90 });
+      if (r === "approved") { process.stdout.write(chalk.green("  approved") + "\n"); return { approved: true }; }
+      if (r === "denied") { process.stdout.write(chalk.red("  denied") + "\n"); return { approved: false, reason: "owner declined" }; }
+      if (r === "timeout") { process.stdout.write(chalk.red("  no answer in 90 s") + "\n"); return { approved: false, reason: "owner did not answer in 90 s" }; }
+      // null → no dialog possible here; fall through to the TTY prompt
+    }
+    // 2. Terminal y/n prompt.
+    if (!hasTty()) return { approved: false, reason: "no tty and no dialog available" };
     const what = req.command
       ? `${chalk.bold("wants to run:")} ${chalk.cyan(safeText(req.command, 600))}`
       : `${chalk.bold("wants to call")} ${chalk.cyan(safeText(req.tool ?? "?", 120))} ${chalk.dim(safeText(prettyArgs(req.args), 2000))}`;

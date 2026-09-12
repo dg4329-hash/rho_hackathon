@@ -18,6 +18,7 @@ import {
 } from "@mesh/protocol";
 import type { ActivityEntry, AskInput, DaemonCore, Job, McpImport, Member } from "./api.js";
 import { askApproval } from "./approval.js";
+import { nativeNotify } from "./native.js";
 import { Jobs, toJobResult } from "./jobs.js";
 import { resolvePermission } from "./permissions.js";
 import { RelayClient, debug } from "./relay-client.js";
@@ -209,6 +210,7 @@ export function createCore(opts: CoreOptions): DaemonCore & { client: RelayClien
     messages.set(id, { id, ts: frame.ts, from: frame.from, to, text, read: false });
     if (messages.size > 500) messages.delete(messages.keys().next().value as string);
     say(`${chalk.cyan("✉")} ${chalk.magenta(frame.from)}${to === "all" ? chalk.dim(" (to all)") : ""}: ${text.length > 300 ? text.slice(0, 299) + "…" : text}`);
+    if (Date.now() - Date.parse(frame.ts) < 60_000) nativeNotify(`mesh: message from ${frame.from}`, text); // skip replayed history
   }
 
   client.on("frame", (frame) => {

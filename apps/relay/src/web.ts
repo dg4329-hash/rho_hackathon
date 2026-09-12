@@ -183,7 +183,14 @@ curl -fsSL -H "ngrok-skip-browser-warning: 1" "$ORIGIN/emit.js" -o "$MESH_HOME/e
   || { rm -f "$MESH_HOME/emit.js.tmp"; echo "mesh: emit.js not available on this relay; hooks will be skipped" >&2; }
 chmod +x "$MESH_HOME/mesh.mjs" "$MESH_HOME/emit.js" 2>/dev/null || true
 
-echo "mesh: joining room '$ROOM' via $RELAY (keep this terminal open; approvals happen here)"
+if [ "\${MESH_FOREGROUND:-}" = "1" ]; then
+  echo "mesh: joining room '$ROOM' via $RELAY (foreground; approvals in this terminal)"
+else
+  echo "mesh: joining room '$ROOM' via $RELAY in the background (approvals pop up as system dialogs)"
+  node "$MESH_HOME/mesh.mjs" join "$ROOM" --relay "$RELAY" --background "$@"
+  echo "mesh: done. Restart your coding agent session once so it picks up the mesh tools.  (mesh status / mesh stop: node ~/.mesh/mesh.mjs status)"
+  exit $?
+fi
 # When piped through \`curl | bash\` stdin is the script, not the terminal; the daemon needs a TTY to ask y/n.
 if [ ! -t 0 ] && ( : </dev/tty ) 2>/dev/null; then
   exec node "$MESH_HOME/mesh.mjs" join "$ROOM" --relay "$RELAY" "$@" </dev/tty
@@ -233,8 +240,9 @@ try {
   Write-Warning "mesh: emit.js not available on this relay; hooks will be skipped"
 }
 
-Write-Host "mesh: joining room '$Room' via $Relay (keep this window open; approvals happen here)"
-& node (Join-Path $MeshHome "mesh.mjs") join $Room --relay $Relay @Rest
+Write-Host "mesh: joining room '$Room' via $Relay in the background (approvals pop up as dialogs)"
+& node (Join-Path $MeshHome "mesh.mjs") join $Room --relay $Relay --background @Rest
+Write-Host "mesh: done. Restart your coding agent session once so it picks up the mesh tools.  (status: node $env:USERPROFILE\.mesh\mesh.mjs status)"
 exit $LASTEXITCODE
 `;
 }

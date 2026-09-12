@@ -10,3 +10,4 @@ team.json
 .cursor/rules/local-build-log.mdc
 .claude/settings.json
 .cursor/mcp.json
+.playwright-mcp/

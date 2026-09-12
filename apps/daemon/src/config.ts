@@ -1,7 +1,7 @@
 /**
  * team.json loading. Search order: --config flag, ./team.json, ~/.mesh/team.json.
  */
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { TeamConfig } from "@mesh/protocol";
@@ -15,11 +15,22 @@ export interface LoadedConfig {
   cwd: string;
 }
 
+const lastConfigFile = () => path.join(homedir(), ".mesh", "last-config");
+/** Remember where team.json was found so a later `mesh join` from any folder (e.g. a downloaded .cmd) keeps the same offers. */
+export function rememberConfigPath(file: string): void {
+  try { mkdirSync(path.dirname(lastConfigFile()), { recursive: true }); writeFileSync(lastConfigFile(), file); } catch { /* best effort */ }
+}
+function rememberedConfigPath(): string | undefined {
+  try { const f = readFileSync(lastConfigFile(), "utf8").trim(); return f && existsSync(f) ? f : undefined; } catch { return undefined; }
+}
+
 export function candidatePaths(flag?: string): string[] {
   const base = userCwd();
   const list: string[] = [];
   if (flag) list.push(path.resolve(base, flag));
   list.push(path.resolve(base, "team.json"));
+  const remembered = rememberedConfigPath();
+  if (remembered) list.push(remembered);
   list.push(path.join(homedir(), ".mesh", "team.json"));
   return list;
 }
@@ -66,6 +77,7 @@ export function loadConfig(flag?: string, overrides: Partial<Record<"user" | "ro
     throw e;
   }
   const cwd = config.cwd ? path.resolve(path.dirname(file), config.cwd) : userCwd();
+  rememberConfigPath(file);
   return { config, path: file, cwd };
 }
 

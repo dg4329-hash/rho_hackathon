@@ -66,6 +66,9 @@ importers:
       '@mesh/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
+      chalk:
+        specifier: ^5.4.1
+        version: 5.6.2
       ws:
         specifier: ^8.18.0
         version: 8.21.3

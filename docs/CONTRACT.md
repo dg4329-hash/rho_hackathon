@@ -36,7 +36,7 @@ type Frame =
 ```
 
 ```ts
-type EventKind = 'prompt' | 'tool_call' | 'file_touched' | 'status' | 'note';
+type EventKind = 'prompt' | 'tool_call' | 'file_touched' | 'status' | 'note' | 'message';  // message: data = { to: user|'all', text }
 interface Offer {
   kind: 'command' | 'mcp';
   name: string;                 // command: 'figma.export'; mcp: '<server>.<tool>' e.g. 'supabase.run_sql'
@@ -116,6 +116,8 @@ Tools (names, inputs, outputs). Descriptions matter: they are the only thing tha
 | `ask_teammate` | `{ who: string, why: string, waitSeconds?: number (default 45, max 120), command?: string, tool?: string, args?: object }` — exactly one of `command` or `tool` | on completion: `{ jobId, status: 'completed', exitCode, output: string (tail ≤ 8 KB), durationMs }`; if still running at waitSeconds: `{ jobId, status: 'running' }`; if denied: `{ jobId, status: 'denied', reason }` |
 | `check_job` | `{ jobId: string, waitSeconds?: number }` | same shape as `ask_teammate` |
 | `post_event` | `{ kind: EventKind, summary: string, data? }` | `{ ok: true }` |
+| `send_message` | `{ to: user \| 'all', text }` | `{ ok: true }` — emits `event` kind `message`; recipient daemon prints it live and queues it for `inbox` / the prompt hook |
+| `inbox` | `{ unreadOnly?: true, sinceMinutes?: 120 }` | `{ messages: [{ id, ts, from, to, text, read }] }` — marks returned messages read when unreadOnly |
 | `team_activity` | `{ sinceMinutes?: number (default 10) }` | `{ events: Array<{ ts, from, type, summary }> }` — flattened, human-readable, newest last, ≤ 100 |
 
 Tool description text (copy into the server verbatim):
@@ -139,10 +141,11 @@ All hooks are `node hooks/emit.js <kind>` reading the hook's stdin JSON and POST
 | `PostToolUse` (matcher `mcp__.*`) | `tool_call` | tool name |
 | `Stop` | `status` | "idle" |
 
-`UserPromptSubmit` also GETs `http://localhost:7337/activity?sinceMinutes=10` and prints it to stdout so the last 10 minutes of team activity land in the agent's context on every prompt.
+`UserPromptSubmit` also GETs `http://localhost:7337/inbox?unread=1` (unread messages, printed first) and `http://localhost:7337/activity?sinceMinutes=10` and prints it to stdout so the last 10 minutes of team activity land in the agent's context on every prompt.
 
 ## 5. Daemon local HTTP (besides `/mcp`)
 - `POST /event` — see §4.
+- `GET /inbox?unread=1` — same as `inbox`.
 - `GET /activity?sinceMinutes=` — same as `team_activity`.
 - `GET /health` — `{ user, room, relay: 'connected'|'disconnected', members: n }`.
 

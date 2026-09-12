@@ -26,7 +26,7 @@ export type Offer = z.infer<typeof Offer>;
 export const Role = z.enum(["daemon", "feed"]);
 export type Role = z.infer<typeof Role>;
 
-export const EventKind = z.enum(["prompt", "tool_call", "file_touched", "status", "note"]);
+export const EventKind = z.enum(["prompt", "tool_call", "file_touched", "status", "note", "message"]);
 export type EventKind = z.infer<typeof EventKind>;
 
 const base = { from: z.string().min(1), ts: z.string() };
@@ -127,6 +127,13 @@ export const OfferSummary = z.object({ name: z.string(), kind: OfferKind, permis
 export const DescribeCapabilityOutput = Offer.extend({ usage: z.string() });
 export const CheckJobInput = z.object({ jobId: z.string(), waitSeconds: z.number().int().min(0).max(120).default(0) });
 export const PostEventInput = z.object({ kind: EventKind, summary: z.string(), data: z.record(z.unknown()).optional() });
+export const SendMessageInput = z.object({
+  to: z.string().min(1).describe("teammate handle, or 'all'"),
+  text: z.string().min(1).max(2000),
+});
+export const InboxInput = z.object({ unreadOnly: z.boolean().default(true), sinceMinutes: z.number().int().positive().default(120) });
+export const InboxMessage = z.object({ id: z.string(), ts: z.string(), from: z.string(), to: z.string(), text: z.string(), read: z.boolean() });
+export type InboxMessage = z.infer<typeof InboxMessage>;
 export const TeamActivityInput = z.object({ sinceMinutes: z.number().int().positive().default(10) });
 
 export const JobStatus = z.enum(["pending", "running", "completed", "denied"]);
@@ -151,6 +158,10 @@ export const TOOL_DESCRIPTIONS = {
     "Use a teammate's tool (tool + args, from describe_capability) or run a shell command on their machine (command). They see exactly what you're asking and your `why`, and must approve unless the capability is marked 'always'. Shell commands run in the owner's configured working directory with their environment. Returns { status, exitCode, output }: exitCode 0 = success, 1 = the tool reported an error, null = killed at the owner's timeout. If status is 'running', call check_job with the jobId. If 'denied', do not retry the same request; tell the user why.",
   check_job: "Check on, or wait for, a job started by ask_teammate. waitSeconds blocks up to that long for completion (0 = return immediately). Same result shape as ask_teammate; exitCode null means it was killed at the owner's timeout.",
   post_event: "Post a short note to the team activity feed (what you're doing, what you found).",
+  send_message:
+    "Send a short message to a teammate's agent ('all' for everyone). Use it to coordinate: what you're about to change, a fix idea for something you saw in team_activity, a question about their tool. Delivered live to their terminal and the room page, and into their agent's context on its next prompt (Claude Code) or when it calls inbox (Cursor).",
+  inbox:
+    "Unread messages from teammates addressed to you or to everyone. Call it when you start a task or when team_activity shows a message. Marks them read.",
   team_activity:
     "What teammates and their agents have done recently: prompts, tool calls, files touched, requests. Check before editing files others may be working on.",
 } as const;

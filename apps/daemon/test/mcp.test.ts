@@ -71,7 +71,7 @@ async function testLocalServer() {
     await client.connect(new StreamableHTTPClientTransport(new URL(`http://localhost:${port}/mcp`)));
 
     const { tools } = await client.listTools();
-    check(tools.length === 6, "listTools returns 6 tools", tools.map((t) => t.name));
+    check(tools.length === 8, "listTools returns 8 tools", tools.map((t) => t.name));
     check(tools.every((t) => (t.description ?? "").length > 0), "every tool has a description");
 
     const lt = await client.callTool({ name: "list_teammates", arguments: {} });

@@ -12,7 +12,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import {
-  TOOL_DESCRIPTIONS, AskTeammateInput, CheckJobInput, PostEventInput, TeamActivityInput, DescribeCapabilityInput,
+  TOOL_DESCRIPTIONS, AskTeammateInput, CheckJobInput, PostEventInput, TeamActivityInput, DescribeCapabilityInput, SendMessageInput, InboxInput,
   EventKind, type Offer,
 } from "@mesh/protocol";
 import type { DaemonCore, LocalServer } from "./api.js";
@@ -138,6 +138,30 @@ export function buildMcpServer(core: DaemonCore): McpServer {
     return ok({ ok: true });
   }));
 
+  server.registerTool("send_message", {
+    description: TOOL_DESCRIPTIONS.send_message,
+    inputSchema: {
+      to: z.string().describe("teammate handle from list_teammates, or 'all'"),
+      text: z.string().min(1).max(2000).describe("short, concrete: what you changed / a fix idea / a question"),
+    },
+  }, guard((raw) => {
+    const { to, text } = SendMessageInput.parse(raw);
+    if (to !== "all" && !core.members().some((m) => m.user === to)) return fail(`no teammate '${to}' online. ${offerNames(core, to)}`);
+    core.sendMessage(to, text);
+    return ok({ ok: true, to });
+  }));
+
+  server.registerTool("inbox", {
+    description: TOOL_DESCRIPTIONS.inbox,
+    inputSchema: {
+      unreadOnly: z.boolean().optional().describe("default true; marks returned messages read"),
+      sinceMinutes: z.number().int().positive().optional().describe("look-back window (default 120)"),
+    },
+  }, guard((raw) => {
+    const opts = InboxInput.parse(raw);
+    return ok({ messages: core.inbox(opts) });
+  }));
+
   server.registerTool("team_activity", {
     description: TOOL_DESCRIPTIONS.team_activity,
     inputSchema: { sinceMinutes: z.number().int().positive().optional().describe("look-back window (default 10)") },
@@ -181,6 +205,11 @@ export function buildApp(core: DaemonCore): express.Express {
     if (!parsed.success) { res.status(400).json({ ok: false, error: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ") }); return; }
     core.postEvent(parsed.data.kind, parsed.data.summary, parsed.data.data);
     res.json({ ok: true });
+  });
+
+  app.get("/inbox", (req: Request, res: Response) => {
+    const unread = req.query.unread !== "0";
+    res.json({ messages: core.inbox({ unreadOnly: unread, sinceMinutes: 120 }) });
   });
 
   app.get("/activity", (req, res) => {

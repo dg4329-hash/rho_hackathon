@@ -25,9 +25,12 @@ async function main() {
 
   // fetch activity first so the block doesn't include the prompt we're about to post
   const activity = kind === "prompt" ? await get(`${DAEMON}/activity?sinceMinutes=10`) : null;
+  const inbox = kind === "prompt" ? await get(`${DAEMON}/inbox?unread=1`) : null;
   await post(`${DAEMON}/event`, body);
 
   if (kind === "prompt") {
+    const msgs = formatInbox(inbox);
+    if (msgs) process.stdout.write(msgs + "\n");
     const block = formatActivity(activity);
     if (block) process.stdout.write(block + "\n");
   }
@@ -65,6 +68,17 @@ function build(kind, p) {
     default:
       return null;
   }
+}
+
+function formatInbox(res) {
+  const msgs = res && Array.isArray(res.messages) ? res.messages : [];
+  if (msgs.length === 0) return "";
+  const lines = msgs.slice(-10).map((m) => {
+    const t = new Date(m.ts);
+    const hhmm = isNaN(t) ? "--:--" : t.toTimeString().slice(0, 5);
+    return `- ${hhmm} ${m.from}${m.to === "all" ? " (to all)" : ""}: ${String(m.text || "").slice(0, 500)}`;
+  });
+  return `Messages from teammates (unread; reply with the mesh send_message tool if needed):\n${lines.join("\n")}`;
 }
 
 function formatActivity(res) {

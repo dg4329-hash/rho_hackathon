@@ -139,7 +139,7 @@ if (!ROOM) {
     <div class="card"><h2>how it works</h2>
       <ol class="steps">
         <li><b>Each person runs one command</b> on their own laptop. It starts a small daemon that lists the MCP servers and commands they're willing to share, with a permission (always / ask / never) per tool.</li>
-        <li><b>Each person connects their coding agent</b> (Claude Code or Cursor) to that daemon with one line. The agent gets five new tools: list teammates, describe a capability, ask a teammate, check a job, team activity.</li>
+        <li><b>Each person connects their coding agent</b> (Claude Code or Cursor) to that daemon with one line. The agent gets seven new tools: list teammates, describe a capability, ask a teammate, check a job, team activity, send a message, inbox.</li>
         <li><b>When your agent needs something it doesn't have</b>, it asks. The owner's terminal shows <code>dev wants to run: … [y/n]</code>. They press y or n. Output streams back to your agent and to this page.</li>
       </ol>
       <p class="small dim">Room name is the only secret. No accounts, no shared vault, no cloud sandbox.</p>
@@ -185,7 +185,8 @@ if (!ROOM) {
   const line = (f) => {
     const t = '<span class="t">' + fmtT(f.ts) + '</span> ';
     const u = '<span class="u">' + esc(f.from || "") + '</span> ';
-    if (f.type === "event") return t + u + '💬 ' + esc(f.kind) + ': ' + esc(f.summary);
+    if (f.type === "event" && f.kind === "message") return t + u + '<span class="ok">✉ → ' + esc((f.data && f.data.to) || "all") + '</span>: ' + esc((f.data && f.data.text) || f.summary);
+    if (f.type === "event") return t + u + ({prompt:"💬",tool_call:"🔧",file_touched:"📁",status:"⏸",note:"📝"}[f.kind] || "•") + ' ' + esc(f.kind) + ': ' + esc(f.summary);
     if (f.type === "request") return t + u + '<span class="req">──▶ ' + esc(f.to) + '  ' + esc(f.command ? "$ " + f.command : f.tool + " " + JSON.stringify(f.args || {})) + '</span>  <span class="t">why: ' + esc(f.why) + '</span>';
     if (f.type === "decision") return t + u + (f.decision === "denied" ? '<span class="no">❌ denied' + (f.reason ? " (" + esc(f.reason) + ")" : "") + '</span>' : f.decision === "auto" ? '<span class="ok">⚡ auto-approved</span>' : '<span class="ok">✅ approved</span>');
     if (f.type === "output") return '<span class="out">' + esc(f.chunk).slice(0, 400) + '</span>';

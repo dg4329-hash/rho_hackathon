@@ -45,6 +45,7 @@ const c = {
   file_touched: chalk.cyanBright,
   status: chalk.dim,
   note: chalk.white,
+  message: chalk.cyanBright,
   header: chalk.bold.bgBlue.white,
   rule: chalk.blue.dim,
   online: chalk.green,
@@ -52,7 +53,7 @@ const c = {
 };
 
 const ICON: Record<EventFrame["kind"], string> = {
-  prompt: "💬", tool_call: "🔧", file_touched: "📁", status: "⏸ ", note: "📝",
+  prompt: "💬", tool_call: "🔧", file_touched: "📁", status: "⏸ ", note: "📝", message: "✉ ",
 };
 
 const pad = (s: string, w = NAME_W) => s.length >= w ? s : s + " ".repeat(w - s.length);
@@ -114,8 +115,9 @@ function summarizeOffers(offers: Offer[]): string {
 
 function renderEvent(f: EventFrame) {
   const colour = c[f.kind] ?? chalk.white;
-  const label = f.kind === "file_touched" ? "file" : f.kind === "tool_call" ? "tool" : f.kind;
-  const body = `${ICON[f.kind]} ${colour(label + ":")} ${colour(clip(oneLine(f.summary), cols() - INDENT.length - 12))}`;
+  const label = f.kind === "file_touched" ? "file" : f.kind === "tool_call" ? "tool" : f.kind === "message" ? `msg → ${String(f.data?.to ?? "all")}` : f.kind;
+  const text = f.kind === "message" ? String(f.data?.text ?? f.summary) : f.summary;
+  const body = `${ICON[f.kind]} ${colour(label + ":")} ${colour(clip(oneLine(text), cols() - INDENT.length - 12))}`;
   line(f.ts, f.from, body);
 }
 

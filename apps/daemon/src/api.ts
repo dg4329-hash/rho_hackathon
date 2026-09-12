@@ -5,7 +5,7 @@
  *   local-server.ts(HTTP + MCP server for the IDE agent)           implements LocalServer
  * Do not change these interfaces without telling the other builder.
  */
-import type { Offer, Role, TeamConfig, JobResult, EventKind } from "@mesh/protocol";
+import type { Offer, Role, TeamConfig, JobResult, EventKind, InboxMessage } from "@mesh/protocol";
 
 export interface Member { user: string; role: Role; offers: Offer[] }
 
@@ -49,6 +49,10 @@ export interface DaemonCore {
   postEvent(kind: EventKind, summary: string, data?: Record<string, unknown>): void;
   /** Human-readable flattening of the last N minutes of frames seen (events, requests, decisions, results). Newest last, ≤ 100. */
   activity(sinceMinutes: number): ActivityEntry[];
+  /** Send a message event to a teammate ('all' = everyone). */
+  sendMessage(to: string, text: string): void;
+  /** Messages addressed to me or 'all'. unreadOnly marks returned messages read. */
+  inbox(opts: { unreadOnly: boolean; sinceMinutes: number }): InboxMessage[];
   relayStatus(): "connected" | "disconnected";
 }
 

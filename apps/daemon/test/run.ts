@@ -107,6 +107,16 @@ async function main(): Promise<void> {
   const r8 = await b.ask({ who: "a", command: "sleep 30 & sleep 30", why: "test", waitSeconds: 10 });
   check("timed-out job → completed with exitCode null", r8.status === "completed" && r8.exitCode === null, r8);
 
+  // 9. messages: b → a (direct) and b → all; a's inbox sees both, marks read; b's own inbox is empty
+  b.sendMessage("a", "fix idea: guard the null case in auth.ts");
+  b.sendMessage("all", "heads up: I'm editing billing.ts");
+  await new Promise((r) => setTimeout(r, 150));
+  const in1 = a.inbox({ unreadOnly: true, sinceMinutes: 5 });
+  check("a.inbox has 2 unread from b", in1.length === 2 && in1.every((m) => m.from === "b"), in1);
+  check("a.inbox second call is empty (marked read)", a.inbox({ unreadOnly: true, sinceMinutes: 5 }).length === 0);
+  check("b.inbox does not contain b's own messages", b.inbox({ unreadOnly: false, sinceMinutes: 5 }).length === 0);
+  check("activity shows the message", a.activity(5).some((e) => e.type === "message"));
+
   clientA.close();
   clientB.close();
   await relay.close();

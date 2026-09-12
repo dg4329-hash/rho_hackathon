@@ -13,6 +13,8 @@ import {
   type RequestFrame,
   type TeamConfig,
   type JobResult,
+  type InboxMessage,
+  type EventFrame,
 } from "@mesh/protocol";
 import type { ActivityEntry, AskInput, DaemonCore, Job, McpImport, Member } from "./api.js";
 import { askApproval } from "./approval.js";
@@ -195,8 +197,23 @@ export function createCore(opts: CoreOptions): DaemonCore & { client: RelayClien
     });
   }
 
+  // ---------- messages addressed to me ----------
+  const messages = new Map<string, InboxMessage>();
+  function onMessage(frame: EventFrame): void {
+    if (frame.kind !== "message" || frame.from === me) return;
+    const to = String(frame.data?.to ?? "all");
+    if (to !== me && to !== "all") return;
+    const text = String(frame.data?.text ?? frame.summary);
+    const id = typeof frame.data?.id === "string" ? frame.data.id : `${frame.from}:${frame.ts}:${text.slice(0, 40)}`;
+    if (messages.has(id)) return;
+    messages.set(id, { id, ts: frame.ts, from: frame.from, to, text, read: false });
+    if (messages.size > 500) messages.delete(messages.keys().next().value as string);
+    say(`${chalk.cyan("✉")} ${chalk.magenta(frame.from)}${to === "all" ? chalk.dim(" (to all)") : ""}: ${text.length > 300 ? text.slice(0, 299) + "…" : text}`);
+  }
+
   client.on("frame", (frame) => {
     if (frame.type === "request") onRequest(frame);
+    else if (frame.type === "event") onMessage(frame);
     else onOwnedFrame(frame);
   });
 
@@ -260,6 +277,23 @@ export function createCore(opts: CoreOptions): DaemonCore & { client: RelayClien
 
     postEvent(kind: EventKind, summary: string, data?: Record<string, unknown>): void {
       client.send({ type: "event", kind, summary, ...(data ? { data } : {}) });
+    },
+
+    sendMessage(to: string, text: string): void {
+      const trimmed = text.trim();
+      client.send({ type: "event", kind: "message", summary: `→ ${to}: ${trimmed.slice(0, 140)}`, data: { id: randomUUID(), to, text: trimmed } });
+    },
+
+    inbox({ unreadOnly, sinceMinutes }) {
+      const cutoff = Date.now() - sinceMinutes * 60_000;
+      const out: InboxMessage[] = [];
+      for (const m of messages.values()) {
+        if (Date.parse(m.ts) < cutoff) continue;
+        if (unreadOnly && m.read) continue;
+        out.push({ ...m });
+      }
+      if (unreadOnly) for (const m of out) messages.get(m.id)!.read = true;
+      return out.sort((a, b) => a.ts.localeCompare(b.ts));
     },
 
     activity(sinceMinutes: number): ActivityEntry[] {

@@ -322,17 +322,18 @@ function pre(txt){ return '<pre>' + copyBtn(txt) + esc(txt) + '</pre>'; }
 
 if (!ROOM) {
   $("#app").innerHTML = \`
-    <div class="card"><h2>1 · start a session</h2>
-      <p>Creates a room. Share its link with your teammates; everyone who joins can borrow each other's tools.</p>
-      <div class="row"><button id="start">Start a session</button><span class="dim small">or open an existing room: <code>/r/&lt;room&gt;</code></span></div>
+    <div class="card"><h2>start here</h2>
+      <p><b>mesh lets your AI coding assistant use tools your teammates have and you don't.</b> Their Figma, their database, their deploy access. It runs on their laptop, they click Approve, you get the result. Nobody shares a password or a key.</p>
+      <div class="row"><button id="start">Start a session</button><span class="dim small">creates a room and gives you a link to send to your teammates</span></div>
     </div>
-    <div class="card"><h2>how it works</h2>
+    <div class="card"><h2>what happens, in plain words</h2>
       <ol class="steps">
-        <li><b>Each person runs one command</b> on their own laptop (needs Node 20+, nothing else: no clone, no pnpm, no npm account). It downloads a small daemon that lists the MCP servers and commands they're willing to share, with a permission (always / ask / never) per tool.</li>
-        <li><b>The daemon registers itself with their coding agent</b> (Claude Code, Cursor, Codex); they just restart the agent session. The agent gets new tools: list teammates, describe a capability, ask a teammate, check a job, team activity, send a message, inbox.</li>
-        <li><b>When your agent needs something it doesn't have</b>, it asks. The owner's terminal shows <code>dev wants to run: … [y/n]</code>. They press y or n. Output streams back to your agent and to this page.</li>
+        <li><b>You make a room and send the link.</b> Anyone with the link can join. The link is the only password, so only send it to your team.</li>
+        <li><b>Each person pastes one command</b> in their terminal (or double-clicks a downloaded file). That's the whole install. It takes about 20 seconds and needs only Node.js.</li>
+        <li><b>Each person restarts their coding assistant once</b> (Claude Code, Codex, or Cursor). It now knows about the team.</li>
+        <li><b>Work like normal.</b> When your assistant needs something a teammate has, it asks them. A small window pops up on their screen: Approve or Deny. If they approve, the result comes back to your assistant. Everyone can watch it happen on the room page.</li>
       </ol>
-      <p class="small dim">Room name is the only secret. No accounts, no shared vault, no cloud sandbox.</p>
+      <p class="small dim">Nothing runs in the cloud. No accounts. Your keys never leave your computer.</p>
     </div>\`;
   $("#start").onclick = async () => {
     const r = await fetch("/api/rooms", { method: "POST" }).then((x) => x.json());
@@ -357,38 +358,42 @@ if (!ROOM) {
         <button class="ghost" onclick="navigator.clipboard.writeText(location.href);this.textContent='link copied'">copy room link</button>
         <span class="dim small">share this link with teammates</span></div></div>
 
-      <div class="card"><h2>1 · you</h2>
-        <div class="row"><label>your handle <input id="me" value="\${esc(me)}" placeholder="dev" maxlength="32" autocomplete="off"></label>
-        <span class="dim small">lowercase, no spaces. Teammates' agents will address you by this.</span></div></div>
+      <div class="card"><h2>step 1 · pick a name</h2>
+        <div class="row"><label>your name <input id="me" value="\${esc(me)}" placeholder="e.g. tarush" maxlength="32" autocomplete="off"></label>
+        <span class="dim small">lowercase, no spaces. This is how teammates' assistants will refer to you.</span></div></div>
 
-      <div class="card"><h2>2 · run this on your laptop</h2>
-        <div class="row"><span class="tabs"><button class="ghost" data-sh="bash">macOS / Linux</button><button class="ghost" data-sh="ps">Windows PowerShell</button></span>
-        <span class="dim small">needs Node 20+ (<a href="https://nodejs.org" target="_blank" rel="noopener">nodejs.org</a>). No clone, no pnpm, no npm account.</span></div>
+      <div class="card"><h2>step 2 · install (one command, ~20 seconds)</h2>
+        <div class="row"><span class="tabs"><button class="ghost" data-sh="bash">Mac / Linux</button><button class="ghost" data-sh="ps">Windows</button></span>
+        <span class="dim small">Needs <a href="https://nodejs.org" target="_blank" rel="noopener">Node.js</a> (version 20 or newer). If you've used any AI coding tool, you almost certainly have it.</span></div>
+        <p class="small"><b>Mac / Linux:</b> open Terminal, go to your project folder (<code>cd path/to/your/project</code>), paste this, press Enter.<br><b>Windows:</b> open Windows Terminal or PowerShell (not Git Bash), go to your project folder, paste this, press Enter.</p>
         <pre id="join"></pre>
-        <p class="small dim">Downloads the mesh daemon into <code>~/.mesh</code> and joins this room. It reads your Claude Code / Cursor MCP config and offers those tools to the room (default permission <b>ask</b>). Keep the terminal open: that's where you approve requests. Re-run the same command to update.</p></div>
+        <p class="small"><b>You'll know it worked</b> when it prints <code>● mesh running in the background</code> and your name appears under "who's here" below. You can close the terminal afterwards.</p>
+        <p class="small dim">Prefer a file? <b>Windows:</b> download <a id="dl-cmd" href="#">mesh-join-\${esc(ROOM)}.cmd</a> and double-click it (click "Run anyway" if Windows warns). <b>Mac:</b> download <a id="dl-command" href="#">mesh-join-\${esc(ROOM)}.command</a>, right-click it → Open.</p>
+        <details><summary>what did that just do?</summary>
+        <p class="small dim">It downloaded one small program into a <code>.mesh</code> folder in your home directory and started it in the background. That program joined this room, looked at which MCP servers your coding assistant already has, and offered them to the room with permission "ask" (so nothing runs without your OK). It also told your coding assistant about mesh. To turn it off: <code>node ~/.mesh/mesh.mjs stop</code>. To check: <code>node ~/.mesh/mesh.mjs status</code>.</p></details></div>
 
-      <div class="card"><h2>2b · or download and double-click</h2>
-        <p class="small">Same thing as the command, as a file. <b>Windows:</b> <a id="dl-cmd" href="#">mesh-join-\${esc(ROOM)}.cmd</a> — double-click it. <b>macOS:</b> <a id="dl-command" href="#">mesh-join-\${esc(ROOM)}.command</a> — right-click → Open the first time (unsigned).</p></div>
-
-      <div class="card"><h2>3 · restart your coding agent, then check</h2>
-        <p class="small">The daemon registers itself with Claude Code, Cursor and Codex when it starts. Restart your agent session once. Then verify:</p>
-        <ul class="small">
-          <li><b>Codex CLI:</b> <code>codex mcp list</code> shows <code>mesh</code> enabled. In a new session ask: <i>list my mesh teammates</i>.</li>
-          <li><b>Claude Code:</b> <code>claude mcp list</code> shows <code>mesh … ✔ Connected</code>. Ask the same thing.</li>
-          <li><b>Cursor:</b> Settings → MCP → <code>mesh</code> with 9 tools. Ask the same thing in a new chat.</li>
-        </ul>
-        <p class="small"><b>What happens next:</b> when a teammate's agent asks your machine for something, a system dialog pops up (Approve / Deny). Messages from teammates arrive as a system notification; on Codex or Cursor ask your agent to <i>check my mesh inbox</i>. Manage the daemon with <code>node ~/.mesh/mesh.mjs status</code> / <code>stop</code>.</p>
-        <details><summary>manual setup (if auto-registration didn't work)</summary>
-        <p class="small">Claude Code (run in the project you're working on):</p>
+      <div class="card"><h2>step 3 · restart your coding assistant once</h2>
+        <p class="small">Close your current Claude Code / Codex / Cursor session and open a new one in the same project folder. Coding assistants only look for new tools when they start.</p>
+        <p class="small"><b>Check it worked:</b> ask your assistant <i>"list my mesh teammates"</i>. It should answer with the people under "who's here". If it says it has no such tool, open the manual setup below.</p>
+        <details><summary>manual setup (only if the check above failed)</summary>
+        <p class="small">Claude Code, in a terminal in your project folder:</p>
         \${pre("claude mcp add --transport http mesh http://localhost:7337/mcp")}
-        <p class="small">Cursor: add to <code>.cursor/mcp.json</code></p>
+        <p class="small">Codex CLI, in any terminal:</p>
+        \${pre("codex mcp add mesh --url http://localhost:7337/mcp")}
+        <p class="small">Cursor: create a file called <code>.cursor/mcp.json</code> in your project with this content, then restart Cursor:</p>
         \${pre('{ "mcpServers": { "mesh": { "url": "http://localhost:7337/mcp" } } }')}
-        <p class="small">Codex: add to <code>~/.codex/config.toml</code></p>
-        \${pre('[mcp_servers.mesh]\\nurl = "http://localhost:7337/mcp"')}
         <p class="small dim">Developers of mesh itself can run from the repo instead: <code>pnpm -F daemon start join \${esc(ROOM)} --as &lt;you&gt; --relay \${esc(RELAY)}</code> (see <a href="\${esc(REPO)}">the repo</a>).</p>
         </details></div>
 
-      <div class="card"><h2>who's here <span id="watchers" class="pill" style="text-transform:none"></span></h2><div id="members" class="members"><span class="dim">nobody yet — run step 2</span></div></div>
+      <div class="card"><h2>step 4 · use it</h2>
+        <ul class="small">
+          <li><b>To borrow something:</b> just ask your assistant to do the task. If it needs a teammate's tool, it will ask them by itself. You can also be explicit: <i>"ask tarush to export the Onboarding frame from Figma"</i>.</li>
+          <li><b>When someone asks you:</b> a small window pops up on your screen saying who wants what and why. Click Approve or Deny. If you don't answer within 90 seconds, it's denied.</li>
+          <li><b>Messages:</b> your assistant can send a note to a teammate's assistant (<i>"tell abhi I'm changing the login page"</i>). You get a notification when one arrives. On Codex or Cursor, ask your assistant <i>"check my mesh inbox"</i> to read it; Claude Code shows it automatically.</li>
+          <li><b>Watch it happen:</b> everything shows up in the "live" panel below.</li>
+        </ul></div>
+
+      <div class="card"><h2>who's here <span id="watchers" class="pill" style="text-transform:none"></span></h2><div id="members" class="members"><span class="dim">nobody yet — do step 2 and your name will appear here</span></div></div>
       <div class="card"><h2>live</h2><div id="feed" class="feed"><span class="dim">requests, approvals and output will appear here</span></div></div>\`;
     const dl = () => { const q = "?room=" + encodeURIComponent(ROOM) + (me ? "&as=" + encodeURIComponent(me) : ""); const a = $("#dl-cmd"), b = $("#dl-command"); if (a) a.href = "/join.cmd" + q; if (b) b.href = "/join.command" + q; };
     dl();
@@ -418,7 +423,7 @@ if (!ROOM) {
       const mem = $("#members");
       if (mem) mem.innerHTML = r.members.length ? r.members.map((m) => '<div class="m"><b>' + esc(m.user) + '</b> <span class="on">● online</span><div>' +
         (m.offers.length ? m.offers.map((o) => '<span class="offer ' + esc(o.permission || "") + '" title="' + esc(o.permission || "") + '">' + esc(o.name) + '</span>').join("") : '<span class="dim small">no offers</span>') + '</div></div>').join("")
-        : '<span class="dim">nobody yet — run step 2</span>';
+        : '<span class="dim">nobody yet — do step 2 and your name will appear here</span>';
       const w = $("#watchers"); if (w) w.textContent = r.watchers ? r.watchers + " watching" : "";
       for (const f of r.events || []) { if (seen.has(f.i)) continue; seen.add(f.i); const l = line(f); if (l) lines.push(l); }
       const feed = $("#feed");

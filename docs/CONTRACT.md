@@ -48,7 +48,7 @@ interface Offer {
 }
 ```
 
-Routing: everything is broadcast. Daemons ignore `request` frames whose `to` isn't them. `id` ties request → decision → output* → result.
+Routing: everything is broadcast. Daemons ignore `request` frames whose `to` isn't them, that are older than 30 s, or whose `id` already has a `decision` in replayed history (replay guard). For a job it owns, a daemon only accepts `decision`/`output`/`result` frames whose `from` equals the request's `to`. `id` ties request → decision → output* → result.
 
 ## 2. `team.json` (lives in each person's repo checkout or `~/.mesh/team.json`)
 
@@ -122,7 +122,8 @@ Tool description text (copy into the server verbatim):
 
 - `list_teammates`: "List teammates currently online and every tool or command each one can run for you on their machine (their MCP servers: Supabase, Figma, Linear, GitHub, etc., plus shell commands). Call this whenever you need a tool, credential, dataset, or environment you don't have, before telling the user you can't do something. Then call describe_capability on the specific tool before using it."
 - `describe_capability`: "Full description, input schema, owner notes, and an example call for one teammate capability. Always call this before ask_teammate on a tool you haven't used in this session; the owner's notes contain project-specific details (IDs, table names, conventions) you cannot guess."
-- `ask_teammate`: "Use a teammate's tool (tool + args, from describe_capability) or run a shell command on their machine (command). They see exactly what you're asking and your `why`, and must approve unless the capability is marked 'always'. Returns the tool result or stdout/stderr. If status is 'running', call check_job with the jobId. If 'denied', do not retry the same request; tell the user why."
+- `ask_teammate`: "Use a teammate's tool (tool + args, from describe_capability) or run a shell command on their machine (command). They see exactly what you're asking and your `why`, and must approve unless the capability is marked 'always'. Shell commands run in the owner's configured working directory with their environment. Returns { status, exitCode, output }: exitCode 0 = success, 1 = the tool reported an error, null = killed at the owner's timeout. If status is 'running', call check_job with the jobId. If 'denied', do not retry the same request; tell the user why."
+- `check_job`: "Check on, or wait for, a job started by ask_teammate. waitSeconds blocks up to that long for completion (0 = return immediately). Same result shape as ask_teammate; exitCode null means it was killed at the owner's timeout."
 - `team_activity`: "What teammates and their agents have done recently: prompts, tool calls, files touched, requests. Check before editing files others may be working on."
 
 `ask_teammate` implementation: for `tool`, look up the offer in the last `presence` and validate `args` locally against `inputSchema` before emitting (fail fast with a readable error). Emit `request`, wait for the `decision`/`result` frames with that `id`, buffer `output` chunks into a job record `{ id, to, command, status, chunks[], exitCode, ... }` kept in memory (Map). `check_job` reads the same Map.

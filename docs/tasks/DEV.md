@@ -10,7 +10,7 @@ Subscription: Claude Max 20x. You are on the critical path for steps 0, 2, 3. Ru
 3. S2: deny path polished (clear error text in tool result), `never` permission demoable.
 
 ## Stack
-Node 22, TypeScript, `tsx` for dev, `ws`, `@modelcontextprotocol/sdk` (StreamableHTTPServerTransport), `zod`, `commander`, `shell-quote` (for the offer-matching first token), `chalk`. One `package.json` in `apps/daemon` with `bin: { mesh: ./dist/cli.js }`; `pnpm -F daemon start -- join rho --as dev` during the hackathon, `npx` packaging only if time.
+Node 22, TypeScript, `tsx` for dev, `ws`, `@modelcontextprotocol/sdk` (StreamableHTTPServerTransport), `zod`, `commander`, `shell-quote` (for the offer-matching first token), `chalk`. One `package.json` in `apps/daemon` with `bin: { mesh: ./dist/cli.js }`; `pnpm -F daemon start join rho --as dev` during the hackathon, `npx` packaging only if time.
 
 ## Step 2 — daemon without MCP (acceptance: `mesh ask tarush "echo hi"` from your laptop prints `hi` on both)
 - `mesh join`: load `team.json` (path flag or `./team.json` or `~/.mesh/team.json`), validate with the protocol schema, connect to `relay?room=&user=&role=daemon`, send `hello` with offers, reconnect with backoff on close.
@@ -44,3 +44,22 @@ Node 22, TypeScript, `tsx` for dev, `ws`, `@modelcontextprotocol/sdk` (Streamabl
 
 ## Definition of done
 Steps 0, 2, 3, 3b acceptance tests pass with Tarush's deployed relay, from two different laptops. `MESH_DEBUG=1` log of a full request→result cycle pasted into `docs/tasks/DEV.md` under "Evidence".
+
+## Evidence (2026-09-12)
+Steps 0, 2, 3, 3b done on branch `dev/daemon`. Not yet run against Tarush's real relay or across two laptops.
+
+```
+$ pnpm typecheck                       → all 4 packages Done
+$ pnpm -F daemon test                  → PASS (20 checks: echo/deny/never/exit-code/stderr/offline/activity/forged-frames/timeout-kill)
+$ pnpm -F daemon exec tsx test/mcp.test.ts → PASS (30 checks: 6 tools via real MCP client, describe usage, bad args, import fixture server, callTool, skipped server)
+```
+Behavioral run (3 daemons on one machine, fake relay, MCP client acting as Dev's agent): list → describe → tool call (24 ms) → shell auto → shell approve → shell deny → bad args → waitSeconds+check_job → relay kill/restart reconnect (<8 s) → timeout with no orphans. All pass.
+
+Review fixes applied: only the addressed teammate's decision/result frames are accepted for a job; approval prompt strips ANSI/control chars and caps length; timeout kills the process group; frames sent while disconnected are queued and flushed on reconnect; replay guard so a restarted daemon never re-runs old requests; own frames recorded so team_activity shows "me → who: command"; local HTTP bound to 127.0.0.1.
+
+Run:
+```
+pnpm -F daemon start join rho --as dev --relay ws://<relay> --config ./team.json
+claude mcp add --transport http mesh http://localhost:7337/mcp
+pnpm -F daemon start ask tarush "echo hi" --why test --room rho --as dev --relay ws://<relay>
+```

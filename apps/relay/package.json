@@ -9,7 +9,7 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "validate": "tsx src/validate.ts",
-    "test": "tsx test/relay.test.ts",
+    "test": "tsx test/relay.test.ts && tsx test/files.test.ts",
     "soak": "tsx src/soak-s1.ts"
   },
   "dependencies": { "@mesh/protocol": "workspace:*", "ws": "^8.18.0", "zod": "^3.23.8" },

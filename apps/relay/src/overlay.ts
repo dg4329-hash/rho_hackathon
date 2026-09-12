@@ -200,7 +200,10 @@ export const OVERLAY_JS: string = String.raw`(function (root) {
     ".widget::after{content:'';position:absolute;inset:-1px;border-radius:inherit;pointer-events:none}" +
     "@keyframes mo-glow{0%{box-shadow:0 0 0 0 rgba(10,132,255,.55)}100%{box-shadow:0 0 0 14px rgba(10,132,255,0)}}.widget.glow::after{animation:mo-glow 1s ease-out}" +
     "body.collapsed{gap:0}body.collapsed .hd,body.collapsed .main,body.collapsed .ft{display:none}body.collapsed .widget{display:flex}" +
-    "a{color:var(--blue)}";
+    "a{color:var(--blue)}" +
+    // artifact chips (docs/FILES-API.md): name · size, links to the relay file URL
+    ".chip{display:inline-block;margin:2px 4px 0 0;padding:1px 8px;border-radius:999px;border:1px solid var(--line);background:var(--field);color:var(--blue);font:11px/1.5 -apple-system,BlinkMacSystemFont,'SF Pro Text','Segoe UI',system-ui,sans-serif;text-decoration:none;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle}" +
+    ".chip:hover{border-color:var(--blue)}.chip .sz{color:var(--fg2)}.chips{display:block;margin-top:2px}";
 
   function esc(s) {
     return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; });
@@ -210,15 +213,42 @@ export const OVERLAY_JS: string = String.raw`(function (root) {
     var s; try { s = JSON.stringify(args == null ? {} : args, null, 1); } catch (e) { s = String(args); }
     return s.length > 800 ? s.slice(0, 800) + " …" : s;
   }
+  /** "184 KB" style. */
+  function fmtSize(n) {
+    n = Number(n) || 0;
+    if (n < 1024) return n + " B";
+    if (n < 1024 * 1024) return Math.round(n / 1024) + " KB";
+    if (n < 1024 * 1024 * 1024) return (n / (1024 * 1024)).toFixed(1).replace(/\.0$/, "") + " MB";
+    return (n / (1024 * 1024 * 1024)).toFixed(1).replace(/\.0$/, "") + " GB";
+  }
+  /** One artifact chip: name · size, linking to the relay URL (http(s) only; anything else renders unlinked). */
+  function artifactChip(a) {
+    if (!a || typeof a !== "object") return "";
+    var label = esc(a.name || a.id || "file") + ' <span class="sz">· ' + esc(fmtSize(a.size)) + '</span>';
+    var url = typeof a.url === "string" && /^https?:\/\//i.test(a.url) ? a.url : "";
+    return url
+      ? '<a class="chip" href="' + esc(url) + '" target="_blank" rel="noopener" title="' + esc(a.mime || "") + '">' + label + '</a>'
+      : '<span class="chip">' + label + '</span>';
+  }
+  function artifactChips(list) {
+    if (!Array.isArray(list) || !list.length) return "";
+    var out = ""; for (var i = 0; i < list.length; i++) out += artifactChip(list[i]);
+    return out ? '<span class="chips">' + out + '</span>' : "";
+  }
   function feedLine(f) {
     var t = '<span class="t">' + fmtT(f.ts) + '</span> ';
     var u = '<span class="u">' + esc(f.from || "") + '</span> ';
     if (f.type === "event" && f.kind === "message") return t + u + '<span class="ok">✉ → ' + esc((f.data && f.data.to) || "all") + '</span>: ' + esc((f.data && f.data.text) || f.summary);
+    if (f.type === "event" && f.kind === "file") {
+      var art = f.data && f.data.artifact;
+      var note = (f.data && f.data.note) || f.summary || ("sent " + ((art && art.name) || "a file"));
+      return t + u + '<span class="ok">📎 → ' + esc((f.data && f.data.to) || "all") + '</span>: ' + esc(note) + artifactChips(art ? [art] : []);
+    }
     if (f.type === "event") return t + u + ({ prompt: "💬", tool_call: "🔧", file_touched: "📁", status: "⏸", note: "📝" }[f.kind] || "•") + ' ' + esc(f.summary);
     if (f.type === "request") return t + u + '<span class="rq">→ ' + esc(f.to) + ' ' + esc(f.command ? "$ " + f.command : (f.tool || "") + " " + JSON.stringify(f.args || {})) + '</span>';
     if (f.type === "decision") return t + u + (f.decision === "denied" ? '<span class="no">✗ denied' + (f.reason ? " (" + esc(f.reason) + ")" : "") + '</span>' : f.decision === "auto" ? '<span class="ok">⚡ auto</span>' : '<span class="ok">✓ approved</span>');
     if (f.type === "output") return '<span class="out">' + esc(String(f.chunk || "").slice(0, 200)) + '</span>';
-    if (f.type === "result") return t + u + (f.exitCode === 0 ? '<span class="ok">✔ exit 0' : '<span class="no">✘ exit ' + esc(f.exitCode)) + ' ' + (Number(f.durationMs || 0) / 1000).toFixed(1) + 's' + (f.timedOut ? " (timed out)" : "") + '</span>';
+    if (f.type === "result") return t + u + (f.exitCode === 0 ? '<span class="ok">✔ exit 0' : '<span class="no">✘ exit ' + esc(f.exitCode)) + ' ' + (Number(f.durationMs || 0) / 1000).toFixed(1) + 's' + (f.timedOut ? " (timed out)" : "") + '</span>' + artifactChips(f.artifacts);
     return null;
   }
 
@@ -365,7 +395,8 @@ export const OVERLAY_JS: string = String.raw`(function (root) {
       var el = $("mo-messages"); if (!el) return;
       if (!state.messages.length) { el.innerHTML = '<div class="empty">no messages yet</div>'; return; }
       el.innerHTML = state.messages.slice(0, 50).map(function (m) {
-        return '<div class="msg" data-id="' + esc(m.id) + '"><div class="m"><b>' + esc(m.from) + '</b> → ' + esc(m.to || "all") + ' · ' + fmtT(m.ts) + '</div><div class="tx">' + esc(m.text) + '</div></div>';
+        // a "file" event lands in the inbox as a message with artifact set (docs/FILES-API.md) → chip under the text
+        return '<div class="msg" data-id="' + esc(m.id) + '"><div class="m"><b>' + esc(m.from) + '</b> → ' + esc(m.to || "all") + ' · ' + fmtT(m.ts) + '</div><div class="tx">' + esc(m.text) + '</div>' + artifactChips(m.artifact ? [m.artifact] : m.artifacts) + '</div>';
       }).join("");
       if (newIds) { var nodes = el.querySelectorAll(".msg"); for (var i = 0; i < nodes.length; i++) if (newIds[nodes[i].getAttribute("data-id")]) flash(nodes[i]); }
     }
@@ -505,7 +536,7 @@ export const OVERLAY_JS: string = String.raw`(function (root) {
     return { stop: stop, setPort: setPort, setCollapsed: setCollapsed, state: state };
   }
 
-  var api = { createNet: createNet, mountOverlay: mountOverlay, newestTs: newestTs, badgeFor: badgeFor, titleFor: titleFor, DEFAULT_PORT: DEFAULT_PORT };
+  var api = { createNet: createNet, mountOverlay: mountOverlay, newestTs: newestTs, badgeFor: badgeFor, titleFor: titleFor, feedLine: feedLine, artifactChip: artifactChip, fmtSize: fmtSize, DEFAULT_PORT: DEFAULT_PORT };
   root.meshOverlay = api;
   if (typeof window === "undefined" && typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

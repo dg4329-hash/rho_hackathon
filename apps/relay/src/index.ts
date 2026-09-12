@@ -11,11 +11,13 @@
  *   ping     every PING_MS; a socket that missed the previous pong is terminated.
  *   GET /health  → { rooms, connections }   (same port as the WebSocket server)
  *   GET /, /r/:room, /api/rooms…, /install.sh, /install.ps1, /mesh.mjs, /emit.js  → web.ts (front door + one-command join)
+ *   POST/GET /api/files/:room[/:id[/meta]]  → files.ts (in-memory artifacts, docs/FILES-API.md)
  *
  * Presence lists only conns that have sent `hello`; a conn that connected but has not yet announced itself
  * is invisible so nobody ever sees a member with an empty offer list mid-handshake.
  */
 import { handleWeb, type WebAssets } from "./web.js";
+import { fileStoreFromEnv, handleFiles } from "./files.js";
 import fs from "node:fs";
 import http from "node:http";
 import { spawnSync } from "node:child_process";
@@ -163,8 +165,13 @@ const webDeps = {
   assets: loadAssets(),
 };
 
+// Artifacts (docs/FILES-API.md): in memory, LRU-capped, TTL-swept. Not tied to the rooms map — a file outlives its room's history.
+const files = fileStoreFromEnv();
+files.startSweeper();
+
 const server = http.createServer((req, res) => {
   const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+  if (handleFiles(req, res, url, { store: files })) return;
   if (handleWeb(req, res, url, webDeps)) return;
   if ((req.method === "GET" || req.method === "HEAD") && url.pathname === "/health") {
     res.writeHead(200, { "content-type": "application/json" });
@@ -283,6 +290,7 @@ server.listen(PORT, () => {
 function shutdown(signal: string): void {
   console.log(`${signal} — shutting down`);
   clearInterval(pingInterval);
+  files.stopSweeper();
   for (const c of wss.clients) c.terminate();
   wss.close();
   server.close(() => process.exit(0));

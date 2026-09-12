@@ -319,6 +319,8 @@ function page(opts: { repoUrl: string; room?: string }): string {
   .pill{display:inline-block;padding:2px 10px;border-radius:999px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.1);color:var(--dim);font-size:12px}
   .tabs{display:inline-flex;gap:4px;margin:0 0 4px}.tabs button.ghost{padding:4px 10px}.tabs button.ghost.on{border-color:var(--acc);color:var(--acc)}
   details{margin:10px 0 0}summary{cursor:pointer;color:var(--dim);font-size:13px}details[open] summary{margin-bottom:6px}
+  .chip{display:inline-block;margin:2px 4px 0 0;padding:1px 9px;border-radius:999px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);color:var(--link);font:12px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,sans-serif;text-decoration:none;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle}
+  .chip:hover{border-color:var(--link)}.chip .sz{color:var(--dim)}.chips{display:block;margin-top:2px}
 </style></head><body><main>
 <h1>mesh <span>· borrow a teammate's machine, not their credentials</span></h1>
 <p class="tag">Your coding agent asks a teammate's laptop to run a tool it doesn't have. They press <b>y</b>. The result comes back. Credentials never move.</p>
@@ -449,15 +451,29 @@ if (!ROOM) {
 
   const seen = new Set(); let next = 0; const lines = [];
   const fmtT = (ts) => { try { return new Date(ts).toTimeString().slice(0, 8); } catch { return ""; } };
+  // artifact chips (docs/FILES-API.md): name · size → relay file URL (http(s) only; anything else is unlinked)
+  const fmtSize = (n) => { n = Number(n) || 0; return n < 1024 ? n + " B" : n < 1048576 ? Math.round(n / 1024) + " KB" : (n / 1048576).toFixed(1).replace(/\\.0$/, "") + " MB"; };
+  const chip = (a) => {
+    if (!a || typeof a !== "object") return "";
+    const label = esc(a.name || a.id || "file") + ' <span class="sz">· ' + esc(fmtSize(a.size)) + '</span>';
+    const url = typeof a.url === "string" && /^https?:\\/\\//i.test(a.url) ? a.url : "";
+    return url ? '<a class="chip" href="' + esc(url) + '" target="_blank" rel="noopener" title="' + esc(a.mime || "") + '">' + label + '</a>' : '<span class="chip">' + label + '</span>';
+  };
+  const chips = (list) => Array.isArray(list) && list.length ? '<span class="chips">' + list.map(chip).join("") + '</span>' : "";
   const line = (f) => {
     const t = '<span class="t">' + fmtT(f.ts) + '</span> ';
     const u = '<span class="u">' + esc(f.from || "") + '</span> ';
     if (f.type === "event" && f.kind === "message") return t + u + '<span class="ok">✉ → ' + esc((f.data && f.data.to) || "all") + '</span>: ' + esc((f.data && f.data.text) || f.summary);
+    if (f.type === "event" && f.kind === "file") {
+      const art = f.data && f.data.artifact;
+      const note = (f.data && f.data.note) || f.summary || ("sent " + ((art && art.name) || "a file"));
+      return t + u + '<span class="ok">📎 → ' + esc((f.data && f.data.to) || "all") + '</span>: ' + esc(note) + chips(art ? [art] : []);
+    }
     if (f.type === "event") return t + u + ({prompt:"💬",tool_call:"🔧",file_touched:"📁",status:"⏸",note:"📝"}[f.kind] || "•") + ' ' + esc(f.kind) + ': ' + esc(f.summary);
     if (f.type === "request") return t + u + '<span class="req">──▶ ' + esc(f.to) + '  ' + esc(f.command ? "$ " + f.command : f.tool + " " + JSON.stringify(f.args || {})) + '</span>  <span class="t">why: ' + esc(f.why) + '</span>';
     if (f.type === "decision") return t + u + (f.decision === "denied" ? '<span class="no">❌ denied' + (f.reason ? " (" + esc(f.reason) + ")" : "") + '</span>' : f.decision === "auto" ? '<span class="ok">⚡ auto-approved</span>' : '<span class="ok">✅ approved</span>');
     if (f.type === "output") return '<span class="out">' + esc(f.chunk).slice(0, 400) + '</span>';
-    if (f.type === "result") return t + u + (f.exitCode === 0 ? '<span class="ok">✔ exit 0' : '<span class="no">✘ exit ' + esc(f.exitCode)) + ' in ' + (f.durationMs / 1000).toFixed(1) + 's' + (f.timedOut ? " (timed out)" : "") + '</span>';
+    if (f.type === "result") return t + u + (f.exitCode === 0 ? '<span class="ok">✔ exit 0' : '<span class="no">✘ exit ' + esc(f.exitCode)) + ' in ' + (f.durationMs / 1000).toFixed(1) + 's' + (f.timedOut ? " (timed out)" : "") + '</span>' + chips(f.artifacts);
     return null;
   };
   async function poll() {

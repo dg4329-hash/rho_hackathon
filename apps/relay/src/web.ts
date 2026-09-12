@@ -17,6 +17,7 @@
  */
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { randomBytes } from "node:crypto";
+import { handleOverlay } from "./overlay.js";
 
 export interface WebRoomView {
   members: Array<{ user: string; role: string; offers: Array<{ name: string; kind?: string; permission?: string }> }>;
@@ -101,6 +102,7 @@ export function handleWeb(req: IncomingMessage, res: ServerResponse, url: URL, d
   }
   if (method === "GET" && pathname === "/install.sh") { text(res, 200, installSh(publicOrigin(req)), "text/x-shellscript; charset=utf-8"); return true; }
   if (method === "GET" && pathname === "/install.ps1") { text(res, 200, installPs1(publicOrigin(req)), "text/plain; charset=utf-8"); return true; }
+  if (handleOverlay(req, res, url)) return true; // GET /overlay?room=&port=  +  GET /overlay.js  (overlay.ts)
 
   if (method === "POST" && pathname === "/api/rooms") {
     let name = newRoomName();
@@ -292,28 +294,29 @@ function page(opts: { repoUrl: string; room?: string }): string {
 <title>mesh${opts.room ? " · " + opts.room : ""}</title>
 <style>
   :root{--bg:#0b0d10;--panel:#14181d;--line:#232a33;--fg:#e6e9ee;--dim:#8a94a3;--acc:#7ee787;--warn:#f2cc60;--err:#ff7b72;--link:#79c0ff}
-  *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 ui-sans-serif,system-ui,-apple-system,Segoe UI,Inter,sans-serif}
+  *{box-sizing:border-box}body{margin:0;background:linear-gradient(160deg,#101216,#0a0b0e) fixed;color:var(--fg);font:15px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,sans-serif}
   main{max-width:960px;margin:0 auto;padding:40px 20px 80px}
   h1{font-size:34px;margin:0 0 6px;letter-spacing:-.5px}h1 span{color:var(--dim);font-weight:400}
   .tag{color:var(--dim);margin:0 0 28px}
-  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px 22px;margin:16px 0}
+  .card{background:rgba(28,28,30,.55);-webkit-backdrop-filter:blur(24px) saturate(180%);backdrop-filter:blur(24px) saturate(180%);border:1px solid rgba(255,255,255,.12);border-radius:18px;box-shadow:inset 0 1px 0 rgba(255,255,255,.12),0 8px 30px rgba(0,0,0,.12);padding:20px 22px;margin:16px 0}
+  @supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){.card{background:#14181d}}
   .card h2{font-size:15px;margin:0 0 10px;color:var(--dim);text-transform:uppercase;letter-spacing:.08em}
-  button,.btn{background:var(--acc);color:#04120a;border:0;border-radius:8px;padding:12px 18px;font-weight:700;font-size:15px;cursor:pointer}
-  button.ghost{background:transparent;color:var(--fg);border:1px solid var(--line);font-weight:500;padding:6px 10px;font-size:13px}
+  button,.btn{background:#0a84ff;color:#fff;border:0;border-radius:999px;padding:12px 18px;font-weight:600;font-size:15px;cursor:pointer}
+  button.ghost{background:rgba(255,255,255,.06);color:var(--fg);border:1px solid rgba(255,255,255,.14);border-radius:999px;font-weight:500;padding:6px 12px;font-size:13px}
   input{background:#0b0d10;color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:10px 12px;font-size:15px;width:220px}
-  pre{background:#0b0d10;border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;font:13.5px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;position:relative;margin:8px 0}
+  pre{background:rgba(10,11,14,.6);border:1px solid rgba(255,255,255,.1);border-radius:12px;padding:12px 14px;overflow-x:auto;font:13.5px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;position:relative;margin:8px 0}
   pre .copy{position:absolute;top:8px;right:8px}
   .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
   .members{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}
-  .m{border:1px solid var(--line);border-radius:10px;padding:12px 14px}.m b{font-size:16px}.m .on{color:var(--acc)}.m .off{color:var(--dim)}
+  .m{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);border-radius:12px;padding:12px 14px}.m b{font-size:16px}.m .on{color:var(--acc)}.m .off{color:var(--dim)}
   .offer{display:inline-block;margin:3px 6px 0 0;padding:2px 8px;border-radius:999px;border:1px solid var(--line);font:12px ui-monospace,Menlo,monospace;color:var(--dim)}
   .offer.always{border-color:#2d5a3a;color:var(--acc)}.offer.ask{border-color:#5a4d1d;color:var(--warn)}.offer.never{border-color:#5a2a2a;color:var(--err)}
   .feed{font:13px/1.6 ui-monospace,Menlo,monospace;max-height:420px;overflow:auto}
   .feed div{white-space:pre-wrap;border-bottom:1px solid #11151a;padding:3px 0}.feed .t{color:var(--dim)}.feed .u{color:var(--link)}
   .feed .req{color:var(--warn)}.feed .ok{color:var(--acc)}.feed .no{color:var(--err)}.feed .out{color:var(--dim);padding-left:26px}
-  a{color:var(--link)}.dim{color:var(--dim)}.small{font-size:13px}
+  a{color:var(--link)}.dim{color:rgba(230,233,238,.6)}.small{font-size:13px}
   ol.steps{padding-left:22px}ol.steps li{margin:14px 0}ol.steps li>b{display:block;margin-bottom:4px}
-  .pill{display:inline-block;padding:2px 10px;border-radius:999px;background:#1b2129;color:var(--dim);font-size:12px}
+  .pill{display:inline-block;padding:2px 10px;border-radius:999px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.1);color:var(--dim);font-size:12px}
   .tabs{display:inline-flex;gap:4px;margin:0 0 4px}.tabs button.ghost{padding:4px 10px}.tabs button.ghost.on{border-color:var(--acc);color:var(--acc)}
   details{margin:10px 0 0}summary{cursor:pointer;color:var(--dim);font-size:13px}details[open] summary{margin-bottom:6px}
 </style></head><body><main>
@@ -402,15 +405,47 @@ if (!ROOM) {
           <li><b>Watch it happen:</b> everything shows up in the "live" panel below.</li>
         </ul></div>
 
-      <div class="card"><h2>who's here <span id="watchers" class="pill" style="text-transform:none"></span></h2><div id="members" class="members"><span class="dim">nobody yet — do step 2 and your name will appear here</span></div></div>
+      <div class="card"><div class="row" style="margin-bottom:10px"><h2 style="margin:0">who's here <span id="watchers" class="pill" style="text-transform:none"></span></h2>
+        <button class="ghost" id="popout" title="small always-on-top window: approve requests + read/reply to messages without switching tabs">Pop out overlay</button>
+        <span class="dim small">approvals + messages in a floating window (needs mesh running on this machine)</span></div>
+        <div id="members" class="members"><span class="dim">nobody yet — do step 2 and your name will appear here</span></div></div>
       <div class="card"><h2>live</h2><div id="feed" class="feed"><span class="dim">requests, approvals and output will appear here</span></div></div>\`;
     const dl = () => { const q = "?room=" + encodeURIComponent(ROOM) + (me ? "&as=" + encodeURIComponent(me) : ""); const a = $("#dl-cmd"), b = $("#dl-command"); if (a) a.href = "/join.cmd" + q; if (b) b.href = "/join.command" + q; };
     dl();
     $("#me").oninput = (e) => { me = e.target.value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, ""); localStorage.setItem("mesh.user", me); dl(); renderJoin(); };
     document.querySelectorAll(".tabs button").forEach((b) => { b.onclick = () => { shell = b.dataset.sh; localStorage.setItem("mesh.shell", shell); renderJoin(); }; });
     renderJoin();
+    const po = $("#popout"); if (po) po.onclick = popOutOverlay;
   };
   render();
+
+  // "Pop out overlay": Document Picture-in-Picture (Chrome/Edge 116+, always-on-top) with a plain popup fallback.
+  // Daemon port lives in localStorage mesh.port (default 7337); the overlay footer can change it.
+  let pipWin = null;
+  async function popOutOverlay() {
+    const port = Number(localStorage.getItem("mesh.port")) || 7337;
+    const q = "?room=" + encodeURIComponent(ROOM) + "&port=" + port;
+    if (pipWin && !pipWin.closed) { try { pipWin.close(); } catch {} pipWin = null; }
+    const fallback = () => { window.open("/overlay" + q, "mesh-overlay", "popup,width=380,height=560"); };
+    if (!window.documentPictureInPicture || typeof documentPictureInPicture.requestWindow !== "function") { fallback(); return; }
+    let pip;
+    try { pip = await documentPictureInPicture.requestWindow({ width: 360, height: 520 }); }
+    catch (e) { console.warn("mesh: PiP unavailable, using a popup:", e); fallback(); return; }
+    pipWin = pip;
+    const d = pip.document;
+    try { d.title = "mesh · " + ROOM; } catch {}
+    // A <script src> element appended to the PiP document executes there (innerHTML-inserted scripts never do).
+    const s = d.createElement("script");
+    s.src = location.origin + "/overlay.js";
+    s.onload = () => {
+      const api = pip.meshOverlay || window.meshOverlay;
+      if (api) api.mountOverlay(d, { room: ROOM, port, relayOrigin: location.origin });
+      else { try { pip.close(); } catch {} fallback(); }
+    };
+    s.onerror = () => { try { pip.close(); } catch {} fallback(); };
+    d.head.appendChild(s);
+    pip.addEventListener("pagehide", () => { if (pipWin === pip) pipWin = null; });
+  }
 
   const seen = new Set(); let next = 0; const lines = [];
   const fmtT = (ts) => { try { return new Date(ts).toTimeString().slice(0, 8); } catch { return ""; } };

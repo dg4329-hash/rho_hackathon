@@ -1,0 +1,15 @@
+{
+  "name": "tray",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Always-on-top native shell (Electron) for the mesh overlay page",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "smoke": "electron . --smoke",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "electron": "^33.4.11"
+  }
+}

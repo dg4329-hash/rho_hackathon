@@ -354,7 +354,14 @@ export function createCore(opts: CoreOptions): DaemonCore & { client: RelayClien
       return pending.poll(waitMs);
     },
 
-    async watchPoll(waitMs: number) {
+    async watchPoll(waitMs: number, opts?: { since?: string }) {
+      if (opts?.since !== undefined) {
+        // overlay-style consumer: cursor by timestamp, never marks read (the agent watcher may still want them)
+        const newer = () => core.inbox({ unreadOnly: false, sinceMinutes: 120 }).filter((m) => m.ts > (opts.since ?? ""));
+        if (newer().length > 0) return { pending: await pending.poll(0), messages: newer() };
+        const list = await pending.poll(waitMs);
+        return { pending: list, messages: newer() };
+      }
       const unreadNow = () => core.inbox({ unreadOnly: false, sinceMinutes: 120 }).filter((m) => !m.read);
       if (unreadNow().length > 0) {
         return { pending: await pending.poll(0), messages: core.inbox({ unreadOnly: true, sinceMinutes: 120 }) };

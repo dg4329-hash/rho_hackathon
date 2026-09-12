@@ -73,7 +73,7 @@ async function testLocalServer() {
     await client.connect(new StreamableHTTPClientTransport(new URL(`http://localhost:${port}/mcp`)));
 
     const { tools } = await client.listTools();
-    check(tools.length === 9, "listTools returns 9 tools", tools.map((t) => t.name));
+    check(tools.length === 10, "listTools returns 10 tools", tools.map((t) => t.name));
     check(tools.every((t) => (t.description ?? "").length > 0), "every tool has a description");
     const approve = tools.find((t) => t.name === "approve_request");
     check((approve?._meta as Record<string, unknown> | undefined)?.["anthropic/requiresUserInteraction"] === true, "approve_request carries anthropic/requiresUserInteraction", approve?._meta);

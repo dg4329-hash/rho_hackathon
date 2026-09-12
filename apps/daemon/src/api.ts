@@ -60,7 +60,8 @@ export interface DaemonCore {
    */
   pendingApprovals(waitMs: number): Promise<PendingRequest[]>;
   /** For `mesh watch`: pending approvals plus unread messages (marked read once handed to the watcher). */
-  watchPoll(waitMs: number): Promise<{ pending: PendingRequest[]; messages: InboxMessage[] }>;
+  /** opts.since (ISO): return messages newer than it WITHOUT marking read (overlay); otherwise unread messages are returned and marked read (agent watcher). */
+  watchPoll(waitMs: number, opts?: { since?: string }): Promise<{ pending: PendingRequest[]; messages: InboxMessage[] }>;
   /** Answer a pending request. False when the id is not (or no longer) pending. */
   decide(id: string, decision: "approved" | "denied", reason?: string): boolean;
 }

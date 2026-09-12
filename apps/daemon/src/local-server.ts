@@ -151,6 +151,16 @@ export function buildMcpServer(core: DaemonCore): McpServer {
     return ok({ ok: true, to });
   }));
 
+  server.registerTool("wait_for_events", {
+    description: "Wait for the next teammate message or request to use this machine (long-poll, up to timeoutSeconds). Returns messages and pending requests as information; approvals are decided by the user in the mesh overlay or dialog, never by you. Loop on this when the user asks you to watch mesh.",
+    inputSchema: { timeoutSeconds: z.number().int().min(1).max(120).optional().describe("how long to wait (default 60)") },
+  }, guard(async (raw) => {
+    const t = Number((raw as { timeoutSeconds?: number }).timeoutSeconds ?? 60);
+    const r = await core.watchPoll(Math.min(120, Math.max(1, t)) * 1000);
+    const pendingInfo = r.pending.map((p) => ({ id: p.id, from: p.from, why: p.why, command: p.command, tool: p.tool, args: p.args, note: "waiting for the user to approve in the overlay/dialog" }));
+    return ok({ messages: r.messages, pending: pendingInfo, ...(r.messages.length === 0 && pendingInfo.length === 0 ? { note: `nothing new in ${t}s; call again to keep watching` } : {}) });
+  }));
+
   server.registerTool("inbox", {
     description: TOOL_DESCRIPTIONS.inbox,
     inputSchema: {
@@ -204,6 +214,22 @@ const methodNotAllowed = (_req: Request, res: Response) => {
 
 export function buildApp(core: DaemonCore): express.Express {
   const app = express();
+  // CORS: only the relay's web origin (the room page / overlay) may call this daemon from a browser.
+  // Anything else (random websites) is refused, so a page can't approve requests on your behalf.
+  const relayOrigin = core.config.relay.replace(/^wss:/, "https:").replace(/^ws:/, "http:").replace(/\/+$/, "");
+  app.use((req: Request, res: Response, next) => {
+    const origin = req.headers.origin;
+    if (origin && (origin === relayOrigin || /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin))) {
+      res.setHeader("Access-Control-Allow-Origin", origin);
+      res.setHeader("Vary", "Origin");
+      res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", "content-type");
+      res.setHeader("Access-Control-Allow-Private-Network", "true");
+      res.setHeader("Access-Control-Max-Age", "600");
+    }
+    if (req.method === "OPTIONS") { res.status(204).end(); return; }
+    next();
+  });
   app.use(express.json({ limit: "4mb" }));
 
   app.post("/mcp", async (req, res) => {
@@ -230,6 +256,13 @@ export function buildApp(core: DaemonCore): express.Express {
     res.json({ ok: true });
   });
 
+  app.post("/message", (req: Request, res: Response) => {
+    const parsed = SendMessageInput.safeParse(req.body);
+    if (!parsed.success) { res.status(400).json({ ok: false, error: parsed.error.issues.map((i) => i.message).join("; ") }); return; }
+    core.sendMessage(parsed.data.to, parsed.data.text);
+    res.json({ ok: true });
+  });
+
   app.get("/inbox", (req: Request, res: Response) => {
     const unread = req.query.unread !== "0";
     res.json({ messages: core.inbox({ unreadOnly: unread, sinceMinutes: 120 }) });
@@ -250,7 +283,11 @@ export function buildApp(core: DaemonCore): express.Express {
   app.get("/pending", async (req, res) => {
     const n = Number(req.query.wait);
     const waitSeconds = Number.isFinite(n) && n > 0 ? Math.min(60, n) : 0;
-    if (req.query.messages === "1") { res.json(await core.watchPoll(waitSeconds * 1000)); return; }
+    if (req.query.messages === "1") {
+      const since = req.query.consumer === "overlay" ? String(req.query.since ?? "") : undefined;
+      res.json(await core.watchPoll(waitSeconds * 1000, since !== undefined ? { since } : undefined));
+      return;
+    }
     res.json({ pending: await core.pendingApprovals(waitSeconds * 1000) });
   });
 

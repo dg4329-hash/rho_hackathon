@@ -82,6 +82,11 @@ export function nativeNotify(title: string, body: string): void {
       spawn("osascript", ["-e", `display notification "${esc(body).slice(0, 200)}" with title "${esc(title)}"`], { stdio: "ignore", detached: true }).unref();
     } else if (process.platform === "linux" && has("notify-send")) {
       spawn("notify-send", [title, body.slice(0, 200)], { stdio: "ignore", detached: true }).unref();
+    } else if (process.platform === "win32" && process.env.MESH_TOAST !== "1") {
+      // A small always-on-top message box: the same mechanism as approvals, which is known to render from the
+      // background daemon on Windows. Toasts (MESH_TOAST=1) are nicer but unverified from a hidden process.
+      const ps = `Add-Type -AssemblyName PresentationFramework; [void][System.Windows.MessageBox]::Show($env:MESH_BODY, $env:MESH_TITLE, 'OK', 'Information', 'OK', 'DefaultDesktopOnly')`;
+      spawn("powershell", ["-NoProfile", "-NonInteractive", "-Command", ps], { env: { ...process.env, MESH_TITLE: title, MESH_BODY: body.slice(0, 400) }, stdio: "ignore", detached: true, windowsHide: true }).unref();
     } else if (process.platform === "win32") {
       // Native Windows 10/11 toast via WinRT (no modules needed). Falls back to a tray balloon if toasts are unavailable.
       const ps = `

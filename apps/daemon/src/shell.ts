@@ -27,12 +27,30 @@ export function firstToken(command: string): string | undefined {
  * Match the command's first token basename against each shell offer's command basename.
  * No match → config.allowArbitrary.
  */
+/** True if the command line contains shell control operators (; && || | > < backticks, $( ), newlines): it is more than one command. */
+export function isCompound(command: string): boolean {
+  if (/[\r\n`]|\$\(/.test(command)) return true;
+  try {
+    const parts = shellParse(command, process.env as Record<string, string>);
+    return parts.some((p) => typeof p === "object" && p !== null && ("op" in p || "comment" in p));
+  } catch {
+    return true; // unparseable → treat as compound (safest)
+  }
+}
+
 export function matchShellOffer(command: string, config: TeamConfig): ShellMatch {
   const tok = firstToken(command);
   if (tok) {
     const base = path.basename(tok);
     for (const offer of config.offers) {
-      if (path.basename(offer.command) === base) return { kind: "offer", offer, permission: offer.permission };
+      if (path.basename(offer.command) === base) {
+        // An offer's `always` covers exactly that program. Anything chained after it (`; rm -rf`, `&& curl … | sh`)
+        // is a different command and must be approved like an arbitrary one. `never` stays `never`.
+        if (isCompound(command) && offer.permission === "always") {
+          return { kind: "offer", offer, permission: config.allowArbitrary === "never" ? "never" : "ask" };
+        }
+        return { kind: "offer", offer, permission: offer.permission };
+      }
     }
   }
   return { kind: "arbitrary", permission: config.allowArbitrary };

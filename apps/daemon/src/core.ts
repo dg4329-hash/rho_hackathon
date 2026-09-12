@@ -23,7 +23,7 @@ import { PendingApprovals } from "./pending.js";
 import { Jobs, toJobResult } from "./jobs.js";
 import { resolvePermission } from "./permissions.js";
 import { RelayClient, debug } from "./relay-client.js";
-import { CHUNK_CHARS, matchShellOffer, resolveOfferCommand, runShell } from "./shell.js";
+import { CHUNK_CHARS, isCompound, matchShellOffer, resolveOfferCommand, runShell } from "./shell.js";
 
 export interface CoreOptions {
   config: TeamConfig;
@@ -121,7 +121,9 @@ export function createCore(opts: CoreOptions): DaemonCore & { client: RelayClien
   async function serveShell(req: RequestFrame, command: string): Promise<void> {
     const match = matchShellOffer(command, config);
     const permission =
-      match.kind === "offer" ? resolvePermission(match.offer.name, config, match.permission) : match.permission;
+      match.kind === "offer" && !(isCompound(command) && match.permission !== "never")
+        ? resolvePermission(match.offer.name, config, match.permission)
+        : match.permission;
     const reason = match.kind === "offer" ? `'${match.offer.name}' is not offered (permission: never)` : "arbitrary commands are not allowed on this machine";
     if (!(await decide(req, permission, reason))) return;
 
@@ -215,7 +217,7 @@ export function createCore(opts: CoreOptions): DaemonCore & { client: RelayClien
     messages.set(id, { id, ts: frame.ts, from: frame.from, to, text, read: false });
     if (messages.size > 500) messages.delete(messages.keys().next().value as string);
     say(`${chalk.cyan("✉")} ${chalk.magenta(frame.from)}${to === "all" ? chalk.dim(" (to all)") : ""}: ${text.length > 300 ? text.slice(0, 299) + "…" : text}`);
-    if (!opts.quiet && Date.now() - Date.parse(frame.ts) < 60_000) nativeNotify(`mesh: message from ${frame.from}`, text); // skip replayed history; tests run quiet
+    if (!opts.quiet && Math.abs(Date.now() - Date.parse(frame.ts)) < 5 * 60_000) { debug("notify", frame.from); nativeNotify(`mesh: message from ${frame.from}`, text); } // skip old replayed history (5 min window tolerates clock skew); tests run quiet
   }
 
   client.on("frame", (frame) => {

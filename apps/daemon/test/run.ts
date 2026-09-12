@@ -40,6 +40,8 @@ async function main(): Promise<void> {
       { name: "rm", command: "rm", description: "rm", permission: "never" },
       { name: "sleep", command: "sleep", description: "sleep", permission: "always" },
       { name: "hello.script", command: "./test/fixtures/hello.sh", description: "Usage: hello.sh <name>", permission: "always" },
+      { name: "fail.script", command: "./test/fixtures/fail.sh", description: "exits 3 with stderr", permission: "always" },
+      { name: "slow.script", command: "./test/fixtures/slow-tree.sh", description: "spawns a grandchild sleep", permission: "always" },
     ],
   });
   const configB = TeamConfig.parse({ user: "b", room, relay: relayUrl });
@@ -73,7 +75,7 @@ async function main(): Promise<void> {
   check("ls / (arbitrary, never) → denied", r3.status === "denied", r3);
 
   // 4. non-zero exit and stderr propagate
-  const r4 = await b.ask({ who: "a", command: "echo oops >&2; exit 3", why: "test", waitSeconds: 10 });
+  const r4 = await b.ask({ who: "a", command: "fail.sh", why: "test", waitSeconds: 10 });
   check("exit 3 → completed with exitCode 3", r4.status === "completed" && r4.exitCode === 3, r4);
   check("stderr captured", (r4.output ?? "").includes("oops"), r4);
 
@@ -105,8 +107,16 @@ async function main(): Promise<void> {
   mallory.close();
 
   // 8. timeout kills the whole process group (no orphaned grandchildren)
-  const r8 = await b.ask({ who: "a", command: "sleep 30 & sleep 30", why: "test", waitSeconds: 10 });
+  const r8 = await b.ask({ who: "a", command: "slow-tree.sh", why: "test", waitSeconds: 10 });
   check("timed-out job → completed with exitCode null", r8.status === "completed" && r8.exitCode === null, r8);
+
+  // 8a. security: chaining after an `always` offer must not inherit `always`
+  const r8a = await b.ask({ who: "a", command: "echo hi; echo pwned", why: "test", waitSeconds: 5 });
+  check("compound command after always-offer is NOT auto-approved", r8a.status === "denied", r8a);
+  const r8a2 = await b.ask({ who: "a", command: "echo hi && echo pwned", why: "test", waitSeconds: 5 });
+  check("&& chain after always-offer is NOT auto-approved", r8a2.status === "denied", r8a2);
+  const r8a3 = await b.ask({ who: "a", command: "echo $(id)", why: "test", waitSeconds: 5 });
+  check("command substitution after always-offer is NOT auto-approved", r8a3.status === "denied", r8a3);
 
   // 8b. offer command substitution: requester says `hello.sh bob`, owner runs ./test/fixtures/hello.sh bob
   const r8b = await b.ask({ who: "a", command: "hello.sh bob", why: "test", waitSeconds: 10 });

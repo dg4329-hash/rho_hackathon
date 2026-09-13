@@ -390,40 +390,96 @@ function page(opts: { repoUrl: string; room?: string }): string {
   const room = opts.room ? JSON.stringify(opts.room) : "null";
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark">
 <title>mesh${opts.room ? " · " + opts.room : ""}</title>
 <style>
-  :root{--bg:#0b0d10;--panel:#14181d;--line:#232a33;--fg:#e6e9ee;--dim:#8a94a3;--acc:#7ee787;--warn:#f2cc60;--err:#ff7b72;--link:#79c0ff}
-  *{box-sizing:border-box}body{margin:0;background:linear-gradient(160deg,#101216,#0a0b0e) fixed;color:var(--fg);font:15px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,sans-serif}
-  main{max-width:960px;margin:0 auto;padding:40px 20px 80px}
-  h1{font-size:34px;margin:0 0 6px;letter-spacing:-.5px}h1 span{color:var(--dim);font-weight:400}
-  .tag{color:var(--dim);margin:0 0 28px}
-  .card{background:rgba(28,28,30,.55);-webkit-backdrop-filter:blur(24px) saturate(180%);backdrop-filter:blur(24px) saturate(180%);border:1px solid rgba(255,255,255,.12);border-radius:18px;box-shadow:inset 0 1px 0 rgba(255,255,255,.12),0 8px 30px rgba(0,0,0,.12);padding:20px 22px;margin:16px 0}
-  @supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){.card{background:#14181d}}
-  .card h2{font-size:15px;margin:0 0 10px;color:var(--dim);text-transform:uppercase;letter-spacing:.08em}
-  button,.btn{background:#0a84ff;color:#fff;border:0;border-radius:999px;padding:12px 18px;font-weight:600;font-size:15px;cursor:pointer}
-  button.ghost{background:rgba(255,255,255,.06);color:var(--fg);border:1px solid rgba(255,255,255,.14);border-radius:999px;font-weight:500;padding:6px 12px;font-size:13px}
-  button.ghost.danger{color:var(--err);border-color:rgba(255,123,114,.45)}button:disabled{opacity:.6;cursor:default}
-  input{background:#0b0d10;color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:10px 12px;font-size:15px;width:220px}
-  pre{background:rgba(10,11,14,.6);border:1px solid rgba(255,255,255,.1);border-radius:12px;padding:12px 14px;overflow-x:auto;font:13.5px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;position:relative;margin:8px 0}
-  pre .copy{position:absolute;top:8px;right:8px}
+  /* Apple-style tokens, light + dark. Legacy names (--fg, --dim, --acc, --warn, --err, --link, --line) stay: the script uses some inline. */
+  :root{--bg:#fff;--grouped:#f5f5f7;--surface:#fff;--surface-2:#fbfbfd;--label:#1d1d1f;--label-2:#6e6e73;--label-3:#86868b;
+    --sep:rgba(0,0,0,.08);--sep-2:rgba(0,0,0,.14);--fill:rgba(0,0,0,.04);--fill-2:rgba(0,0,0,.07);
+    --accent:#0071e3;--accent-text:#0066cc;--green:#1f9d3a;--amber:#b25f00;--red:#d70015;--glass:rgba(255,255,255,.72);
+    --shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px -8px rgba(0,0,0,.08);
+    --term:#0b0b0d;--term-text:#e4e4e7;--term-dim:#8a8a93;
+    --fg:var(--label);--dim:var(--label-2);--acc:var(--green);--warn:var(--amber);--err:var(--red);--link:var(--accent-text);--line:var(--sep-2);
+    --font:-apple-system,BlinkMacSystemFont,"SF Pro Text","SF Pro Display",Inter,"Helvetica Neue","Segoe UI",system-ui,sans-serif;
+    --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace}
+  @media (prefers-color-scheme:dark){:root{--bg:#000;--grouped:#0d0d0f;--surface:#161618;--surface-2:#1c1c1e;--label:#f5f5f7;--label-2:#a1a1a6;--label-3:#8e8e93;
+    --sep:rgba(255,255,255,.1);--sep-2:rgba(255,255,255,.18);--fill:rgba(255,255,255,.06);--fill-2:rgba(255,255,255,.1);
+    --accent:#0a84ff;--accent-text:#409cff;--green:#30d158;--amber:#ffb340;--red:#ff6961;--glass:rgba(22,22,24,.72);
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px -8px rgba(0,0,0,.6)}}
+  *{box-sizing:border-box}[hidden]{display:none!important}
+  body{margin:0;background:var(--grouped);color:var(--label);font:15px/1.55 var(--font);letter-spacing:-.01em;-webkit-font-smoothing:antialiased}
+  :focus-visible{outline:3px solid color-mix(in srgb,var(--accent) 55%,transparent);outline-offset:2px;border-radius:8px}
+  a{color:var(--link);text-decoration:none}a:hover{text-decoration:underline}
+  code{font:.92em var(--mono);padding:1px 5px;border-radius:6px;background:var(--fill)}
+  /* functional layer: the only glass */
+  .nav{position:sticky;top:0;z-index:10;background:var(--glass);-webkit-backdrop-filter:saturate(180%) blur(20px);backdrop-filter:saturate(180%) blur(20px);border-bottom:1px solid var(--sep)}
+  @media (prefers-reduced-transparency:reduce){.nav{background:var(--bg);-webkit-backdrop-filter:none;backdrop-filter:none}}
+  .nav-inner{max-width:880px;margin:0 auto;padding:0 20px;height:52px;display:flex;align-items:center;gap:10px}
+  .brand{display:flex;align-items:center;gap:10px;color:var(--label);font-weight:600;font-size:19px;letter-spacing:-.02em}.brand:hover{text-decoration:none}
+  .brand-mark{width:26px;height:26px;border-radius:7px;display:grid;place-items:center;background:var(--label);color:var(--bg)}.brand-mark svg{width:16px;height:16px}
+  .badge{font-size:12px;font-weight:500;color:var(--label-2);padding:2px 9px;border-radius:999px;background:var(--fill);border:1px solid var(--sep);font-family:var(--mono);letter-spacing:0}
+  main{max-width:880px;margin:0 auto;padding:8px 20px 96px}
+  @media (max-width:480px){main,.nav-inner{padding-left:16px;padding-right:16px}}
+  .hero{text-align:center;padding:64px 0 40px}
+  .hero.compact{text-align:left;padding:36px 0 12px}
+  .eyebrow{font-size:14px;font-weight:600;color:var(--accent-text);margin:0 0 10px}
+  h1{margin:0;font-size:clamp(38px,6vw,60px);line-height:1.05;font-weight:700;letter-spacing:-.035em}
+  .hero.compact h1{font-size:clamp(28px,4.4vw,40px)}
+  .tag{font-size:clamp(17px,2vw,21px);line-height:1.45;color:var(--label-2);margin:16px auto 0;max-width:600px;letter-spacing:-.015em}
+  .hero.compact .tag{margin-left:0;font-size:17px}
+  /* content cards: opaque, no glass */
+  .card{background:var(--surface);border:1px solid var(--sep);border-radius:22px;box-shadow:var(--shadow);padding:24px 26px;margin:16px 0}
+  @media (max-width:480px){.card{padding:20px 18px;border-radius:18px}}
+  .card h2{font-size:19px;font-weight:600;margin:0 0 12px;color:var(--label);letter-spacing:-.02em}
+  .card h2::first-letter{text-transform:uppercase}
+  .card p{margin:10px 0}
+  button,.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:44px;background:var(--accent);color:#fff;border:0;border-radius:999px;padding:0 22px;font:500 15px/1 var(--font);letter-spacing:-.01em;cursor:pointer;transition:background-color .15s,transform .15s}
+  button:hover,.btn:hover{background:color-mix(in srgb,var(--accent) 88%,#000);text-decoration:none}
+  button:active{transform:scale(.98)}@media (prefers-reduced-motion:reduce){button:active{transform:none}}
+  button.ghost{min-height:32px;background:var(--fill);color:var(--accent-text);border:1px solid var(--sep);padding:0 14px;font-size:13px}
+  button.ghost:hover{background:var(--fill-2)}
+  button.ghost.danger{color:var(--red);border-color:color-mix(in srgb,var(--red) 35%,transparent)}
+  button:disabled{opacity:.55;cursor:default}
+  input{min-height:44px;background:var(--surface);color:var(--label);border:1px solid var(--sep-2);border-radius:12px;padding:10px 14px;font:15px var(--font);width:220px;max-width:100%}
+  input::placeholder{color:var(--label-3)}input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 25%,transparent)}
+  label{font-size:14px;font-weight:500;display:inline-flex;align-items:center;gap:10px;flex-wrap:wrap}
+  pre{background:var(--term);color:var(--term-text);border-radius:14px;padding:14px 96px 14px 18px;overflow-x:auto;font:13px/1.6 var(--mono);position:relative;margin:10px 0;white-space:pre-wrap;word-break:break-all}
+  pre .copy{position:absolute;top:9px;right:9px;background:rgba(255,255,255,.1);color:#fff;border-color:rgba(255,255,255,.16)}
+  pre .copy:hover{background:rgba(255,255,255,.18)}
   .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
-  .members{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}
-  .m{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);border-radius:12px;padding:12px 14px}.m b{font-size:16px}.m .on{color:var(--acc)}.m .off{color:var(--dim)}
-  .offer{display:inline-block;margin:3px 6px 0 0;padding:2px 8px;border-radius:999px;border:1px solid var(--line);font:12px ui-monospace,Menlo,monospace;color:var(--dim)}
-  .offer.always{border-color:#2d5a3a;color:var(--acc)}.offer.ask{border-color:#5a4d1d;color:var(--warn)}.offer.never{border-color:#5a2a2a;color:var(--err)}
-  .feed{font:13px/1.6 ui-monospace,Menlo,monospace;max-height:420px;overflow:auto}
-  .feed div{white-space:pre-wrap;border-bottom:1px solid #11151a;padding:3px 0}.feed .t{color:var(--dim)}.feed .u{color:var(--link)}
-  .feed .req{color:var(--warn)}.feed .ok{color:var(--acc)}.feed .no{color:var(--err)}.feed .out{color:var(--dim);padding-left:26px}
-  a{color:var(--link)}.dim{color:rgba(230,233,238,.6)}.small{font-size:13px}
-  ol.steps{padding-left:22px}ol.steps li{margin:14px 0}ol.steps li>b{display:block;margin-bottom:4px}
-  .pill{display:inline-block;padding:2px 10px;border-radius:999px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.1);color:var(--dim);font-size:12px}
-  .tabs{display:inline-flex;gap:4px;margin:0 0 4px}.tabs button.ghost{padding:4px 10px}.tabs button.ghost.on{border-color:var(--acc);color:var(--acc)}
-  details{margin:10px 0 0}summary{cursor:pointer;color:var(--dim);font-size:13px}details[open] summary{margin-bottom:6px}
-  .chip{display:inline-block;margin:2px 4px 0 0;padding:1px 9px;border-radius:999px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);color:var(--link);font:12px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,sans-serif;text-decoration:none;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle}
-  .chip:hover{border-color:var(--link)}.chip .sz{color:var(--dim)}.chips{display:block;margin-top:2px}
-</style></head><body><main>
-<h1>mesh <span>· borrow a teammate's machine, not their credentials</span></h1>
-<p class="tag">Your coding agent asks a teammate's laptop to run a tool it doesn't have. They press <b>y</b>. The result comes back. Credentials never move.</p>
+  .members{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+  .m{background:var(--surface-2);border:1px solid var(--sep);border-radius:14px;padding:14px 16px}.m b{font-size:16px;font-weight:600}
+  .m .on{color:var(--green);font-size:13px}.m .off{color:var(--label-3)}
+  .offer{display:inline-block;margin:6px 6px 0 0;padding:2px 9px;border-radius:999px;font:12px/1.5 var(--mono);color:var(--label-2);background:var(--fill)}
+  .offer.always{color:var(--green);background:color-mix(in srgb,var(--green) 12%,transparent)}
+  .offer.ask{color:var(--amber);background:color-mix(in srgb,var(--amber) 12%,transparent)}
+  .offer.never{color:var(--red);background:color-mix(in srgb,var(--red) 12%,transparent)}
+  /* live feed: a terminal in both themes, so its colors are fixed */
+  .feed{background:var(--term);color:var(--term-text);border-radius:14px;padding:12px 16px;font:12.5px/1.6 var(--mono);max-height:420px;overflow:auto}
+  .feed>span.dim{color:var(--term-dim)}
+  .feed div{white-space:pre-wrap;border-bottom:1px solid rgba(255,255,255,.06);padding:4px 0}.feed div:last-child{border-bottom:0}
+  .feed .t{color:var(--term-dim)}.feed .u{color:#7cc4ff}.feed .req{color:#fbbf24}.feed .ok{color:#4ade80}.feed .no{color:#fb7185}.feed .out{color:var(--term-dim);padding-left:26px}
+  .feed .chip{border-color:rgba(255,255,255,.16);background:rgba(255,255,255,.08);color:#7cc4ff}.feed .chip .sz{color:var(--term-dim)}
+  .dim{color:var(--label-2)}.small{font-size:13px}
+  ul.small{padding-left:20px}ul.small li{margin:8px 0}
+  ol.steps{padding-left:22px;margin:4px 0}ol.steps li{margin:14px 0;color:var(--label-2)}ol.steps li>b{display:block;margin-bottom:2px;color:var(--label);font-weight:600}
+  .pill:empty{display:none}
+  .pill{display:inline-block;padding:2px 10px;border-radius:999px;background:var(--fill);border:1px solid var(--sep);color:var(--label-2);font:500 12px/1.6 var(--mono)}
+  .tabs{display:inline-flex;gap:0;padding:2px;border-radius:9px;background:var(--fill-2);margin:0 0 4px}
+  .tabs button.ghost{min-height:28px;border:0;border-radius:7px;background:transparent;color:var(--label);padding:0 12px}
+  .tabs button.ghost.on{background:var(--surface);box-shadow:0 1px 3px rgba(0,0,0,.12),0 0 0 .5px rgba(0,0,0,.04)}
+  details{margin:12px 0 0}summary{cursor:pointer;color:var(--accent-text);font-size:13px}details[open] summary{margin-bottom:6px}
+  .chip{display:inline-block;margin:2px 4px 0 0;padding:1px 9px;border-radius:999px;border:1px solid var(--sep-2);background:var(--fill);color:var(--link);font:12px/1.5 var(--font);text-decoration:none;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle}
+  .chip:hover{border-color:var(--link)}.chip .sz{color:var(--label-2)}.chips{display:block;margin-top:2px}
+</style></head><body>
+<header class="nav"><div class="nav-inner">
+  <a class="brand" href="/" aria-label="mesh home"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="3.5" cy="4" r="2"/><circle cx="12.5" cy="4" r="2"/><circle cx="8" cy="12.5" r="2"/><path d="M5.5 4h5M4.6 5.8l2.3 5M11.4 5.8l-2.3 5"/></svg></span>mesh</a>
+  ${opts.room ? '<span class="badge">' + opts.room + '</span>' : '<span class="badge">preview</span>'}
+</div></header>
+<main>
+${opts.room
+  ? '<section class="hero compact"><p class="eyebrow">Room</p><h1>Get your agent in the room.</h1><p class="tag">Four quick steps. Then your agent can borrow teammates’ tools, with their OK.</p></section>'
+  : '<section class="hero"><p class="eyebrow">Think Google Meet, for Claude Code, Codex and Cursor</p><h1>A meeting room<br>for your coding agents.</h1><p class="tag">Everyone’s agents join one room and borrow each other’s tools, with a click to approve. Credentials never move.</p></section>'}
 <div id="app"></div>
 <script>
 const ROOM = ${room};

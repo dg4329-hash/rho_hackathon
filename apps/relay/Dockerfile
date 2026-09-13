@@ -25,6 +25,8 @@ COPY hooks hooks
 COPY plugin plugin
 COPY .claude-plugin .claude-plugin
 COPY apps/relay apps/relay
+# Marketing page (website/index.html), served at GET /site
+COPY website website
 
 # Single-file daemon bundle, served at GET /mesh.mjs for the one-command join (curl …/install.sh | bash).
 RUN pnpm -F daemon bundle && test -s apps/daemon/dist/mesh.mjs && test -s hooks/emit.js && test -s .claude-plugin/marketplace.json && test -d plugin

@@ -9,6 +9,7 @@
  *   POST /api/rooms/:room/end  key (?key= / x-mesh-key) + owner token (x-mesh-owner or body { owner }), body { by?, reason? }
  *                            → 200 { ok, room, ended: true, closed[, alreadyEnded] } | 400 | 401 | 403
  *   GET  /r/:room          room page (reads #k=<key> from the fragment; no key → "paste the room link" box)
+ *   GET  /site             marketing page (website/index.html, loaded at relay start)
  *
  * One-command join (no clone / pnpm / npm account), all served from the same port:
  *   GET  /mesh.mjs         single-file daemon bundle (apps/daemon/dist/mesh.mjs, built by `pnpm -F daemon bundle`)
@@ -37,6 +38,8 @@ export interface WebAssets {
   meshMjs?: Buffer;
   emitJs?: Buffer;
   pluginTgz?: Buffer;
+  /** website/index.html (Abhi's marketing page), served at /site. */
+  websiteHtml?: Buffer;
 }
 
 export interface WebDeps {
@@ -129,6 +132,10 @@ export function handleWeb(req: IncomingMessage, res: ServerResponse, url: URL, d
   const method = req.method ?? "GET";
 
   if (method === "GET" && pathname === "/") { html(res, page({ repoUrl: deps.repoUrl })); return true; }
+  if (method === "GET" && (pathname === "/site" || pathname === "/site/" || pathname === "/website")) {
+    asset(res, deps.assets.websiteHtml, "the website is not on this relay (expected website/index.html)", "text/html; charset=utf-8");
+    return true;
+  }
 
   if (method === "GET" && pathname === "/mesh.mjs") {
     asset(res, deps.assets.meshMjs, "mesh.mjs is not built on this relay: run `pnpm -F daemon bundle` and restart the relay", "text/javascript; charset=utf-8");

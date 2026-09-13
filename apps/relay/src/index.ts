@@ -240,6 +240,7 @@ function loadAssets(): WebAssets {
     { name: "meshMjs", file: "mesh.mjs", from: path.join(repoRoot, "apps/daemon/dist/mesh.mjs"), hint: "run `pnpm -F daemon bundle`" },
     { name: "emitJs", file: "emit.js", from: path.join(repoRoot, "hooks/emit.js"), hint: "hooks/emit.js is missing" },
     { name: "pluginTgz", file: "plugin.tgz", from: buildPluginTgz(repoRoot, publicDir), hint: "plugin/ or .claude-plugin/ missing" },
+    { name: "websiteHtml", file: "site.html", from: path.join(repoRoot, "website/index.html"), hint: "website/index.html is missing" },
   ];
   const assets: WebAssets = {};
   for (const src of sources) {
@@ -256,7 +257,7 @@ function loadAssets(): WebAssets {
       assets[src.name] = fs.readFileSync(dest);
       console.log(`  serving /${src.file} (${(assets[src.name]!.length / 1024).toFixed(0)} KB)`);
     } catch {
-      console.warn(`! /${src.file} unavailable: ${dest} not found (${src.hint}); one-command join will not work on this relay`);
+      console.warn(`! /${src.file} unavailable: ${dest} not found (${src.hint}); ${src.name === "websiteHtml" ? "/site will 503" : "one-command join will not work on this relay"}`);
     }
   }
   return assets;

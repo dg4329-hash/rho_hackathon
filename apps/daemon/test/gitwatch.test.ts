@@ -66,7 +66,8 @@ async function testIntegration(): Promise<void> {
     git(repo, "add", "tracked.txt");
     git(repo, "commit", "-q", "-m", "init");
 
-    check("findGitRoot finds the temp repo", findGitRoot(repo) === repo, { found: findGitRoot(repo), repo });
+    const found = findGitRoot(repo);
+    check("findGitRoot finds the temp repo", found !== undefined && path.normalize(found) === path.normalize(repo), { found, repo });
     check("findGitRoot outside a repo → undefined", findGitRoot(os.tmpdir()) === undefined || findGitRoot(os.tmpdir()) !== repo);
 
     const emitted: string[] = [];

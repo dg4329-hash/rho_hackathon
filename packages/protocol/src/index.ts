@@ -119,6 +119,7 @@ export const TeamConfig = z.object({
   cwd: z.string().optional(),
   timeoutSeconds: z.number().int().positive().default(120),
   allowArbitrary: z.enum(["ask", "never"]).default("ask"),
+  codexWake: z.boolean().default(false),      // opt in to background Codex runs on teammate messages
   import: ImportConfig.default({}),
   permissions: z.record(Permission).default({}),   // glob on offer name → permission
   notes: z.record(z.string()).default({}),         // glob on offer name → owner notes

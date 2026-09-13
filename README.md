@@ -46,7 +46,7 @@ and runs `mesh join <room> --background`. That:
 Re-running the one-liner updates the bundle and stops + restarts a running daemon. Prefer a file? The room page offers
 `mesh-join-<room>.cmd` (Windows, double-click) and `mesh-join-<room>.command` (Mac, right-click → Open).
 
-**Approvals.** On the room page click **Pop out overlay** (shipping tonight): a small always-on-top window (Chrome/Edge
+**Approvals.** On the room page click **Pop out overlay**: a small always-on-top window (Chrome/Edge
 Document Picture-in-Picture, popup fallback) with pending requests + Approve/Deny, teammate messages with a reply box, and
 the live feed. While it is open the daemon routes approvals there instead of the modal OS dialog; no answer in 120 s → the
 OS dialog appears as fallback. Same path for Codex, Cursor and Claude Code users. Without the overlay: native OS dialog
@@ -55,8 +55,12 @@ messages delivered inside their session by the plugin monitor. `MESH_APPROVE=tty
 approves in the terminal instead.
 
 **Messages.** Arrive in the overlay, as an OS notification (Windows: a small message box), live in Claude Code, and via the
-`inbox` tool. Codex/Cursor: *"Codex, watch mesh for the next 10 minutes"* makes the agent loop on `wait_for_events`
-(shipping tonight) and report each message or request as it lands; approvals stay with you. Manage the daemon with
+`inbox` tool. With `"codexWake": true` in your local `team.json`, each fresh teammate message also starts a separate,
+hidden `codex exec` run automatically. It uses your normal Codex login, project instructions, and configured mesh MCP
+server, runs messages one at a time, and shows its final status in a native Windows alert. Mesh approvals still belong to
+you in the overlay or OS dialog; the background Codex run never decides them. This is opt-in because teammate messages
+can cause Codex work and usage. `--no-codex-wake` disables it for one join. Codex/Cursor can also loop on
+`wait_for_events` when asked to watch mesh. Manage the daemon with
 `node ~/.mesh/mesh.mjs status | stop | log`.
 
 **Awareness.** Every daemon reports which files its owner's agent is editing (`file_touched`): Claude Code via hooks, and
@@ -112,12 +116,14 @@ Vercel won't work: the relay needs a long-lived WebSocket server.
 Mac↔Mac and Mac↔Windows over the public relay: install one-liner (bash, and PowerShell on a real Windows box), shell
 request → native dialog (macOS; Windows MessageBox) → output back, Windows message-box notifications, agent-to-agent
 messages both ways, Codex registration with codex-cli 0.154, plugin auto-install during `mesh join` on Dev's Mac (which
-imports and offers Playwright, 24 tools, + filesystem, 14). Overlay and `wait_for_events`: shipping tonight, not yet verified.
+imports and offers Playwright, 24 tools, + filesystem, 14). The overlay and `wait_for_events` have automated coverage;
+the separate Codex wake path was tested through a live self-addressed mesh message on Windows.
 
 ## Known limits
 - Room name is the only auth.
 - Codex and Cursor agents get messages by pulling (`inbox`) or by looping on `wait_for_events`; only Claude Code has push
-  delivery (plugin monitor + prompt hook). Humans on any tool get them in the overlay.
+  delivery by default (plugin monitor + prompt hook). Codex also gets separate automatic runs when `codexWake` is enabled.
+  Humans on any tool get messages in the overlay.
 - The overlay needs Chrome/Edge for the always-on-top PiP window; other browsers get a plain popup.
-- Codex tool calls not exercised (no login); OAuth remote MCPs (official Figma, Linear) can't be imported — use a shell offer.
+- A separate Codex run successfully called mesh `list_teammates` on Windows; OAuth remote MCPs (official Figma, Linear) still can't be imported — use a shell offer.
 - Agent sessions must restart once after registration (client tool-list caching; Claude Code: `/reload-plugins`).

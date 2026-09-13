@@ -46,6 +46,8 @@ export interface CoreOptions {
   mcpOffers: Offer[];
   /** Print human-facing lines (default: true). Tests turn it off. */
   quiet?: boolean;
+  /** Optional local agent wake handler; receives messages after inbox deduplication. */
+  onIncomingMessage?: (message: InboxMessage) => void;
 }
 
 const ACTIVITY_LIMIT = 100;
@@ -316,7 +318,8 @@ export function createCore(opts: CoreOptions): DaemonCore & { client: RelayClien
     const text = artifact ? (note ?? `sent ${artifact.name} (${formatSize(artifact.size)})`) : String(frame.data?.text ?? frame.summary);
     const id = typeof frame.data?.id === "string" ? frame.data.id : artifact ? `${frame.from}:file:${artifact.id}` : `${frame.from}:${frame.ts}:${text.slice(0, 40)}`;
     if (messages.has(id)) return;
-    messages.set(id, { id, ts: frame.ts, from: frame.from, to, text, read: false, ...(artifact ? { artifact } : {}) });
+    const message: InboxMessage = { id, ts: frame.ts, from: frame.from, to, text, read: false, ...(artifact ? { artifact } : {}) };
+    messages.set(id, message);
     pending.wakeAll();
     if (messages.size > 500) messages.delete(messages.keys().next().value as string);
     if (artifact) {
@@ -326,6 +329,7 @@ export function createCore(opts: CoreOptions): DaemonCore & { client: RelayClien
     }
     // OS notification only when nothing better is attached: an overlay or the Claude Code watcher already shows it live.
     if (!opts.quiet && !pending.watcherAttached() && Math.abs(Date.now() - Date.parse(frame.ts)) < 5 * 60_000) { debug("notify", frame.from); nativeNotify(artifact ? `mesh: file from ${frame.from}` : `mesh: message from ${frame.from}`, text); }
+    try { opts.onIncomingMessage?.(message); } catch (e) { console.warn(`mesh: incoming-message handler failed: ${(e as Error).message}`); }
   }
 
   client.on("frame", (frame) => {

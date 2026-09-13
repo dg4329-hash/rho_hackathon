@@ -59,6 +59,13 @@ approves in the terminal instead.
 (shipping tonight) and report each message or request as it lands; approvals stay with you. Manage the daemon with
 `node ~/.mesh/mesh.mjs status | stop | log`.
 
+**Awareness.** Every daemon reports which files its owner's agent is editing (`file_touched`): Claude Code via hooks, and
+everyone else via the daemon's git watch (`git status` every 5 s inside a git repo; `--no-git-watch` to disable). Before a
+Claude Code agent edits a file a teammate touched in the last 10 minutes, a `PreToolUse` hook drops one line into its
+context — `mesh: abhi edited src/billing.ts 3 min ago — coordinate before changing it (send_message abhi)` — and never
+blocks the edit. Owners can also publish **fixed command lines** as offers (`"command": "git diff HEAD"` → agents ask for
+`git.diff` by name, the owner's exact line runs, nothing else matches), which is the safe way to mark a shell offer `always`.
+
 ## Quick start for developers of mesh (from the repo)
 No build step for dev: `@mesh/protocol` is imported straight from `src/` by `tsx`.
 ```bash
@@ -83,7 +90,8 @@ hooks/install.sh /path/to/your/repo                      # writes .claude/settin
 Do not write `pnpm -F daemon start -- join …`: pnpm 10 passes the `--` through and commander stops parsing.
 `--config ./team.json` resolves against `apps/daemon/`; pass an absolute path.
 
-Tests: `pnpm -F daemon test`, `pnpm -F daemon exec tsx test/mcp.test.ts`, `pnpm -F relay test` (28 checks),
+Tests: `pnpm -F daemon test`, `pnpm -F daemon exec tsx test/mcp.test.ts`, `pnpm -F daemon exec tsx test/gitwatch.test.ts`,
+`pnpm -F daemon exec tsx test/touched.test.ts`, `pnpm -F relay test` (28 checks),
 `RELAY_URL=ws://localhost:8090 pnpm -F relay soak` (relay must be running).
 
 ## Hosting the relay (the public link)

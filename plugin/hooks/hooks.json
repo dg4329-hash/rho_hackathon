@@ -1,5 +1,5 @@
 {
-  "description": "mesh: start/check the daemon at session start; team activity + inbox into context on each prompt; file/tool/idle events to the daemon (CONTRACT §4).",
+  "description": "mesh: start/check the daemon at session start; team activity + inbox into context on each prompt; conflict warning before an edit when a teammate touched the file; file/tool/idle events to the daemon (CONTRACT §4).",
   "hooks": {
     "SessionStart": [
       {
@@ -12,6 +12,14 @@
       {
         "hooks": [
           { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/emit.js\" prompt", "timeout": 5 }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/emit.js\" pre_edit", "timeout": 5 }
         ]
       }
     ],

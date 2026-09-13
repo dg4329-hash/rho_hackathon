@@ -9,8 +9,21 @@ export const CHUNK_CHARS = 4096;
 const FLUSH_MS = 50;
 
 export type ShellMatch =
-  | { kind: "offer"; offer: ShellOfferConfig; permission: Permission }
+  | { kind: "offer"; offer: ShellOfferConfig; permission: Permission; fixed: boolean }
   | { kind: "arbitrary"; permission: Permission };
+
+/** Trim + collapse whitespace: the only normalization applied before comparing a request to a fixed offer. */
+export function normalizeCommand(command: string): string {
+  return command.trim().replace(/\s+/g, " ");
+}
+
+/**
+ * A FIXED offer is one whose `command` contains whitespace (`git diff HEAD`, `echo a | tr a b`): it is the owner's
+ * own complete command line, not a program. Single-token offers (`git`, `./scripts/x.sh`) are programs and match by basename.
+ */
+export function isFixedOffer(offer: Pick<ShellOfferConfig, "command">): boolean {
+  return /\s/.test(offer.command.trim());
+}
 
 /** First token of the command, as the shell would see it (undefined if empty / unparsable). */
 export function firstToken(command: string): string | undefined {
@@ -39,17 +52,31 @@ export function isCompound(command: string): boolean {
 }
 
 export function matchShellOffer(command: string, config: TeamConfig): ShellMatch {
+  // 1. Fixed offers: the request must equal the offer's line (after whitespace normalization) or the offer's name
+  //    (`git.diff`). Nothing else matches — not a prefix, not extra flags — so `git push --force` can never ride on
+  //    a `git diff HEAD` offer. The daemon runs the OFFER's line, and it is never compound-escalated: it is the
+  //    owner's own command, pipes and all.
+  const norm = normalizeCommand(command);
+  for (const offer of config.offers) {
+    if (!isFixedOffer(offer)) continue;
+    if (norm === normalizeCommand(offer.command) || norm === offer.name) {
+      return { kind: "offer", offer, permission: offer.permission, fixed: true };
+    }
+  }
+  // 2. Single-token offers: first token's basename vs the offer's basename (a bare `git` offer covers any git command;
+  //    the owner chose that).
   const tok = firstToken(command);
   if (tok) {
     const base = path.basename(tok);
     for (const offer of config.offers) {
+      if (isFixedOffer(offer)) continue;
       if (path.basename(offer.command) === base) {
         // An offer's `always` covers exactly that program. Anything chained after it (`; rm -rf`, `&& curl … | sh`)
         // is a different command and must be approved like an arbitrary one. `never` stays `never`.
         if (isCompound(command) && offer.permission === "always") {
-          return { kind: "offer", offer, permission: config.allowArbitrary === "never" ? "never" : "ask" };
+          return { kind: "offer", offer, permission: config.allowArbitrary === "never" ? "never" : "ask", fixed: false };
         }
-        return { kind: "offer", offer, permission: offer.permission };
+        return { kind: "offer", offer, permission: offer.permission, fixed: false };
       }
     }
   }
@@ -59,16 +86,17 @@ export function matchShellOffer(command: string, config: TeamConfig): ShellMatch
 /**
  * When a request matches an offer, run the OWNER's configured command (e.g. ./scripts/figma-export.sh),
  * not whatever spelling the requester used for the first token (e.g. figma-export.sh).
- * Everything after the first token is passed through untouched.
+ * Single-token offer: everything after the first token is passed through untouched.
+ * Fixed offer (command line with whitespace): the offer's line is run verbatim; the request only selected it.
  */
 export function resolveOfferCommand(command: string, offerCommand: string): string {
+  if (isFixedOffer({ command: offerCommand })) return offerCommand;
   const m = command.match(/^\s*(\S+)([\s\S]*)$/);
   if (!m) return command;
   const first = m[1]!;
   const rest = m[2] ?? "";
   if (first === offerCommand) return command;
-  const needsQuote = /\s/.test(offerCommand) && !/^["']/.test(offerCommand);
-  return `${needsQuote ? `"${offerCommand}"` : offerCommand}${rest}`;
+  return `${offerCommand}${rest}`;
 }
 
 export interface RunOptions {

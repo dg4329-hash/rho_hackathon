@@ -48,7 +48,7 @@ and the monitor / SessionStart hook pass `--port`.
 |---|---|
 | `.claude-plugin/plugin.json` | manifest, name `mesh` → tools are `mcp__plugin_mesh_mesh__<tool>` |
 | `.mcp.json` | the daemon's streamable-HTTP MCP server (10 tools incl. `approve_request` and `wait_for_events`) |
-| `hooks/hooks.json` + `hooks/emit.js` | the four CONTRACT §4 hooks (copy of `hooks/emit.js`; keep in sync) and a SessionStart hook |
+| `hooks/hooks.json` + `hooks/emit.js` | the five CONTRACT §4 hooks, incl. the `pre_edit` conflict warning (copy of `hooks/emit.js`; keep in sync) and a SessionStart hook |
 | `bin/mesh-session-start` | SessionStart: ensure the ask rule, `GET /health`, else restart from `~/.mesh/config.json` |
 | `monitors/monitors.json` + `bin/mesh-watch` | background monitor running `mesh watch`; every stdout line (pending request, or a teammate message forwarded live) reaches Claude as a notification |
 | `hooks/ensure-ask.js` | writes `permissions.ask` for `approve_request` into `<project>/.claude/settings.json` |

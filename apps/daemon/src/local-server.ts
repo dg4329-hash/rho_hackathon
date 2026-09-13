@@ -50,6 +50,10 @@ export function renderUsage(who: string, offer: Offer): string {
     const args = JSON.stringify(exampleArgs(offer.inputSchema));
     return `ask_teammate({ who: ${JSON.stringify(who)}, tool: ${JSON.stringify(offer.name)}, args: ${args}, why: "..." })`;
   }
+  if (offer.fixed) {
+    // Fixed command line: the owner runs exactly their line; the requester just names it (CONTRACT §2).
+    return `ask_teammate({ who: ${JSON.stringify(who)}, command: ${JSON.stringify(offer.name)}, why: "..." })  // fixed command: ask by name, no arguments`;
+  }
   const usageLine = offer.description.match(/Usage:\s*(.+)/i)?.[1]?.trim();
   const command = usageLine ?? "<command line, see description>";
   return `ask_teammate({ who: ${JSON.stringify(who)}, command: ${JSON.stringify(command)}, why: "..." })`;
@@ -69,7 +73,7 @@ export function buildMcpServer(core: DaemonCore): McpServer {
       .filter((m) => m.role !== "feed")
       .map((m) => ({
         user: m.user,
-        offers: m.offers.map((o) => ({ name: o.name, kind: o.kind, permission: o.permission, summary: summarize(o.description) })),
+        offers: m.offers.map((o) => ({ name: o.name, kind: o.kind, permission: o.permission, summary: summarize(o.description), ...(o.fixed ? { fixed: true, usage: `command: ${JSON.stringify(o.name)}` } : {}) })),
       }));
     return ok({ me: core.me, members });
   }));
@@ -86,7 +90,7 @@ export function buildMcpServer(core: DaemonCore): McpServer {
     if (!offer) return fail(`no capability '${name}' on ${who}. ${offerNames(core, who)}`);
     return ok({
       name: offer.name, kind: offer.kind, permission: offer.permission, description: offer.description,
-      inputSchema: offer.inputSchema, notes: offer.notes, usage: renderUsage(who, offer),
+      inputSchema: offer.inputSchema, notes: offer.notes, ...(offer.fixed ? { fixed: true } : {}), usage: renderUsage(who, offer),
     });
   }));
 
@@ -312,6 +316,21 @@ export function buildApp(core: DaemonCore): express.Express {
     const n = Number(req.query.sinceMinutes);
     const sinceMinutes = Number.isFinite(n) && n > 0 ? Math.floor(n) : 10;
     res.json({ events: core.activity(sinceMinutes) });
+  });
+
+  // Who else touched this file recently? Backs the Claude Code pre_edit hook's conflict warning (CONTRACT §4/§5).
+  // file_touched events from OTHER users whose path equals ?path (or matches it as a suffix: hooks and the git watch
+  // may root paths differently). One entry per user, latest first.
+  app.get("/touched", (req, res) => {
+    const p = String(req.query.path ?? "").replace(/\\/g, "/").replace(/^\.\//, "").trim();
+    const n = Number(req.query.minutes);
+    const minutes = Number.isFinite(n) && n > 0 ? Math.min(600, Math.floor(n)) : 10;
+    if (!p) { res.status(400).json({ ok: false, error: "path required" }); return; }
+    const same = (s: string) => s === p || s.endsWith("/" + p) || p.endsWith("/" + s);
+    const latest = new Map<string, string>();
+    for (const e of core.activity(minutes)) if (e.type === "file_touched" && e.from !== core.me && same(e.summary)) latest.set(e.from, e.ts);
+    const touched = [...latest].map(([user, ts]) => ({ user, ts })).sort((a, b) => b.ts.localeCompare(a.ts));
+    res.json({ touched });
   });
 
   app.get("/health", (_req, res) => {

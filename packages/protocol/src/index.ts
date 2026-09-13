@@ -20,6 +20,7 @@ export const Offer = z.object({
   inputSchema: z.record(z.unknown()).optional(), // mcp: JSON Schema, verbatim
   notes: z.string().optional(),            // owner-written guidance
   server: z.string().optional(),           // mcp: source server name
+  fixed: z.boolean().optional(),           // command: true = a fixed command line; ask for it by name, no arguments (CONTRACT §2)
 });
 export type Offer = z.infer<typeof Offer>;
 
@@ -191,7 +192,7 @@ export const TOOL_DESCRIPTIONS = {
   describe_capability:
     "Full description, input schema, owner notes, and an example call for one teammate capability. Always call this before ask_teammate on a tool you haven't used in this session; the owner's notes contain project-specific details (IDs, table names, conventions) you cannot guess.",
   ask_teammate:
-    "Use a teammate's tool (tool + args, from describe_capability) or run a shell command on their machine (command). They see exactly what you're asking and your `why`, and must approve unless the capability is marked 'always'. Shell commands run in the owner's configured working directory with their environment. Returns { status, exitCode, output }: exitCode 0 = success, 1 = the tool reported an error, null = killed at the owner's timeout. If status is 'running', call check_job with the jobId. If 'denied', do not retry the same request; tell the user why.",
+    "Use a teammate's tool (tool + args, from describe_capability) or run a shell command on their machine (command). They see exactly what you're asking and your `why`, and must approve unless the capability is marked 'always'. Shell commands run in the owner's configured working directory with their environment. A shell offer marked fixed: true is one exact command line the owner chose (e.g. git.diff runs `git diff HEAD`): pass command: '<offer name>' and nothing else; arguments or extra flags will not match it. Returns { status, exitCode, output }: exitCode 0 = success, 1 = the tool reported an error, null = killed at the owner's timeout. If status is 'running', call check_job with the jobId. If 'denied', do not retry the same request; tell the user why.",
   check_job: "Check on, or wait for, a job started by ask_teammate. waitSeconds blocks up to that long for completion (0 = return immediately). Same result shape as ask_teammate; exitCode null means it was killed at the owner's timeout.",
   post_event: "Post a short note to the team activity feed (what you're doing, what you found).",
   send_message:

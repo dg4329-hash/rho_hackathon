@@ -147,8 +147,11 @@ export function createCore(opts: CoreOptions): DaemonCore & { client: RelayClien
 
   async function serveShell(req: RequestFrame, command: string): Promise<void> {
     const match = matchShellOffer(command, config);
+    // A compound request on a single-token offer was already downgraded to ask/never by matchShellOffer; don't let a
+    // `permissions` glob re-upgrade it. Fixed offers run the owner's own line, so they are exempt from that check.
+    const escalated = match.kind === "offer" && !match.fixed && isCompound(command) && match.permission !== "never";
     const permission =
-      match.kind === "offer" && !(isCompound(command) && match.permission !== "never")
+      match.kind === "offer" && !escalated
         ? resolvePermission(match.offer.name, config, match.permission)
         : match.permission;
     const reason = match.kind === "offer" ? `'${match.offer.name}' is not offered (permission: never)` : "arbitrary commands are not allowed on this machine";

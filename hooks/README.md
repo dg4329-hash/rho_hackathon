@@ -11,6 +11,7 @@ Test without Claude Code:
 ```bash
 echo '{"prompt":"hello team","cwd":"/tmp","session_id":"abc123"}' | node hooks/emit.js prompt
 echo '{"tool_name":"Edit","tool_input":{"file_path":"/tmp/src/a.ts"},"cwd":"/tmp"}' | node hooks/emit.js file_touched
+echo '{"tool_name":"Edit","tool_input":{"file_path":"/tmp/src/a.ts"},"cwd":"/tmp"}' | node hooks/emit.js pre_edit   # warns if a teammate touched src/a.ts in the last 10 min
 ```
 
 Daemon on a non-default port? `MESH_DAEMON=http://localhost:7402 node hooks/emit.js prompt`.

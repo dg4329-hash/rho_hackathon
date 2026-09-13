@@ -3,7 +3,7 @@
 #
 #   hooks/install.sh [path/to/repo]     # default: current directory
 #
-# Merges four hook entries (UserPromptSubmit, PostToolUse x2, Stop) that call
+# Merges five hook entries (UserPromptSubmit, PreToolUse, PostToolUse x2, Stop) that call
 # hooks/emit.js by absolute path. Backs up the existing settings first. Re-running
 # is safe: previous mesh entries are replaced, other hooks are left alone.
 set -euo pipefail
@@ -30,6 +30,7 @@ hook() { jq -n --arg cmd "node \"$EMIT\" $1" '{type:"command", command:$cmd, tim
 
 jq \
   --argjson prompt "$(hook prompt)" \
+  --argjson pre    "$(hook pre_edit)" \
   --argjson file   "$(hook file_touched)" \
   --argjson tool   "$(hook tool_call)" \
   --argjson stop   "$(hook status)" \
@@ -38,14 +39,16 @@ jq \
   def strip: (. // []) | map(.hooks |= map(select(.command | test("emit\\.js") | not))) | map(select(.hooks | length > 0));
   .hooks //= {} |
   .hooks.UserPromptSubmit = ((.hooks.UserPromptSubmit | strip) + [{hooks: [$prompt]}]) |
+  .hooks.PreToolUse       = ((.hooks.PreToolUse | strip) + [{matcher: "Edit|Write|MultiEdit", hooks: [$pre]}]) |
   .hooks.PostToolUse      = ((.hooks.PostToolUse | strip)
                               + [{matcher: "Edit|Write|MultiEdit", hooks: [$file]},
                                  {matcher: "mcp__.*",              hooks: [$tool]}]) |
   .hooks.Stop             = ((.hooks.Stop | strip) + [{hooks: [$stop]}])
   ' "$SETTINGS" > "$SETTINGS.tmp" && mv "$SETTINGS.tmp" "$SETTINGS"
 
-echo "installed  4 mesh hooks into $SETTINGS"
+echo "installed  5 mesh hooks into $SETTINGS"
 echo "           UserPromptSubmit           -> emit.js prompt      (+ team activity into context)"
+echo "           PreToolUse Edit|Write|MultiEdit  -> emit.js pre_edit    (warns if a teammate touched the file)"
 echo "           PostToolUse Edit|Write|MultiEdit -> emit.js file_touched"
 echo "           PostToolUse mcp__.*        -> emit.js tool_call"
 echo "           Stop                       -> emit.js status"

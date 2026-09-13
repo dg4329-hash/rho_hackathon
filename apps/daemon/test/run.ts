@@ -7,6 +7,7 @@ import { createCore } from "../src/core.js";
 import { createMcpImport } from "../src/mcp-import.js";
 import { RelayClient } from "../src/relay-client.js";
 import { resolvePermission } from "../src/permissions.js";
+import { isFixedOffer } from "../src/shell.js";
 import { startFakeRelay } from "./fake-relay.js";
 
 let failures = 0;
@@ -21,6 +22,7 @@ function shellOffers(config: TeamConfig): Offer[] {
     name: o.name,
     description: o.description,
     permission: resolvePermission(o.name, config, o.permission),
+    ...(isFixedOffer(o) ? { fixed: true } : {}),
   }));
 }
 
@@ -42,6 +44,9 @@ async function main(): Promise<void> {
       { name: "hello.script", command: "./test/fixtures/hello.sh", description: "Usage: hello.sh <name>", permission: "always" },
       { name: "fail.script", command: "./test/fixtures/fail.sh", description: "exits 3 with stderr", permission: "always" },
       { name: "slow.script", command: "./test/fixtures/slow-tree.sh", description: "spawns a grandchild sleep", permission: "always" },
+      // fixed command lines (whitespace in `command`): matched by exact line or by name, never a prefix
+      { name: "git.diff", command: "git diff HEAD", description: "diff against HEAD", permission: "always" },
+      { name: "fixed.pipe", command: "echo a | tr a b", description: "pipe inside a fixed line", permission: "always" },
     ],
   });
   const configB = TeamConfig.parse({ user: "b", room, relay: relayUrl });
@@ -121,6 +126,22 @@ async function main(): Promise<void> {
   // 8b. offer command substitution: requester says `hello.sh bob`, owner runs ./test/fixtures/hello.sh bob
   const r8b = await b.ask({ who: "a", command: "hello.sh bob", why: "test", waitSeconds: 10 });
   check("offer basename → owner's real script path", r8b.status === "completed" && r8b.exitCode === 0 && (r8b.output ?? "").includes("hello bob"), r8b);
+
+  // 8c. fixed offers (CONTRACT §2): `command` with whitespace is the owner's exact line
+  check("b sees git.diff as a fixed offer", b.findOffer("a", "git.diff")?.fixed === true, b.findOffer("a", "git.diff"));
+  const r8c = await b.ask({ who: "a", command: "git.diff", why: "test", waitSeconds: 10 });
+  check("fixed offer asked by name → runs (always)", r8c.status === "completed" && r8c.exitCode === 0, r8c);
+  const r8c2 = await b.ask({ who: "a", command: "  git   diff HEAD ", why: "test", waitSeconds: 10 });
+  check("fixed offer asked by exact line (whitespace-normalized) → runs", r8c2.status === "completed" && r8c2.exitCode === 0, r8c2);
+  const r8c3 = await b.ask({ who: "a", command: "git push --force", why: "test", waitSeconds: 5 });
+  check("other git command with only a fixed git offer → arbitrary (denied)", r8c3.status === "denied" && /arbitrary/.test(r8c3.reason ?? ""), r8c3);
+  const r8c4 = await b.ask({ who: "a", command: "git diff HEAD --stat", why: "test", waitSeconds: 5 });
+  check("prefix of a fixed line + extra flag → arbitrary (denied)", r8c4.status === "denied" && /arbitrary/.test(r8c4.reason ?? ""), r8c4);
+  // the fixed line itself may contain a pipe: it is the owner's own line, so no compound escalation, by name or by line
+  const r8c5 = await b.ask({ who: "a", command: "fixed.pipe", why: "test", waitSeconds: 10 });
+  check("fixed line with a pipe, by name → runs the owner's line", r8c5.status === "completed" && (r8c5.output ?? "").trim() === "b", r8c5);
+  const r8c6 = await b.ask({ who: "a", command: "echo a | tr a b", why: "test", waitSeconds: 10 });
+  check("fixed line with a pipe, by exact line → runs (not escalated via the single-token echo offer)", r8c6.status === "completed" && (r8c6.output ?? "").trim() === "b", r8c6);
 
   // 9. messages: b → a (direct) and b → all; a's inbox sees both, marks read; b's own inbox is empty
   b.sendMessage("a", "fix idea: guard the null case in auth.ts");

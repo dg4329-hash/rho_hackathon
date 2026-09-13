@@ -95,20 +95,18 @@ Tests: `pnpm -F daemon test`, `pnpm -F daemon exec tsx test/mcp.test.ts`, `pnpm 
 `RELAY_URL=ws://localhost:8090 pnpm -F relay soak` (relay must be running).
 
 ## Hosting the relay (the public link)
-The relay serves the web front door on the same port: `/` starts a session, `/r/<room>` is the room page with the join
-command, who's online, and a live feed; `/api/rooms` backs it; `/overlay?room=&port=` is the pop-out approval window
-(shipping tonight). The same port serves the one-command join: `/install.sh`, `/install.ps1`, `/join.cmd`, `/join.command`,
-`/mesh.mjs` (the daemon bundle), `/emit.js` and `/plugin.tgz` (the Claude Code plugin, built from `plugin/` at relay start). The install scripts bake in the relay's public origin from
-the request's `Host` / `X-Forwarded-Proto` headers, so they work behind ngrok and Railway without configuration.
+The relay serves everything: landing page, room pages, installers, the daemon bundle, the plugin, the overlay, and the file store.
 
-**Now:** `./scripts/tunnel-relay.sh` on Dev's Mac (relay `:8090` + ngrok). The hostname has been stable for this ngrok
-account across launches; `NGROK_DOMAIN=…` pins it. Free ngrok shows a one-time "visit site" interstitial in browsers;
-the installers send `ngrok-skip-browser-warning: 1` and the daemon's WebSocket is unaffected. Always `pkill -x ngrok` first.
+**Permanent (Railway, ~5 minutes):**
+1. Railway → New Project → Deploy from GitHub repo → `dg4329-hash/rho_hackathon` (root; `railway.json` points at `apps/relay/Dockerfile`).
+2. Variables → add `ROOM_SECRET` = a long random string (e.g. `openssl rand -hex 32`). Room keys are derived from it; changing it invalidates every existing room link.
+3. Settings → Networking → Generate Domain. Health check is `/health`. Done: share `https://<domain>`.
 
-**Permanent (Railway, ~5 min, still to do):** New Project → Deploy from GitHub repo → pick `dg4329-hash/rho_hackathon`
-(repo root; `railway.json` points at `apps/relay/Dockerfile`, which runs `pnpm -F daemon bundle` so the image serves
-`/mesh.mjs`) → Settings → Networking → Generate Domain. The service reads `PORT`. Health check is `/health`. Vercel won't
-work: the relay needs a long-lived WebSocket server.
+**Stop-gap (any Mac with ngrok):** `ROOM_SECRET=<something> ./scripts/tunnel-relay.sh` prints the public URL. Free ngrok shows a one-time browser interstitial; the installers and daemon send the skip header automatically. Without `ROOM_SECRET` the relay makes a random one and all room links stop working when it restarts.
+
+**Security model:** a room is reachable only with its link (`/r/<room>#k=<key>`); the key gates the WebSocket, the feed, files, and the overlay. Anyone you forward the link to is in. Approvals still gate what teammates can run. See `docs/ROOM-KEYS.md`.
+
+Vercel won't work: the relay needs a long-lived WebSocket server.
 
 ## Verified (2026-09-12)
 Mac↔Mac and Mac↔Windows over the public relay: install one-liner (bash, and PowerShell on a real Windows box), shell

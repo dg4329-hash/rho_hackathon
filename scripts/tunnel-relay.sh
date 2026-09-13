@@ -16,6 +16,9 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PORT="${PORT:-8090}"
 NGROK_API="${NGROK_API:-http://127.0.0.1:4040}"
 LOG_DIR="${LOG_DIR:-$ROOT/.local}"
+if [[ -z "${ROOM_SECRET:-}" ]]; then
+  echo "note: ROOM_SECRET not set; room links will stop working when this relay restarts (export ROOM_SECRET=... to make them stable)" >&2
+fi
 mkdir -p "$LOG_DIR"
 
 if ! command -v ngrok >/dev/null 2>&1; then

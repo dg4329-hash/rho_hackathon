@@ -7,12 +7,14 @@
  *   GET  /api/files/:room/:id/meta   → { id, name, mime, size, from, ts }
  *
  * Limits: 25 MB per file, 200 MB per relay (LRU eviction, oldest-read first), 1 h TTL (sweep timer, unref'd).
- * Nothing touches disk. Access is gated by the room name only, like everything else on the relay.
+ * Nothing touches disk. Every route needs the room key (header x-mesh-key or ?key=, docs/ROOM-KEYS.md) → 401;
+ * beyond that, access is gated by the room name, like everything else on the relay.
  * Env overrides (mainly for tests): MESH_FILE_MAX_BYTES, MESH_FILE_TOTAL_BYTES, MESH_FILE_TTL_MS.
  */
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { randomBytes } from "node:crypto";
 import { publicOrigin } from "./web.js";
+import { checkKey, keyFromRequest } from "./keys.js";
 
 export const MAX_FILE_BYTES = 25 * 1024 * 1024;
 export const MAX_TOTAL_BYTES = 200 * 1024 * 1024;
@@ -235,9 +237,17 @@ export function handleFiles(req: IncomingMessage, res: ServerResponse, url: URL,
   const { store } = deps;
 
   if (method === "OPTIONS") {
-    res.writeHead(204, { ...CORS, "access-control-allow-methods": "GET, HEAD, POST, OPTIONS", "access-control-allow-headers": "content-type, x-mesh-name, x-mesh-mime, x-mesh-from", "access-control-max-age": "600" });
+    // Preflight carries no custom headers of its own — never gated, or the browser could never send x-mesh-key.
+    res.writeHead(204, { ...CORS, "access-control-allow-methods": "GET, HEAD, POST, OPTIONS", "access-control-allow-headers": "content-type, x-mesh-name, x-mesh-mime, x-mesh-from, x-mesh-key", "access-control-max-age": "600" });
     res.end();
     return true;
+  }
+
+  // Room key (docs/ROOM-KEYS.md): every /api/files/:room… route needs it (header x-mesh-key or ?key=).
+  const seg = pathname.match(/^\/api\/files\/([^/]+)/);
+  if (seg) {
+    const gate = checkKey(decodeURIComponent(seg[1]!), keyFromRequest(req, url));
+    if (!gate.ok) { json(res, 401, { error: gate.error }); req.resume(); return true; }
   }
 
   // POST /api/files/:room

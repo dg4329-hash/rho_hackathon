@@ -3,7 +3,8 @@
  * Spec: docs/tasks/TARUSH.md Step 1, docs/CONTRACT.md §1.
  *
  * Behaviour (all of it):
- *   connect  ws://host/?room=<room>&user=<user>&role=daemon|feed   → bad/missing params: `error` frame + close
+ *   connect  ws://host/?room=<room>&user=<user>&role=daemon|feed&key=<roomKey>
+ *            → bad/missing params: `error` frame + close; missing/wrong key: `error` frame + close 4401 (docs/ROOM-KEYS.md)
  *   hello    cache offers; on the FIRST hello replay the room's last HISTORY_LIMIT frames (as-is, in order),
  *            then broadcast `presence` to the whole room (sender included). hello is never forwarded or stored.
  *   other    push to history (ring buffer of HISTORY_LIMIT), forward verbatim to every OTHER conn in the room.
@@ -18,6 +19,7 @@
  */
 import { handleWeb, type WebAssets } from "./web.js";
 import { fileStoreFromEnv, handleFiles } from "./files.js";
+import { checkKey, requireKey, roomSecret } from "./keys.js";
 import fs from "node:fs";
 import http from "node:http";
 import { spawnSync } from "node:child_process";
@@ -196,6 +198,15 @@ wss.on("connection", (ws, req) => {
     return;
   }
 
+  // Room key (docs/ROOM-KEYS.md): the link is the only password. 4401 is a private close code the daemon
+  // recognises as "get the room link" rather than retrying forever.
+  const gate = checkKey(roomName, url.searchParams.get("key"));
+  if (!gate.ok) {
+    sendError(ws, gate.error);
+    ws.close(4401, gate.error);
+    return;
+  }
+
   const room = getOrCreateRoom(roomName);
   const conn: Conn = { ws, user, role, offers: [], helloed: false, alive: true };
   room.conns.add(conn);
@@ -284,6 +295,8 @@ const pingInterval = setInterval(() => {
 pingInterval.unref?.();
 
 server.listen(PORT, () => {
+  if (requireKey()) roomSecret(); // warns once when ROOM_SECRET is unset (keys would reset on restart)
+  else console.warn("! MESH_REQUIRE_KEY=0: room keys are NOT enforced on this relay");
   console.log(`mesh relay listening on :${PORT} (ws + web UI at / + GET /health + /install.sh)`);
 });
 

@@ -70,7 +70,7 @@ async function main(): Promise<void> {
     const port = await freePort();
     const here = path.dirname(fileURLToPath(import.meta.url));
     child = spawn(process.execPath, ["--import", "tsx", path.join(here, "..", "src", "index.ts")], {
-      env: { ...process.env, PORT: String(port) },
+      env: { ...process.env, PORT: String(port), MESH_REQUIRE_KEY: "0" }, // key gating has its own suite (keys.test.ts)
       stdio: ["ignore", "pipe", "inherit"],
     });
     await new Promise<void>((resolve, reject) => {

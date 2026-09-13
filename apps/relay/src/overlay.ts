@@ -76,16 +76,60 @@ export const OVERLAY_JS: string = String.raw`(function (root) {
   var MIN_POLL_GAP_MS = 1500;
   var MAX_BACKOFF_MS = 15000;
 
+  // ---------- room keys (docs/ROOM-KEYS.md) ----------
+  // The key lives in the URL fragment (#k=<key>) and in localStorage under mesh.key.<room>.
+  // CURRENT_KEY is set by mountOverlay so artifactChip() can sign file links; it stays null under node.
+  var CURRENT_KEY = null;
+  /** "#k=abc" / "k=abc&x=1" -> "abc"; anything else -> null. Never throws. */
+  function keyFromHash(h) {
+    h = String(h == null ? "" : h);
+    if (h.charAt(0) === "#") h = h.slice(1);
+    if (!h) return null;
+    var parts = h.split("&");
+    for (var i = 0; i < parts.length; i++) {
+      var p = parts[i];
+      if (p.slice(0, 2) !== "k=") continue;
+      var v = p.slice(2);
+      try { v = decodeURIComponent(v); } catch (e) {}
+      v = String(v).trim();
+      if (v) return v;
+    }
+    return null;
+  }
+  function keyStorageKey(room) { return "mesh.key." + room; }
+  /** Append key=<k> to a relay file URL so a plain browser click works. */
+  function withKey(url, k) {
+    if (!url || !k || String(url).indexOf("/api/files/") < 0) return url;
+    return url + (String(url).indexOf("?") >= 0 ? "&" : "?") + "key=" + encodeURIComponent(k);
+  }
+
   // ---------- network layer (DOM-free; unit-tested under node) ----------
   function createNet(o) {
     var fetchFn = o.fetch || root.fetch;
     var daemon = String(o.daemonBase || "").replace(/\/+$/, "");
     var relay = String(o.relayOrigin || "").replace(/\/+$/, "");
+    // o.key may be a string or a getter (so the net always sees the live key)
+    var key = o.key == null ? null : o.key;
+    function curKey() {
+      var k = key;
+      if (typeof k === "function") { try { k = k(); } catch (e) { k = null; } }
+      k = k == null ? "" : String(k).trim();
+      return k || null;
+    }
+    function isRelayUrl(url) {
+      var u = String(url);
+      return u.indexOf("/api/files/") >= 0 && (!relay || u.indexOf(relay) === 0 || u.charAt(0) === "/");
+    }
     function req(url, init, timeoutMs) {
       var ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
       var timer = ctrl && timeoutMs ? setTimeout(function () { ctrl.abort(); }, timeoutMs) : null;
       var opts = {}; for (var k in (init || {})) opts[k] = init[k];
       if (ctrl) opts.signal = ctrl.signal;
+      var rk = curKey();
+      if (rk && isRelayUrl(url)) {
+        var hs = {}; for (var hk in (opts.headers || {})) hs[hk] = opts.headers[hk];
+        hs["x-mesh-key"] = rk; opts.headers = hs;
+      }
       return Promise.resolve().then(function () { return fetchFn.call(root, url, opts); }).then(function (r) {
         if (timer) clearTimeout(timer);
         return r.text().then(function (txt) {
@@ -123,8 +167,15 @@ export const OVERLAY_JS: string = String.raw`(function (root) {
       },
       sendMessage: function (to, text) { return post(daemon + "/message", { to: to || "all", text: text }); },
       roomFeed: function (room, since) {
-        return req(relay + "/api/rooms/" + encodeURIComponent(room) + "?since=" + (since || 0), null, 8000);
-      }
+        var k = curKey();
+        var url = relay + "/api/rooms/" + encodeURIComponent(room) + "?since=" + (since || 0) + (k ? "&key=" + encodeURIComponent(k) : "");
+        return req(url, null, 8000);
+      },
+      /** Generic relay request; /api/files/ URLs carry the x-mesh-key header. */
+      relayFetch: function (url, init, timeoutMs) { return req(url, init, timeoutMs || 10000); },
+      /** Update the room key without recreating the net (the key box retries in place). */
+      setKey: function (k) { key = k == null ? null : k; },
+      getKey: curKey
     };
   }
 
@@ -191,6 +242,11 @@ export const OVERLAY_JS: string = String.raw`(function (root) {
     ".ft .hint{margin-top:4px;color:var(--fg2)}" +
     ".ft input{background:var(--field);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:2px 6px;font-size:11px;width:62px;font-family:ui-monospace,'SF Mono',Menlo,monospace;outline:0}.ft input:focus{border-color:var(--blue)}" +
     ".ft .port{margin-left:auto;display:flex;align-items:center;gap:4px}" +
+    // room key (docs/ROOM-KEYS.md): lock glyph when keyed, key box when the relay says 401
+    ".ft .lock{font-size:10.5px;opacity:.75;line-height:1}" +
+    ".ft .keybox{margin-top:5px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;color:var(--fg2)}" +
+    ".ft .keybox input{width:132px}" +
+    ".ft .keybox button{padding:3px 9px;font-size:11px}" +
     ".icon{position:relative;width:22px;height:22px;border-radius:7px;background:var(--blue);color:#fff;font-weight:700;font-size:13px;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto}" +
     ".wbadge{position:absolute;top:-6px;right:-7px;min-width:17px;height:17px;border-radius:999px;background:#ff453a;color:#fff;font:600 10.5px/17px -apple-system,BlinkMacSystemFont,'SF Pro Text',system-ui,sans-serif;text-align:center;padding:0 4px;display:none;box-shadow:0 1px 3px rgba(0,0,0,.25)}.wbadge.on{display:block}" +
     ".chev{background:var(--field);color:var(--fg2);border:1px solid var(--line);border-radius:999px;width:24px;height:24px;padding:0;font-size:15px;line-height:1;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto}" +
@@ -226,6 +282,8 @@ export const OVERLAY_JS: string = String.raw`(function (root) {
     if (!a || typeof a !== "object") return "";
     var label = esc(a.name || a.id || "file") + ' <span class="sz">· ' + esc(fmtSize(a.size)) + '</span>';
     var url = typeof a.url === "string" && /^https?:\/\//i.test(a.url) ? a.url : "";
+    // keyed room: relay file links need ?key= to open in a browser tab (no key known → href unchanged)
+    if (url && CURRENT_KEY) url = withKey(url, CURRENT_KEY);
     return url
       ? '<a class="chip" href="' + esc(url) + '" target="_blank" rel="noopener" title="' + esc(a.mime || "") + '">' + label + '</a>'
       : '<span class="chip">' + label + '</span>';
@@ -261,7 +319,7 @@ export const OVERLAY_JS: string = String.raw`(function (root) {
 
   /**
    * Mount the overlay into doc (a normal page or a Document Picture-in-Picture document).
-   * opts: { room, port?, relayOrigin, fetch? }. Returns { stop, setPort, state }.
+   * opts: { room, port?, relayOrigin, fetch?, key? }. Returns { stop, setPort, setKey, state }.
    */
   function mountOverlay(doc, opts) {
     var win = doc.defaultView || root;
@@ -269,14 +327,23 @@ export const OVERLAY_JS: string = String.raw`(function (root) {
     var room = String(opts.room || "");
     var relayOrigin = String(opts.relayOrigin || (win.location && win.location.origin) || "");
     var port = Number(opts.port) || Number(ls.get("mesh.port")) || DEFAULT_PORT;
+    // room key: opts.key > #k= in this window's fragment > remembered key. Fresh keys are remembered.
+    var hashKey = null;
+    try { hashKey = keyFromHash(win.location && win.location.hash); } catch (e) {}
+    var optKey = opts.key == null ? "" : String(opts.key).trim();
+    var key = optKey || hashKey || null;
+    if (key) ls.set(keyStorageKey(room), key);
+    if (!key) key = String(ls.get(keyStorageKey(room)) || "").trim() || null;
+    CURRENT_KEY = key;
     var state = {
       port: port, pending: [], messages: [], since: null, seenMsg: {}, decided: {}, deciding: {},
       feed: [], feedNext: 0, feedSeen: {}, members: [],
       daemonOk: null, relayOk: null, daemonErr: "", sound: ls.get("mesh.overlay.sound") === "1",
-      stopped: false, gen: 0,
+      stopped: false, gen: 0, key: key, keyNeeded: false,
       collapsed: ls.get("mesh.overlay.collapsed") === "1", unread: 0, lastBadge: 0, prevSize: null
     };
-    var net = createNet({ daemonBase: "http://localhost:" + port, relayOrigin: relayOrigin, fetch: opts.fetch });
+    var liveKey = function () { return state.key; };
+    var net = createNet({ daemonBase: "http://localhost:" + port, relayOrigin: relayOrigin, fetch: opts.fetch, key: liveKey });
 
     // -- DOM --
     var style = doc.createElement("style"); style.textContent = CSS; doc.head.appendChild(style);
@@ -291,7 +358,9 @@ export const OVERLAY_JS: string = String.raw`(function (root) {
       '<h2>live</h2><div id="mo-feed" class="feed"></div>' +
       '</div>' +
       '<div class="ft glass"><div class="st"><span id="mo-daemon"><span class="dot"></span>daemon</span><span id="mo-relay"><span class="dot"></span>relay</span>' +
-      '<span class="port">port <input id="mo-port" type="number" min="1" max="65535" value="' + port + '"></span><span class="room"><input id="mo-room" placeholder="room" title="switch to another room" maxlength="42"><button class="ghost" id="mo-switch" title="join this room instead">go</button></span><button class="ghost leave" id="mo-leave" title="disconnect this machine from the room">leave</button></div><div id="mo-hint" class="hint" hidden></div></div>' +
+      '<span class="port">port <input id="mo-port" type="number" min="1" max="65535" value="' + port + '"></span><span class="room"><input id="mo-room" placeholder="room" title="switch to another room" maxlength="42"><button class="ghost" id="mo-switch" title="join this room instead">go</button></span><button class="ghost leave" id="mo-leave" title="disconnect this machine from the room">leave</button><span class="lock" id="mo-lock" title="this room is keyed" hidden>🔒</span></div>' +
+      '<div class="keybox" id="mo-keybox" hidden>this room needs its link<input id="mo-key" placeholder="key" title="paste the room key (the #k= part of the room link)" maxlength="64" autocomplete="off" spellcheck="false"><button class="ghost" id="mo-keygo">use key</button></div>' +
+      '<div id="mo-hint" class="hint" hidden></div></div>' +
       '<div class="widget glass" id="mo-widget" role="button" tabindex="0" title="mesh — click to expand"><span class="glyph">m</span><span class="wbadge" id="mo-wbadge"></span></div>';
     var $ = function (id) { return doc.getElementById(id); };
     $("mo-sound").checked = state.sound;
@@ -314,6 +383,8 @@ export const OVERLAY_JS: string = String.raw`(function (root) {
         .then(function () { state.stopped = true; b.textContent = "left"; var h = $("mo-hint"); if (h) { h.hidden = false; h.textContent = "You left the room. To come back, run the join command from the room page."; } })
         .catch(function () { b.disabled = false; b.textContent = "leave"; });
     };
+    $("mo-keygo").onclick = function () { applyKey($("mo-key").value); };
+    $("mo-key").onkeydown = function (e) { if (e.key === "Enter") { e.preventDefault(); applyKey(this.value); } };
     $("mo-port").onchange = function () { var p = Number(this.value); if (Number.isInteger(p) && p > 0 && p < 65536) setPort(p); else this.value = state.port; };
     $("mo-send").onclick = send;
     $("mo-collapse").onclick = function () { setCollapsed(true); };
@@ -428,13 +499,30 @@ export const OVERLAY_JS: string = String.raw`(function (root) {
     function renderStatus() {
       var d = $("mo-daemon"), r = $("mo-relay"), h = $("mo-hint");
       if (d) { d.className = state.daemonOk === null ? "" : state.daemonOk ? "on" : "off"; d.innerHTML = '<span class="dot"></span>daemon localhost:' + state.port + (state.daemonOk === false ? " unreachable" : ""); }
-      if (r) { r.className = state.relayOk === null ? "" : state.relayOk ? "on" : "off"; r.innerHTML = '<span class="dot"></span>relay' + (state.relayOk === false ? " unreachable" : ""); }
+      if (r) { r.className = state.relayOk === null ? "" : state.relayOk ? "on" : "off"; r.innerHTML = '<span class="dot"></span>relay' + (state.relayOk === false ? (state.keyNeeded ? " locked" : " unreachable") : ""); }
+      var lk = $("mo-lock"); if (lk) lk.hidden = !state.key;
+      var kb = $("mo-keybox"); if (kb) kb.hidden = !state.keyNeeded;
       if (h) {
         var hint = "";
         if (state.daemonOk === false) hint = "Can't reach the mesh daemon at http://localhost:" + state.port + ". Open this overlay from the same browser on the machine running mesh, check it is running (node ~/.mesh/mesh.mjs status), or fix the port →";
+        else if (state.keyNeeded) hint = ""; // the key box below already says it
         else if (state.relayOk === false) hint = "Relay " + relayOrigin + " not responding; approvals still work, the live feed is paused.";
         h.textContent = hint ? "\u26a0 " + hint : ""; h.hidden = !hint;
       }
+    }
+
+    /** Remember a pasted key, hand it to the net and retry the relay poll at once (no reload). */
+    function applyKey(raw) {
+      var k = String(raw == null ? "" : raw).trim();
+      if (!k) return;
+      if (k.indexOf("#k=") >= 0) k = keyFromHash(k.slice(k.indexOf("#"))) || k; // tolerate a whole room link
+      state.key = k; CURRENT_KEY = k;
+      ls.set(keyStorageKey(room), k);
+      if (net && net.setKey) net.setKey(liveKey);
+      state.keyNeeded = false;
+      var inp = $("mo-key"); if (inp) inp.value = "";
+      renderStatus();
+      wakeRelay();
     }
 
     function absorbMessages(msgs) {
@@ -486,6 +574,18 @@ export const OVERLAY_JS: string = String.raw`(function (root) {
 
     var sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
 
+    // Interruptible pause for the relay loop: a fresh key retries immediately instead of waiting out RELAY_POLL_MS.
+    var relayWake = null;
+    function wakeRelay() { var w = relayWake; relayWake = null; if (w) w(); }
+    function relaySleep(ms) {
+      return new Promise(function (res) {
+        var done = false;
+        var fin = function () { if (done) return; done = true; if (relayWake === fin) relayWake = null; res(); };
+        relayWake = fin;
+        setTimeout(fin, ms);
+      });
+    }
+
     async function daemonLoop(gen) {
       var backoff = 0;
       try {
@@ -521,7 +621,7 @@ export const OVERLAY_JS: string = String.raw`(function (root) {
       while (!state.stopped) {
         try {
           var r = await net.roomFeed(room, state.feedNext);
-          state.relayOk = true; state.feedNext = r.next || 0;
+          state.relayOk = true; state.keyNeeded = false; state.feedNext = r.next || 0;
           state.members = (r.members || []).map(function (m) { return m.user; });
           var dl = $("mo-members"); if (dl) dl.innerHTML = ["all"].concat(state.members).map(function (u) { return '<option value="' + esc(u) + '">'; }).join("");
           var changed = false;
@@ -531,15 +631,19 @@ export const OVERLAY_JS: string = String.raw`(function (root) {
           }
           if (state.feed.length > 300) state.feed.splice(0, state.feed.length - 300);
           if (changed) { renderFeed(); var el = $("mo-feed"); if (el) el.scrollTop = el.scrollHeight; }
-        } catch (e) { state.relayOk = false; }
+        } catch (e) {
+          state.relayOk = false;
+          // 401: this room is keyed and we have no key (or the wrong one) — ask for the link.
+          if (e && e.status === 401) state.keyNeeded = true;
+        }
         renderStatus();
-        await sleep(RELAY_POLL_MS);
+        await relaySleep(RELAY_POLL_MS);
       }
     }
 
     function setPort(p) {
       state.port = p; ls.set("mesh.port", String(p));
-      net = createNet({ daemonBase: "http://localhost:" + p, relayOrigin: relayOrigin, fetch: opts.fetch });
+      net = createNet({ daemonBase: "http://localhost:" + p, relayOrigin: relayOrigin, fetch: opts.fetch, key: liveKey });
       state.gen++; state.daemonOk = null; state.pending = []; state.decided = {}; state.deciding = {};
       state.messages = []; state.seenMsg = {}; state.since = null; state.unread = 0; lastPendingSig = null;
       setTitle(); renderPending(); renderMessages(); renderStatus();
@@ -551,10 +655,10 @@ export const OVERLAY_JS: string = String.raw`(function (root) {
     renderPending(); renderMessages(); renderFeed(); renderStatus();
     if (state.collapsed) setCollapsed(true, true); else setTitle(); // restore last state; default expanded
     daemonLoop(state.gen); relayLoop();
-    return { stop: stop, setPort: setPort, setCollapsed: setCollapsed, state: state };
+    return { stop: stop, setPort: setPort, setKey: applyKey, setCollapsed: setCollapsed, state: state };
   }
 
-  var api = { createNet: createNet, mountOverlay: mountOverlay, newestTs: newestTs, badgeFor: badgeFor, titleFor: titleFor, feedLine: feedLine, artifactChip: artifactChip, fmtSize: fmtSize, DEFAULT_PORT: DEFAULT_PORT };
+  var api = { createNet: createNet, mountOverlay: mountOverlay, newestTs: newestTs, badgeFor: badgeFor, titleFor: titleFor, feedLine: feedLine, artifactChip: artifactChip, fmtSize: fmtSize, keyFromHash: keyFromHash, DEFAULT_PORT: DEFAULT_PORT };
   root.meshOverlay = api;
   if (typeof window === "undefined" && typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

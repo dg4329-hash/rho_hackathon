@@ -2,10 +2,10 @@
  * Web front door for the relay: a landing page that starts a session, a room page that shows
  * who's connected + a live feed, and two JSON routes the pages poll. Same port as the WebSocket.
  *
- *   GET  /                 landing: "Start a session"
- *   POST /api/rooms        → { room }            create a room name
- *   GET  /api/rooms/:room  → { room, members, events }   live state (polled every 2 s)
- *   GET  /r/:room          room page
+ *   GET  /                 landing: "Start a session" + "Join a room"
+ *   POST /api/rooms        → { room, key, link }  create a room (link = <origin>/r/<room>#k=<key>)
+ *   GET  /api/rooms/:room  → { room, members, events }   live state (polled every 2 s); needs ?key= / x-mesh-key
+ *   GET  /r/:room          room page (reads #k=<key> from the fragment; no key → "paste the room link" box)
  *
  * One-command join (no clone / pnpm / npm account), all served from the same port:
  *   GET  /mesh.mjs         single-file daemon bundle (apps/daemon/dist/mesh.mjs, built by `pnpm -F daemon bundle`)
@@ -18,6 +18,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { randomBytes } from "node:crypto";
 import { handleOverlay } from "./overlay.js";
+import { KEY_RE, checkKey, keyFromRequest, roomKey, roomLink } from "./keys.js";
 
 export interface WebRoomView {
   members: Array<{ user: string; role: string; offers: Array<{ name: string; kind?: string; permission?: string }> }>;
@@ -108,7 +109,8 @@ export function handleWeb(req: IncomingMessage, res: ServerResponse, url: URL, d
     let name = newRoomName();
     for (let i = 0; i < 5 && deps.getRoom(name); i++) name = newRoomName();
     deps.createRoom(name);
-    json(res, 201, { room: name });
+    const key = roomKey(name);
+    json(res, 201, { room: name, key, link: roomLink(publicOrigin(req).http, name, key) });
     return true;
   }
 
@@ -116,6 +118,8 @@ export function handleWeb(req: IncomingMessage, res: ServerResponse, url: URL, d
   if (method === "GET" && m) {
     const name = decodeURIComponent(m[1]!);
     if (!ROOM_RE.test(name)) { json(res, 400, { error: "bad room name" }); return true; }
+    const gate = checkKey(name, keyFromRequest(req, url));
+    if (!gate.ok) { json(res, 401, { error: gate.error }); return true; }
     const room = deps.getRoom(name);
     if (!room) { json(res, 200, { room: name, members: [], events: [], exists: false }); return true; }
     const since = Number(url.searchParams.get("since") ?? 0);
@@ -139,7 +143,10 @@ export function handleWeb(req: IncomingMessage, res: ServerResponse, url: URL, d
     const as = (url.searchParams.get("as") ?? "").toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 32);
     if (!ROOM_RE.test(room)) { res.writeHead(400).end("bad room name"); return true; }
     const origin = publicOrigin(req).http;
-    const asArg = as ? ` --as ${as}` : "";
+    const key = (url.searchParams.get("key") ?? "").trim().toLowerCase();
+    // The key is baked into the downloaded command so a double-click join works without the room page.
+    const keyArg = KEY_RE.test(key) ? ` --key ${key}` : "";
+    const asArg = keyArg + (as ? ` --as ${as}` : "");
     if (pathname === "/join.cmd") {
       const body = `@echo off\r\ntitle mesh: joining ${room}\r\necho Joining mesh room ${room}...\r\npowershell -NoProfile -ExecutionPolicy Bypass -Command "& ([scriptblock]::Create((irm -Headers @{'ngrok-skip-browser-warning'='1'} ${origin}/install.ps1))) ${room}${asArg}"\r\necho.\r\necho Done. Restart your coding agent session once. You can close this window.\r\npause\r\n`;
       res.writeHead(200, { "content-type": "application/octet-stream", "content-disposition": `attachment; filename="mesh-join-${room}.cmd"`, "cache-control": "no-store" });
@@ -334,11 +341,49 @@ const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({"&":"&amp;","<":"&lt;",
 function copyBtn(txt){ return '<button class="ghost copy" onclick="navigator.clipboard.writeText(' + JSON.stringify(txt).replace(/"/g,"&quot;") + ');this.textContent=\\'copied\\';setTimeout(()=>this.textContent=\\'copy\\',1200)">copy</button>'; }
 function pre(txt){ return '<pre>' + copyBtn(txt) + esc(txt) + '</pre>'; }
 
+// ---- room key (docs/ROOM-KEYS.md): it lives in the URL fragment, never in a request line ----
+const KEY_RE = /^[a-z2-7]{16}$/;
+// "#k=abc", "k=abc", "…/r/room#k=abc" or a bare key → the key, or "".
+function keyFromHash(h) {
+  const s = String(h || "").replace(/^[^#]*#/, "").replace(/^#/, "");
+  for (const part of s.split(/[&;]/)) { const m = /^k=(.+)$/.exec(part.trim()); if (m) return decodeURIComponent(m[1]).trim().toLowerCase(); }
+  return "";
+}
+/** Parse anything a teammate might paste: a full room link, a "room#k=key", or a bare key. */
+function parseRoomLink(raw) {
+  const v = String(raw || "").trim();
+  if (!v) return null;
+  if (KEY_RE.test(v)) return { room: "", key: v };
+  let u = null;
+  try { u = new URL(v, location.origin); } catch (e) { u = null; }
+  if (u) {
+    const m = /^\\/r\\/([a-z0-9][a-z0-9-]{1,40})$/.exec(u.pathname);
+    if (m) return { room: m[1], key: keyFromHash(u.hash), origin: u.origin };
+  }
+  const m2 = /^([a-z0-9][a-z0-9-]{1,40})(?:#|\\?)?/.exec(v);
+  return m2 ? { room: m2[1], key: keyFromHash(v) } : null;
+}
+const keyed = (u, key) => (key && String(u).indexOf("/api/files/") >= 0 ? u + (String(u).indexOf("?") >= 0 ? "&" : "?") + "key=" + encodeURIComponent(key) : u);
+function lsGet(k){ try { return localStorage.getItem(k) || ""; } catch (e) { return ""; } }
+function lsSet(k, v){ try { localStorage.setItem(k, v); } catch (e) {} }
+// The key comes from the fragment; we remember it so a bare /r/<room> keeps working in this browser.
+const HASH_KEY = ROOM ? keyFromHash(location.hash) : "";
+if (ROOM && HASH_KEY) lsSet("mesh.key." + ROOM, HASH_KEY);
+const KEY = ROOM ? (HASH_KEY || lsGet("mesh.key." + ROOM)) : "";
+
 if (!ROOM) {
   $("#app").innerHTML = \`
     <div class="card"><h2>start here</h2>
       <p><b>mesh lets your AI coding assistant use tools your teammates have and you don't.</b> Their Figma, their database, their deploy access. It runs on their laptop, they click Approve, you get the result. Nobody shares a password or a key.</p>
       <div class="row"><button id="start">Start a session</button><span class="dim small">creates a room and gives you a link to send to your teammates</span></div>
+    </div>
+    <div class="card"><h2>join a room</h2>
+      <p class="small">Someone sent you a link? Paste it here.</p>
+      <div class="row"><input id="jlink" placeholder="https://…/r/room#k=…" style="width:380px" autocomplete="off"><button class="ghost" id="jgo">Open</button></div>
+      <p class="small dim" id="jerr" style="min-height:18px"></p>
+      <details><summary>I only have the room name and key</summary>
+        <div class="row" style="margin-top:8px"><input id="jroom" placeholder="room" maxlength="42" autocomplete="off"><input id="jkey" placeholder="key" maxlength="32" autocomplete="off"><button class="ghost" id="jgo2">Open</button></div>
+      </details>
     </div>
     <div class="card"><h2>what happens, in plain words</h2>
       <ol class="steps">
@@ -351,12 +396,45 @@ if (!ROOM) {
     </div>\`;
   $("#start").onclick = async () => {
     const r = await fetch("/api/rooms", { method: "POST" }).then((x) => x.json());
-    location.href = "/r/" + r.room;
+    location.href = r.key ? "/r/" + r.room + "#k=" + r.key : "/r/" + r.room;
   };
+  const go = (raw) => {
+    const p = parseRoomLink(raw);
+    const err = $("#jerr");
+    if (!p || !p.room) { err.textContent = "That doesn't look like a room link. It should end in /r/<room>#k=<key>."; return; }
+    const base = p.origin && p.origin !== location.origin ? p.origin : "";
+    location.href = base + "/r/" + p.room + (p.key ? "#k=" + p.key : "");
+  };
+  $("#jgo").onclick = () => go($("#jlink").value);
+  $("#jlink").onkeydown = (e) => { if (e.key === "Enter") go($("#jlink").value); };
+  $("#jgo2").onclick = () => {
+    const room = $("#jroom").value.trim().toLowerCase(), key = $("#jkey").value.trim().toLowerCase();
+    go(room + (key ? "#k=" + key : ""));
+  };
+} else if (!KEY) {
+  // No key in the fragment and none remembered: this page shows nothing about the room until it has the link.
+  $("#app").innerHTML = \`
+    <div class="card"><h2>room \${esc(ROOM)}</h2>
+      <p><b>This room needs its link.</b> The link is the only password, so the page can't show you the room without it.</p>
+      <p class="small">Paste the room link you were sent — it looks like <code>\${esc(location.origin)}/r/\${esc(ROOM)}#k=…</code></p>
+      <div class="row"><input id="k" placeholder="paste the room link" style="width:380px" autocomplete="off"><button id="kgo">Open room</button></div>
+      <p class="small dim" id="kerr" style="min-height:18px">Ask whoever started the session to send it to you.</p>
+    </div>\`;
+  const use = () => {
+    const p = parseRoomLink($("#k").value);
+    if (!p || !p.key) { $("#kerr").textContent = "No key found in that. The link ends in #k=<key>."; return; }
+    if (p.room && p.room !== ROOM) { location.href = (p.origin && p.origin !== location.origin ? p.origin : "") + "/r/" + p.room + "#k=" + p.key; return; }
+    lsSet("mesh.key." + ROOM, p.key);
+    location.hash = "k=" + p.key;
+    location.reload();
+  };
+  $("#kgo").onclick = use;
+  $("#k").onkeydown = (e) => { if (e.key === "Enter") use(); };
 } else {
+  const LINK = location.origin + "/r/" + ROOM + "#k=" + KEY;
   let me = localStorage.getItem("mesh.user") || "";
   let shell = localStorage.getItem("mesh.shell") || "bash";
-  const asFlag = () => (me ? " --as " + me : "");
+  const asFlag = () => " --key " + KEY + (me ? " --as " + me : "");
   const joinCmd = (sh) => sh === "ps"
     ? "& ([scriptblock]::Create((irm -Headers @{'ngrok-skip-browser-warning'='1'} " + location.origin + "/install.ps1))) " + ROOM + asFlag()
     : "curl -fsSL " + location.origin + "/install.sh | bash -s -- " + ROOM + asFlag();
@@ -369,8 +447,9 @@ if (!ROOM) {
   const render = () => {
     $("#app").innerHTML = \`
       <div class="card"><div class="row"><h2 style="margin:0">room</h2><span class="pill">\${esc(ROOM)}</span>
-        <button class="ghost" onclick="navigator.clipboard.writeText(location.href);this.textContent='link copied'">copy room link</button>
-        <span class="dim small">share this link with teammates</span></div></div>
+        <span class="dim small">this link is the only password</span></div>
+        <pre id="link">\${copyBtn(LINK)}\${esc(LINK)}</pre>
+        <p class="small dim">⚠ anyone with this link can join; don't post it publicly.</p></div>
 
       <div class="card"><h2>step 1 · pick a name</h2>
         <div class="row"><label>your name <input id="me" value="\${esc(me)}" placeholder="e.g. tarush" maxlength="32" autocomplete="off"></label>
@@ -396,7 +475,7 @@ if (!ROOM) {
         \${pre("codex mcp add mesh --url http://localhost:7337/mcp")}
         <p class="small">Cursor: create a file called <code>.cursor/mcp.json</code> in your project with this content, then restart Cursor:</p>
         \${pre('{ "mcpServers": { "mesh": { "url": "http://localhost:7337/mcp" } } }')}
-        <p class="small dim">Developers of mesh itself can run from the repo instead: <code>pnpm -F daemon start join \${esc(ROOM)} --as &lt;you&gt; --relay \${esc(RELAY)}</code> (see <a href="\${esc(REPO)}">the repo</a>).</p>
+        <p class="small dim">Developers of mesh itself can run from the repo instead: <code>pnpm -F daemon start join \${esc(ROOM)} --key \${esc(KEY)} --as &lt;you&gt; --relay \${esc(RELAY)}</code> (see <a href="\${esc(REPO)}">the repo</a>).</p>
         </details></div>
 
       <div class="card"><h2>step 4 · use it</h2>
@@ -412,7 +491,7 @@ if (!ROOM) {
         <span class="dim small">approvals + messages in a floating window (needs mesh running on this machine)</span></div>
         <div id="members" class="members"><span class="dim">nobody yet — do step 2 and your name will appear here</span></div></div>
       <div class="card"><h2>live</h2><div id="feed" class="feed"><span class="dim">requests, approvals and output will appear here</span></div></div>\`;
-    const dl = () => { const q = "?room=" + encodeURIComponent(ROOM) + (me ? "&as=" + encodeURIComponent(me) : ""); const a = $("#dl-cmd"), b = $("#dl-command"); if (a) a.href = "/join.cmd" + q; if (b) b.href = "/join.command" + q; };
+    const dl = () => { const q = "?room=" + encodeURIComponent(ROOM) + "&key=" + encodeURIComponent(KEY) + (me ? "&as=" + encodeURIComponent(me) : ""); const a = $("#dl-cmd"), b = $("#dl-command"); if (a) a.href = "/join.cmd" + q; if (b) b.href = "/join.command" + q; };
     dl();
     $("#me").oninput = (e) => { me = e.target.value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, ""); localStorage.setItem("mesh.user", me); dl(); renderJoin(); };
     document.querySelectorAll(".tabs button").forEach((b) => { b.onclick = () => { shell = b.dataset.sh; localStorage.setItem("mesh.shell", shell); renderJoin(); }; });
@@ -426,7 +505,8 @@ if (!ROOM) {
   let pipWin = null;
   async function popOutOverlay() {
     const port = Number(localStorage.getItem("mesh.port")) || 7337;
-    const q = "?room=" + encodeURIComponent(ROOM) + "&port=" + port;
+    // The overlay page is public HTML but every API call it makes carries the key — hand it over in the fragment.
+    const q = "?room=" + encodeURIComponent(ROOM) + "&port=" + port + "#k=" + KEY;
     if (pipWin && !pipWin.closed) { try { pipWin.close(); } catch {} pipWin = null; }
     const fallback = () => { window.open("/overlay" + q, "mesh-overlay", "popup,width=380,height=560"); };
     if (!window.documentPictureInPicture || typeof documentPictureInPicture.requestWindow !== "function") { fallback(); return; }
@@ -441,7 +521,7 @@ if (!ROOM) {
     s.src = location.origin + "/overlay.js";
     s.onload = () => {
       const api = pip.meshOverlay || window.meshOverlay;
-      if (api) api.mountOverlay(d, { room: ROOM, port, relayOrigin: location.origin });
+      if (api) api.mountOverlay(d, { room: ROOM, port, relayOrigin: location.origin, key: KEY });
       else { try { pip.close(); } catch {} fallback(); }
     };
     s.onerror = () => { try { pip.close(); } catch {} fallback(); };
@@ -456,7 +536,7 @@ if (!ROOM) {
   const chip = (a) => {
     if (!a || typeof a !== "object") return "";
     const label = esc(a.name || a.id || "file") + ' <span class="sz">· ' + esc(fmtSize(a.size)) + '</span>';
-    const url = typeof a.url === "string" && /^https?:\\/\\//i.test(a.url) ? a.url : "";
+    const url = typeof a.url === "string" && /^https?:\\/\\//i.test(a.url) ? keyed(a.url, KEY) : "";
     return url ? '<a class="chip" href="' + esc(url) + '" target="_blank" rel="noopener" title="' + esc(a.mime || "") + '">' + label + '</a>' : '<span class="chip">' + label + '</span>';
   };
   const chips = (list) => Array.isArray(list) && list.length ? '<span class="chips">' + list.map(chip).join("") + '</span>' : "";
@@ -478,7 +558,13 @@ if (!ROOM) {
   };
   async function poll() {
     try {
-      const r = await fetch("/api/rooms/" + ROOM + "?since=" + next).then((x) => x.json());
+      const res = await fetch("/api/rooms/" + ROOM + "?since=" + next + "&key=" + encodeURIComponent(KEY));
+      if (res.status === 401) { // the key stopped working (relay restarted without ROOM_SECRET, or a stale one was remembered)
+        lsSet("mesh.key." + ROOM, "");
+        $("#app").innerHTML = '<div class="card"><h2>room ' + esc(ROOM) + '</h2><p><b>This room needs its link.</b> The key this page had is no longer valid — ask for the room link again.</p><p class="small"><a href="/r/' + esc(ROOM) + '">reload and paste it</a></p></div>';
+        return;
+      }
+      const r = await res.json();
       next = r.next || 0;
       const mem = $("#members");
       if (mem) mem.innerHTML = r.members.length ? r.members.map((m) => '<div class="m"><b>' + esc(m.user) + '</b> <span class="on">● online</span><div>' +

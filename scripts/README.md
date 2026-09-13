@@ -1,4 +1,3 @@
-Tarush: offered commands go here. See `docs/tasks/TARUSH.md`. Never commit tokens.
 
 ## `figma-export.sh`
 

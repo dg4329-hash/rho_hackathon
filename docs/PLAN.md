@@ -70,17 +70,7 @@ Status as of 2026-09-12 (night, `main` @ `c5e4cdc`): cross-laptop proven over th
 
 Steps 1-2 are a working product with zero AI in it. If step 3 fights you, demo 1-2 plus the feed.
 
-## 4. Work split
-
-| person | subscription | owns | start with |
-|---|---|---|---|
-| **Dev** | Claude Max 20x | `packages/protocol`, `apps/daemon` (join, approvals, spawn, MCP server) | step 0, then 2, then 3 |
-| **Tarush** | Cursor Pro (assumed; swap with Abhi if reversed) | `apps/relay`, deploy, `team.json` schema + validator, `scripts/figma-export.sh`, S1 | step 1 (should be done in ~1h), then 6, then S1 |
-| **Abhi** | Claude Pro (assumed) | `apps/feed`, `hooks/`, `docs/DEMO.md`, pitch deck notes, S3 | step 4 against Tarush's relay with fake events, then 5 |
-
-Detailed specs: `docs/tasks/DEV.md`, `docs/tasks/TARUSH.md`, `docs/tasks/ABHI.md`.
-
-## 5. Demo script (target)
+## 4. Demo script (target)
 
 Three laptops. Projector shows Abhi's `mesh feed` full-screen (or the room page); Dev's and Tarush's screens on the side. Full run of show in `docs/DEMO.md`.
 
@@ -94,7 +84,7 @@ Three laptops. Projector shows Abhi's `mesh feed` full-screen (or the room page)
 7. (If time) Dev's agent `send_message`s Tarush's agent what it changed; it shows in Tarush's overlay with a reply box and — because he told Codex *"watch mesh for the next 10 minutes"* — his agent reports it (`wait_for_events`).
 8. Close: "One command per laptop, nothing to install. No cloud workspace, no shared vault, no new IDE. Your team's machines become your agent's tools."
 
-## 6. Decisions (don't re-open)
+## 5. Decisions (don't re-open)
 
 - **Daemon + dumb relay, not hosted server + sidecars.** Local MCP server per laptop; relay is fan-out only.
 - **Universal via MCP-client import, not per-integration code.** The daemon imports the owner's MCP servers and re-offers their tools with verbatim descriptions/schemas + owner notes. Teammates' tools are *data* from ten static tools, never first-class tools in the requester's client. Shell offers cover non-MCP and OAuth-only cases.

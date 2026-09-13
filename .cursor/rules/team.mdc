@@ -1,5 +1,5 @@
 ---
-description: Team roles and ownership rules for this repo
+description: How to work in this repo
 alwaysApply: true
 ---
-Read AGENTS.md at the repo root and follow it exactly. Identify which person you are working for (Dev, Tarush, or Abhi), open only that person's task file under docs/tasks/, and edit only the paths that task file owns.
+Read AGENTS.md at the repo root and follow it: contract-first (docs/CONTRACT.md), typecheck and suites green before pushing, small commits on main.

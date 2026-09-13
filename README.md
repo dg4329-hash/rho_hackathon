@@ -8,23 +8,6 @@ mesh overlay (a small always-on-top window popped out of the room page; system d
 and the output streams back to your agent. Credentials never leave the
 owner's machine. Agents can also message each other, and every terminal in the room sees what every agent is doing.
 
-## Assignments
-| person | role | task file |
-|---|---|---|
-| **Dev** | `packages/protocol`, `apps/daemon` (join, approvals, MCP import, local MCP server, installers) | [docs/tasks/DEV.md](docs/tasks/DEV.md) |
-| **Tarush** | `apps/relay`, deploy, real MCP servers on his laptop, `scripts/figma-export.sh` | [docs/tasks/TARUSH.md](docs/tasks/TARUSH.md) |
-| **Abhi** | `apps/feed`, `hooks/`, `docs/DEMO.md`, pitch | [docs/tasks/ABHI.md](docs/tasks/ABHI.md) |
-
-Agents: read `AGENTS.md` first. It tells you which files you may touch.
-
-**Read in this order:**
-1. `docs/PLAN.md` — pitch, architecture, build order, checkpoints, demo script
-2. `docs/CONTRACT.md` — the wire protocol, MCP tools, CLI, and `team.json`. Everyone codes against this.
-3. `docs/NEXT.md` — what is done, what is left, in priority order
-4. Your task file: `docs/tasks/DEV.md`, `docs/tasks/TARUSH.md`, `docs/tasks/ABHI.md`
-5. `docs/PLUGIN.md` — the Claude Code plugin (auto-installed by `mesh join`); `docs/OVERLAY-API.md` — overlay ↔ daemon contract (shipping tonight)
-6. `docs/RESEARCH.md` — competitors and why we're different (read before the pitch); `docs/UX-RESEARCH.md` — why approvals moved into the tool
-
 ## Layout
 ```
 apps/relay      WebSocket relay + web front door + installers + overlay — Tarush
@@ -36,11 +19,8 @@ plugin/         Claude Code plugin (MCP server, hooks, watcher); relay serves it
 docs/
 ```
 
-## Rules that keep three agents from colliding
-- Only edit your own `apps/<yours>` dir, `scripts/` (Tarush), and `docs/tasks/<YOU>.md`.
-- `packages/protocol` and `docs/CONTRACT.md` change only by editing CONTRACT.md **and telling the other two**.
-- Commit small, push often, `git pull --rebase` before push. Work on `main`.
-- Each step in PLAN.md has an acceptance test. Don't move on until it passes.
+## Working in this repo
+See `AGENTS.md`: contract-first, suites green before every push, small commits on `main`.
 
 ## Quick start for teammates (one command, no clone)
 Open the room link someone shared (`https://<relay>/r/<room>`) and run the command it shows, or:

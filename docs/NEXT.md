@@ -1,6 +1,5 @@
 # NEXT — from `main` to a winning demo
 
-Written 2026-09-12 (Sat, night) against `c5e4cdc` plus tonight's overlay / `wait_for_events` work. Priority order with rough hours; no dates (slot unknown). Per-person commands and configs: "Next (post-merge)" in `docs/tasks/{DEV,TARUSH,ABHI}.md`.
 
 ## Where we are
 

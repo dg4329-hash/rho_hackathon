@@ -159,6 +159,15 @@ export function buildMcpServer(core: DaemonCore): McpServer {
     return ok({ ok: true, to });
   }));
 
+  server.registerTool("leave_room", {
+    description: "Leave the mesh room: disconnect this machine from teammates and stop the mesh daemon. Only call this when the user explicitly asks to leave or disconnect. Rejoin later by running the join command again.",
+    inputSchema: { reason: z.string().max(200).optional().describe("shown to teammates in the feed") },
+  }, guard((raw) => {
+    const reason = (raw as { reason?: string }).reason;
+    core.leave(reason, 800); // give the MCP response time to flush before the process exits
+    return ok({ ok: true, left: core.config.room, note: "daemon stopping; run mesh join again to come back" });
+  }));
+
   server.registerTool("wait_for_events", {
     description: "Wait for the next teammate message or request to use this machine (long-poll, up to timeoutSeconds). Returns messages and pending requests as information; approvals are decided by the user in the mesh overlay or dialog, never by you. Loop on this when the user asks you to watch mesh.",
     inputSchema: { timeoutSeconds: z.number().int().min(1).max(120).optional().describe("how long to wait (default 60)") },
@@ -298,6 +307,12 @@ export function buildApp(core: DaemonCore): express.Express {
     if (!parsed.success) { res.status(400).json({ ok: false, error: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ") }); return; }
     core.postEvent(parsed.data.kind, parsed.data.summary, parsed.data.data);
     res.json({ ok: true });
+  });
+
+  app.post("/leave", (req: Request, res: Response) => {
+    const reason = typeof (req.body as { reason?: unknown })?.reason === "string" ? String((req.body as { reason: string }).reason).slice(0, 200) : undefined;
+    res.json({ ok: true, left: core.config.room });
+    core.leave(reason, 300);
   });
 
   app.post("/message", (req: Request, res: Response) => {

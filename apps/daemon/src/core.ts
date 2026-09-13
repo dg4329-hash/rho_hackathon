@@ -31,6 +31,8 @@ import { RelayClient, debug } from "./relay-client.js";
 import { CHUNK_CHARS, isCompound, matchShellOffer, resolveOfferCommand, runShell } from "./shell.js";
 
 export interface CoreOptions {
+  /** Called by leave(): the CLI stops everything and exits. */
+  onLeave?: (reason?: string) => void;
   config: TeamConfig;
   cwd: string;
   client: RelayClient;
@@ -447,6 +449,12 @@ export function createCore(opts: CoreOptions): DaemonCore & { client: RelayClien
         if (entry) out.push(entry);
       }
       return out.slice(-ACTIVITY_LIMIT);
+    },
+
+    leave(reason?: string, delayMs = 300) {
+      say(chalk.yellow(`leaving room ${config.room}${reason ? ` (${reason})` : ""}`));
+      client.send({ type: "event", kind: "status", summary: `left the room${reason ? `: ${reason}` : ""}` });
+      setTimeout(() => opts.onLeave?.(reason), delayMs);
     },
 
     relayStatus() {

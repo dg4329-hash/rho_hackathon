@@ -64,6 +64,8 @@ export interface DaemonCore {
   /** Messages addressed to me or 'all'. unreadOnly marks returned messages read. */
   inbox(opts: { unreadOnly: boolean; sinceMinutes: number }): InboxMessage[];
   relayStatus(): "connected" | "disconnected";
+  /** Leave the room: disconnect, forget the saved join so nothing auto-restarts, and exit the daemon (after `delayMs`). */
+  leave(reason?: string, delayMs?: number): void;
   /**
    * Incoming requests waiting for the owner's decision (the in-tool approval path). Long-polls up to
    * waitMs when empty. Calling it marks a watcher as attached, which routes new approvals here.

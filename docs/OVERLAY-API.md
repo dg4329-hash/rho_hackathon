@@ -23,11 +23,13 @@ pending queue (no modal OS dialog). If nobody answers within 120 s the daemon fa
 | GET | `/api/rooms/<room>?since=<n>` | `{ members, watchers, events, next }` (poll every 2 s) |
 
 ## Overlay UX requirements
-- Compact (~360×520), dark, readable at a glance. Sections: pending requests (top, with Approve / Deny buttons, the
-  `why`, the command or tool+args), messages (newest first, with a one-line reply box → POST /message), live feed (compact).
+- Compact (~360×520), matching the landing page's light/dark system theme. One scrollable panel shows requests first
+  (requester, full command or tool+args, `why`, Approve / Deny), then messages (newest first, with a one-line reply box
+  → POST /message), then room activity. A failed decision stays visible with a retryable error.
 - Never steals focus. New request/message: brief highlight + optional sound toggle (off by default). Title bar shows
   a count of pending items.
 - Connection state line: daemon (localhost:port) reachable? relay reachable? Show a one-line fix hint if not.
+  The footer's Settings disclosure holds the daemon port, room switch, room key, Leave, and owner-only End session.
 - Room page: button "Pop out overlay" → `documentPictureInPicture.requestWindow({ width: 360, height: 520 })` if
   available, else `window.open(url, 'mesh-overlay', 'popup,width=380,height=560')`. Remember the daemon port
-  (default 7337) in localStorage; allow changing it in the overlay footer.
+  (default 7337) in localStorage; allow changing it in the overlay footer's Settings disclosure.

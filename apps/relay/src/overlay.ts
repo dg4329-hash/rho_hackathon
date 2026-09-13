@@ -198,70 +198,29 @@ export const OVERLAY_JS: string = String.raw`(function (root) {
   function titleFor(room, count) { return (count ? "(" + count + ") " : "") + "mesh · " + room; }
 
   // ---------- UI ----------
-  var CSS = "" +
-    // liquid-glass tokens; light by default, dark via prefers-color-scheme, solid fallback without backdrop-filter
-    ":root{--fg:#1d1d1f;--fg2:rgba(29,29,31,.6);--line:rgba(0,0,0,.08);--glass:rgba(255,255,255,.55);--gborder:rgba(255,255,255,.35);--ghl:rgba(255,255,255,.4);--card:rgba(255,255,255,.5);--field:rgba(255,255,255,.55);--blue:#0a84ff;--red:rgba(255,69,58,.9);--green:#30d158;--bodybg:linear-gradient(160deg,#eef1f6,#e2e6ee);--scroll:rgba(60,60,67,.3);color-scheme:light dark}" +
-    "@media(prefers-color-scheme:dark){:root{--fg:#f5f5f7;--fg2:rgba(245,245,247,.6);--line:rgba(255,255,255,.08);--glass:rgba(28,28,30,.55);--gborder:rgba(255,255,255,.12);--ghl:rgba(255,255,255,.14);--card:rgba(255,255,255,.06);--field:rgba(255,255,255,.07);--bodybg:linear-gradient(160deg,#1c1c1e,#0d0d0f);--scroll:rgba(235,235,245,.3)}}" +
-    "@supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){:root{--glass:#f4f5f8;--card:#fff;--field:#fff}@media(prefers-color-scheme:dark){:root{--glass:#1e1e21;--card:#2a2a2e;--field:#2a2a2e}}}" +
-    "*{box-sizing:border-box}html,body{height:100%}[hidden]{display:none!important}" + // .keybox etc. set display:flex, which beats the hidden attribute
-
-    "html,body{background:transparent}body{margin:0;color:var(--fg);font:13px/1.45 -apple-system,BlinkMacSystemFont,'SF Pro Text','Segoe UI',system-ui,sans-serif;display:flex;flex-direction:column;gap:8px;padding:8px;overflow:hidden;-webkit-font-smoothing:antialiased}" +
-    "body.canvas{background:var(--bodybg)}" +
-    ".glass{background:var(--glass);-webkit-backdrop-filter:blur(24px) saturate(180%);backdrop-filter:blur(24px) saturate(180%);border:1px solid var(--gborder);border-radius:18px;box-shadow:inset 0 1px 0 var(--ghl),0 8px 30px rgba(0,0,0,.12)}" +
-    ".hd{display:flex;align-items:center;gap:8px;padding:8px 12px;flex:0 0 auto}" +
-    ".hd b{font-size:13px;font-weight:600}.hd .room{color:var(--fg2);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}" +
-    ".badge{display:inline-block;min-width:20px;text-align:center;padding:1px 7px;border-radius:999px;background:var(--blue);color:#fff;font-weight:600;font-size:11px;line-height:16px}" +
-    ".badge.zero{background:var(--field);color:var(--fg2);font-weight:500;border:1px solid var(--line)}" +
-    ".hd label{display:flex;align-items:center;gap:4px;color:var(--fg2);font-size:11px;cursor:pointer;user-select:none}.hd input[type=checkbox]{accent-color:var(--blue);margin:0}" +
-    ".main{flex:1 1 auto;overflow:auto;padding:4px 12px 12px;scrollbar-width:thin;scrollbar-color:var(--scroll) transparent}" +
-    ".main::-webkit-scrollbar{width:5px}.main::-webkit-scrollbar-thumb{background:var(--scroll);border-radius:3px}.main::-webkit-scrollbar-track{background:transparent}" +
-    "h2{font-size:11px;margin:12px 0 6px;color:var(--fg2);text-transform:uppercase;letter-spacing:.06em;font-weight:600;display:flex;align-items:center;gap:6px}h2:first-child{margin-top:8px}" +
-    ".empty{color:var(--fg2);font-size:11px;padding:2px 0 4px}" +
-    "@keyframes mo-in{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}" +
-    "@keyframes mo-pulse{0%,100%{box-shadow:inset 0 1px 0 var(--ghl),0 0 0 0 rgba(10,132,255,0)}50%{box-shadow:inset 0 1px 0 var(--ghl),0 0 0 3px rgba(10,132,255,.35)}}" +
-    ".req{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin:0 0 8px;box-shadow:inset 0 1px 0 var(--ghl)}" +
-    ".req.new{animation:mo-in 160ms ease-out,mo-pulse 1.2s ease-in-out 1}" +
-    ".req .who{font-weight:600}.req .who span{color:var(--fg2);font-weight:400}" +
-    ".req .why{margin:3px 0 6px}.req .why i{color:var(--fg2);font-style:normal}" +
-    ".req pre{margin:0 0 8px;background:var(--field);border:1px solid var(--line);border-radius:8px;padding:6px 8px;font:11.5px/1.45 ui-monospace,'SF Mono',Menlo,monospace;white-space:pre-wrap;word-break:break-word;max-height:150px;overflow:auto;scrollbar-width:thin}" +
-    ".req .acts{display:flex;gap:6px;align-items:center}" +
-    "button{border:0;border-radius:999px;padding:6px 14px;font-weight:600;font-size:12.5px;cursor:pointer;font-family:inherit;color:#fff;transition:opacity 160ms ease-out,transform 160ms ease-out}button:active{transform:scale(.97)}" +
-    "button.ok{background:var(--blue)}button.no{background:var(--red)}" +
-    "button.ghost{background:var(--field);color:var(--fg);border:1px solid var(--line);font-weight:500;padding:5px 11px;font-size:12px}" +
-    "button:disabled{opacity:.5;cursor:default}" +
-    ".req .st{color:var(--fg2);font-size:11px;margin-left:auto}" +
-    ".msg{border-bottom:1px solid var(--line);padding:6px 0}.msg:last-child{border-bottom:0}.msg.new{animation:mo-in 160ms ease-out}" +
-    ".msg .m{color:var(--fg2);font-size:11px}.msg .m b{color:var(--fg);font-weight:600}.msg .tx{white-space:pre-wrap;word-break:break-word}" +
-    ".reply{display:flex;gap:6px;margin:0 0 6px}.reply input{background:var(--field);color:var(--fg);border:1px solid var(--line);border-radius:999px;padding:6px 10px;font-size:12.5px;font-family:inherit;min-width:0;outline:0}" +
-    ".reply input:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(10,132,255,.2)}.reply .to{width:84px;flex:0 0 auto}.reply .tx{flex:1 1 auto}" +
-    ".feed{font:11px/1.5 ui-monospace,'SF Mono',Menlo,monospace}" +
-    ".feed div{white-space:pre-wrap;word-break:break-word;border-bottom:1px solid var(--line);padding:2px 0}.feed div:last-child{border-bottom:0}" +
-    ".feed .t{color:var(--fg2)}.feed .u{font-weight:600}.feed .rq{color:var(--fg)}.feed .ok{color:var(--green)}.feed .no{color:var(--red)}.feed .out{color:var(--fg2);padding-left:14px}" +
-    ".ft{flex:0 0 auto;padding:7px 12px;font-size:11px;color:var(--fg2)}" +
-    ".ft .st{display:flex;gap:10px;flex-wrap:wrap;align-items:center}.ft .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--fg2);margin-right:4px;vertical-align:middle;opacity:.6}" +
-    ".ft .on .dot{background:var(--green);opacity:1}.ft .off .dot{background:var(--red);opacity:1}" +
-    ".ft .hint{margin-top:4px;color:var(--fg2)}" +
-    ".ft input{background:var(--field);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:2px 6px;font-size:11px;width:62px;font-family:ui-monospace,'SF Mono',Menlo,monospace;outline:0}.ft input:focus{border-color:var(--blue)}" +
-    ".ft .port{margin-left:auto;display:flex;align-items:center;gap:4px}" +
-    // room key (docs/ROOM-KEYS.md): lock glyph when keyed, key box when the relay says 401
-    ".ft .lock{font-size:10.5px;opacity:.75;line-height:1}" +
-    ".banner{margin:0 0 8px;padding:10px 12px;border-radius:10px;background:rgba(10,132,255,.14);color:var(--fg);font-weight:600}.banner.ended{background:rgba(255,69,58,.16)}" +
-    ".ft .keybox{margin-top:5px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;color:var(--fg2)}" +
-    ".ft .keybox input{width:132px}" +
-    ".ft .keybox button{padding:3px 9px;font-size:11px}" +
-    ".icon{position:relative;width:22px;height:22px;border-radius:7px;background:var(--blue);color:#fff;font-weight:700;font-size:13px;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto}" +
-    ".wbadge{position:absolute;top:-6px;right:-7px;min-width:17px;height:17px;border-radius:999px;background:#ff453a;color:#fff;font:600 10.5px/17px -apple-system,BlinkMacSystemFont,'SF Pro Text',system-ui,sans-serif;text-align:center;padding:0 4px;display:none;box-shadow:0 1px 3px rgba(0,0,0,.25)}.wbadge.on{display:block}" +
-    ".chev{background:var(--field);color:var(--fg2);border:1px solid var(--line);border-radius:999px;width:24px;height:24px;padding:0;font-size:15px;line-height:1;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto}" +
-    ".widget{display:none;position:relative;width:56px;height:56px;border-radius:16px;cursor:pointer;align-items:center;justify-content:center;user-select:none;flex:0 0 auto}" +
-    ".widget .glyph{font-weight:700;font-size:24px;letter-spacing:-.02em;color:var(--fg);line-height:1}" +
-    ".widget.ring{box-shadow:inset 0 1px 0 var(--ghl),0 0 0 2.5px var(--blue),0 8px 30px rgba(0,0,0,.12)}" +
-    ".widget::after{content:'';position:absolute;inset:-1px;border-radius:inherit;pointer-events:none}" +
-    "@keyframes mo-glow{0%{box-shadow:0 0 0 0 rgba(10,132,255,.55)}100%{box-shadow:0 0 0 14px rgba(10,132,255,0)}}.widget.glow::after{animation:mo-glow 1s ease-out}" +
-    "body.collapsed{gap:0}body.collapsed .hd,body.collapsed .main,body.collapsed .ft{display:none}body.collapsed .widget{display:flex}" +
-    "a{color:var(--blue)}" +
-    // artifact chips (docs/FILES-API.md): name · size, links to the relay file URL
-    ".chip{display:inline-block;margin:2px 4px 0 0;padding:1px 8px;border-radius:999px;border:1px solid var(--line);background:var(--field);color:var(--blue);font:11px/1.5 -apple-system,BlinkMacSystemFont,'SF Pro Text','Segoe UI',system-ui,sans-serif;text-decoration:none;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle}" +
-    ".chip:hover{border-color:var(--blue)}.chip .sz{color:var(--fg2)}.chips{display:block;margin-top:2px}";
+  // Match the landing page's semantic palette. Inline CSS also works in Document PiP.
+  var CSS = [
+    ":root{--bg:#fff;--grouped:#f5f5f7;--surface:#fff;--surface2:#fbfbfd;--label:#1d1d1f;--muted:#6e6e73;--line:rgba(0,0,0,.08);--line2:rgba(0,0,0,.14);--fill:rgba(0,0,0,.04);--fill2:rgba(0,0,0,.07);--accent:#0071e3;--accent-text:#0066cc;--green:#1f9d3a;--red:#d70015;--shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px -8px rgba(0,0,0,.08);--font:-apple-system,BlinkMacSystemFont,'SF Pro Text','SF Pro Display',Inter,'Helvetica Neue',system-ui,sans-serif;--mono:ui-monospace,'SF Mono','JetBrains Mono',Menlo,Consolas,monospace;color-scheme:light dark}",
+    "@media(prefers-color-scheme:dark){:root{--bg:#000;--grouped:#0d0d0f;--surface:#161618;--surface2:#1c1c1e;--label:#f5f5f7;--muted:#a1a1a6;--line:rgba(255,255,255,.1);--line2:rgba(255,255,255,.18);--fill:rgba(255,255,255,.06);--fill2:rgba(255,255,255,.1);--accent:#0a84ff;--accent-text:#409cff;--green:#30d158;--red:#ff6961;--shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px -8px rgba(0,0,0,.6)}}",
+    "*,*::before,*::after{box-sizing:border-box}html,body{height:100%}[hidden]{display:none!important}",
+    "html,body{background:transparent}body{width:100%;min-width:0;margin:0;padding:9px;display:flex;flex-direction:column;gap:8px;overflow:hidden;color:var(--label);font:12.5px/1.45 var(--font);-webkit-font-smoothing:antialiased}body.canvas{background:var(--grouped)}.hd,.main,.ft{width:100%;min-width:0}",
+    ".glass{background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow)}",
+    "button,input,summary{font:inherit}button{min-height:32px;padding:5px 12px;border:1px solid transparent;border-radius:999px;background:var(--accent);color:#fff;font-weight:600;cursor:pointer;transition:background .15s,transform .15s}button:hover{background:color-mix(in srgb,var(--accent) 88%,#000)}button:active{transform:scale(.98)}button:disabled{opacity:.55;cursor:default;transform:none}button.ok{background:var(--accent)}button.no,button.ghost{background:var(--fill);border-color:var(--line);color:var(--label)}button.no:hover,button.ghost:hover{background:var(--fill2)}button.end{color:var(--red)}button.arm{border-color:var(--red)}",
+    ":focus-visible{outline:3px solid color-mix(in srgb,var(--accent) 55%,transparent);outline-offset:2px}input{min-width:0;padding:7px 9px;border:1px solid var(--line2);border-radius:10px;background:var(--surface);color:var(--label);outline:none}input:focus{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 16%,transparent)}input::placeholder{color:var(--muted)}",
+    ".hd{flex:0 0 auto;display:flex;align-items:center;gap:8px;min-height:49px;padding:8px 12px}.hd b{font-size:15px;letter-spacing:-.03em}.hd .room{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:11.5px}.hd label{display:flex;align-items:center;gap:4px;color:var(--muted);font-size:11px;white-space:nowrap;cursor:pointer}.hd input[type=checkbox]{accent-color:var(--accent);margin:0}",
+    ".icon{position:relative;display:inline-grid;place-items:center;flex:0 0 auto;width:26px;height:26px;border-radius:7px;background:var(--label);color:var(--bg)}.icon svg{width:16px;height:16px}.wbadge{position:absolute;top:-6px;right:-7px;display:none;min-width:17px;height:17px;padding:0 4px;border-radius:999px;background:var(--red);color:#fff;text-align:center;font:600 10px/17px var(--font)}.wbadge.on{display:block}.chev{display:grid;place-items:center;flex:0 0 auto;width:28px;height:28px;min-height:28px;padding:0;border-color:var(--line);background:var(--fill);color:var(--muted);font-size:15px}",
+    ".main{min-height:0;flex:1 1 auto;overflow:auto;padding:2px 13px 15px;scrollbar-width:thin;scrollbar-color:var(--line2) transparent}.main::-webkit-scrollbar{width:5px}.main::-webkit-scrollbar-thumb{border-radius:4px;background:var(--line2)}h2{display:flex;align-items:center;gap:7px;margin:17px 0 8px;font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--muted)}h2:first-of-type{margin-top:13px}.badge{display:inline-block;min-width:19px;padding:1px 6px;border-radius:999px;background:var(--accent);color:#fff;text-align:center;font-size:10px;line-height:16px;letter-spacing:0}.badge.zero{background:var(--fill);color:var(--muted)}.empty{padding:9px 0 11px;color:var(--muted);font-size:12px}",
+    ".banner{margin:12px 0 0;padding:10px 11px;border-radius:10px;background:color-mix(in srgb,var(--accent) 11%,var(--surface));font-weight:600}.banner.ended{background:color-mix(in srgb,var(--red) 12%,var(--surface))}@keyframes mo-in{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}@keyframes mo-pulse{50%{box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 25%,transparent)}}",
+    ".req{margin:0 0 9px;padding:11px;border:1px solid var(--line2);border-radius:14px;background:var(--surface2)}.req.new{animation:mo-in .16s ease-out,mo-pulse 1.2s ease-in-out 1}.req .who{font-size:13px;font-weight:700}.req .who span{display:block;margin-top:1px;color:var(--muted);font-size:11px;font-weight:400}.req .why{margin:9px 0;overflow-wrap:anywhere}.req .why i{color:var(--muted);font-style:normal;font-weight:600}.req .detail-label{margin:0 0 4px;color:var(--muted);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em}.req pre{max-height:180px;overflow:auto;margin:0 0 10px;padding:9px;border:1px solid var(--line);border-radius:10px;background:var(--grouped);font:11.5px/1.5 var(--mono);white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;scrollbar-width:thin}.req .acts{display:flex;align-items:center;gap:7px}.req .acts button{flex:1}.req .st{margin-left:4px;color:var(--muted);font-size:10.5px;white-space:nowrap}.req .decision-error{margin:8px 0 0;color:var(--red);font-size:11px}",
+    ".reply{display:flex;gap:6px;margin:0 0 7px}.reply .to{width:61px;flex:0 0 auto}.reply .tx{flex:1 1 auto}.reply button{flex:0 0 auto;min-width:47px;padding-inline:8px}.msg{padding:9px 1px;border-bottom:1px solid var(--line)}.msg:last-child{border-bottom:0}.msg.new{animation:mo-in .16s ease-out}.msg .m{color:var(--muted);font-size:10.5px}.msg .m b{color:var(--label);font-weight:700}.msg .tx{margin-top:3px;white-space:pre-wrap;overflow-wrap:anywhere}",
+    ".feed{font:10.5px/1.5 var(--mono)}.feed div{padding:5px 1px;border-bottom:1px solid var(--line);white-space:pre-wrap;overflow-wrap:anywhere}.feed div:last-child{border-bottom:0}.feed .t,.feed .out{color:var(--muted)}.feed .u{font-weight:700}.feed .rq{color:var(--label)}.feed .ok{color:var(--green)}.feed .no{color:var(--red)}.feed .out{padding-left:9px}",
+    ".ft{flex:0 0 auto;padding:9px 11px;color:var(--muted);font-size:10.5px}.ft .st{display:flex;align-items:center;gap:8px}.ft .st>span{white-space:nowrap}.ft .dot{display:inline-block;width:7px;height:7px;margin-right:4px;border-radius:50%;background:var(--muted);opacity:.6;vertical-align:middle}.ft .on .dot{background:var(--green);opacity:1}.ft .off .dot{background:var(--red);opacity:1}.ft .lock{margin-left:auto}.ft .hint{margin-top:7px;overflow-wrap:anywhere;color:var(--red)}",
+    ".settings{margin-top:7px;border-top:1px solid var(--line);padding-top:6px}.settings summary{width:max-content;cursor:pointer;color:var(--accent-text);font-weight:600;list-style:none}.settings summary::-webkit-details-marker{display:none}.settings summary::after{content:'  ▾';font-size:11px}.settings[open] summary::after{content:'  ▴'}.settings-body{display:grid;gap:9px;max-height:190px;overflow:auto;padding:9px 2px 2px}.settings-row{display:flex;align-items:center;gap:6px}.settings-row label{flex:0 0 62px}.settings-row input{flex:1;width:100%}.settings-row .port-input{max-width:83px}.settings-actions{display:flex;flex-wrap:wrap;gap:6px}.settings-actions button{min-height:29px;padding:4px 9px;font-size:11px}.keybox{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:8px}.keybox label{width:100%}.keybox input{flex:1}.keybox button{min-height:29px;padding:4px 9px;font-size:11px}",
+    ".widget{display:none;position:relative;flex:0 0 auto;align-items:center;justify-content:center;width:56px;height:56px;border-radius:16px;cursor:pointer;user-select:none}.widget .glyph{display:grid;place-items:center;width:34px;height:34px;border-radius:9px;background:var(--label);color:var(--bg)}.widget .glyph svg{width:21px;height:21px}.widget.ring{box-shadow:0 0 0 2.5px var(--accent),var(--shadow)}.widget::after{content:'';position:absolute;inset:-1px;border-radius:inherit;pointer-events:none}@keyframes mo-glow{from{box-shadow:0 0 0 0 color-mix(in srgb,var(--accent) 55%,transparent)}to{box-shadow:0 0 0 14px transparent}}.widget.glow::after{animation:mo-glow 1s ease-out}body.collapsed{gap:0}body.collapsed .hd,body.collapsed .main,body.collapsed .ft{display:none}body.collapsed .widget{display:flex}",
+    "a{color:var(--accent-text)}.chip{display:inline-block;max-width:100%;overflow:hidden;margin:3px 4px 0 0;padding:2px 8px;border:1px solid var(--line);border-radius:999px;background:var(--fill);color:var(--accent-text);font:10.5px/1.5 var(--font);text-decoration:none;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle}.chip:hover{background:var(--fill2)}.chip .sz{color:var(--muted)}.chips{display:block;margin-top:3px}",
+    "@media(max-width:340px){body{padding:6px;gap:6px}.hd,.ft{padding-inline:9px}.main{padding-inline:10px}.hd label{font-size:0}.hd input[type=checkbox]{width:14px;height:14px}.req .acts{flex-wrap:wrap}.req .st{margin-left:auto}}@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important;scroll-behavior:auto!important}}"
+  ].join("\n");
+  var LOGO = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="3.5" cy="4" r="2"/><circle cx="12.5" cy="4" r="2"/><circle cx="8" cy="12.5" r="2"/><path d="M5.5 4h5M4.6 5.8l2.3 5M11.4 5.8l-2.3 5"/></svg>';
 
   function esc(s) {
     return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; });
@@ -269,7 +228,7 @@ export const OVERLAY_JS: string = String.raw`(function (root) {
   function fmtT(ts) { try { var d = new Date(ts); return isNaN(d.getTime()) ? "" : d.toTimeString().slice(0, 8); } catch (e) { return ""; } }
   function pretty(args) {
     var s; try { s = JSON.stringify(args == null ? {} : args, null, 1); } catch (e) { s = String(args); }
-    return s.length > 800 ? s.slice(0, 800) + " …" : s;
+    return s;
   }
   /** "184 KB" style. */
   function fmtSize(n) {
@@ -338,10 +297,10 @@ export const OVERLAY_JS: string = String.raw`(function (root) {
     if (!key) key = String(ls.get(keyStorageKey(room)) || "").trim() || null;
     CURRENT_KEY = key;
     var state = {
-      port: port, pending: [], messages: [], since: null, seenMsg: {}, decided: {}, deciding: {},
+      port: port, pending: [], messages: [], since: null, seenMsg: {}, decided: {}, deciding: {}, decisionErrors: {},
       feed: [], feedNext: 0, feedSeen: {}, members: [],
       daemonOk: null, relayOk: null, daemonErr: "", sound: ls.get("mesh.overlay.sound") === "1",
-      stopped: false, gen: 0, key: key, keyNeeded: false,
+      stopped: false, gen: 0, key: key, keyNeeded: false, keyPrompted: false,
       collapsed: ls.get("mesh.overlay.collapsed") === "1", unread: 0, lastBadge: 0, prevSize: null
     };
     var liveKey = function () { return state.key; };
@@ -351,19 +310,22 @@ export const OVERLAY_JS: string = String.raw`(function (root) {
     var style = doc.createElement("style"); style.textContent = CSS; doc.head.appendChild(style);
     if (!win.meshResize) doc.body.classList.add("canvas"); // PiP / popup: paint a soft canvas; the tray window is transparent (vibrancy)
     doc.body.innerHTML = "" +
-      '<div class="hd glass"><span class="icon" id="mo-icon">m<span class="wbadge" id="mo-ibadge"></span></span><b>mesh</b><span class="room" title="' + esc(room) + '">' + esc(room) + '</span>' +
-      '<label title="beep on new request / message"><input type="checkbox" id="mo-sound"> sound</label>' +
+      '<div class="hd glass"><span class="icon" id="mo-icon">' + LOGO + '<span class="wbadge" id="mo-ibadge"></span></span><b>mesh</b><span class="room" title="' + esc(room) + '">' + esc(room) + '</span>' +
+      '<label title="beep on new request / message"><input type="checkbox" id="mo-sound" aria-label="sound on new activity"> sound</label>' +
       '<button class="chev" id="mo-collapse" title="minimize to a widget (Esc)" aria-label="minimize">\u2304</button></div>' +
       '<div class="main glass"><div id="mo-banner" class="banner" hidden></div>' +
-      '<h2>pending <span id="mo-pcount" class="badge zero">0</span></h2><div id="mo-pending"></div>' +
-      '<h2>messages</h2><div class="reply"><input class="to" id="mo-to" list="mo-members" placeholder="all" title="recipient (user or all)"><input class="tx" id="mo-text" placeholder="reply… (enter to send)" maxlength="2000"><button class="ghost" id="mo-send">send</button></div><datalist id="mo-members"></datalist><div id="mo-messages"></div>' +
-      '<h2>live</h2><div id="mo-feed" class="feed"></div>' +
+      '<h2>Needs approval <span id="mo-pcount" class="badge zero">0</span></h2><div id="mo-pending" aria-live="polite"></div>' +
+      '<h2>Messages</h2><div class="reply"><input class="to" id="mo-to" list="mo-members" placeholder="all" title="recipient (user or all)" aria-label="message recipient"><input class="tx" id="mo-text" placeholder="reply… (enter to send)" maxlength="2000" aria-label="message text"><button class="ghost" id="mo-send">Send</button></div><datalist id="mo-members"></datalist><div id="mo-messages"></div>' +
+      '<h2>Activity</h2><div id="mo-feed" class="feed"></div>' +
       '</div>' +
-      '<div class="ft glass"><div class="st"><span id="mo-daemon"><span class="dot"></span>daemon</span><span id="mo-relay"><span class="dot"></span>relay</span>' +
-      '<span class="port">port <input id="mo-port" type="number" min="1" max="65535" value="' + port + '"></span><span class="room"><input id="mo-room" placeholder="room" title="switch to another room" maxlength="42"><button class="ghost" id="mo-switch" title="join this room instead">go</button></span><button class="ghost leave" id="mo-leave" title="disconnect this machine from the room">leave</button><button class="ghost end" id="mo-end" title="end this session for everyone (you started it)" hidden>end session</button><span class="lock" id="mo-lock" title="this room is keyed" hidden>🔒</span></div>' +
-      '<div class="keybox" id="mo-keybox" hidden>this room needs its link<input id="mo-key" placeholder="key" title="paste the room key (the #k= part of the room link)" maxlength="64" autocomplete="off" spellcheck="false"><button class="ghost" id="mo-keygo">use key</button></div>' +
-      '<div id="mo-hint" class="hint" hidden></div></div>' +
-      '<div class="widget glass" id="mo-widget" role="button" tabindex="0" title="mesh — click to expand"><span class="glyph">m</span><span class="wbadge" id="mo-wbadge"></span></div>';
+      '<div class="ft glass"><div class="st" aria-live="polite"><span id="mo-daemon"><span class="dot"></span>daemon</span><span id="mo-relay"><span class="dot"></span>relay</span><span class="lock" id="mo-lock" title="this room is keyed" hidden>🔒</span></div>' +
+      '<div id="mo-hint" class="hint" role="status" hidden></div>' +
+      '<details class="settings" id="mo-settings"><summary>Settings</summary><div class="settings-body">' +
+      '<div class="settings-row"><label for="mo-port">Daemon port</label><input class="port-input" id="mo-port" type="number" min="1" max="65535" value="' + port + '"></div>' +
+      '<div class="settings-row"><label for="mo-room">Switch room</label><input id="mo-room" placeholder="room name or link" title="switch to another room" maxlength="2000"><button class="ghost" id="mo-switch" title="join this room instead">Go</button></div>' +
+      '<div class="keybox" id="mo-keybox" hidden><label for="mo-key">Room key needed — paste your room link or its #k= key</label><input id="mo-key" placeholder="room link or key" maxlength="2000" autocomplete="off" spellcheck="false"><button class="ghost" id="mo-keygo">Use key</button></div>' +
+      '<div class="settings-actions"><button class="ghost leave" id="mo-leave" title="disconnect this machine from the room">Leave room</button><button class="ghost end" id="mo-end" title="end this session for everyone (you started it)" hidden>End session for everyone</button></div></div></details></div>' +
+      '<div class="widget glass" id="mo-widget" role="button" tabindex="0" title="mesh — click to expand"><span class="glyph">' + LOGO + '</span><span class="wbadge" id="mo-wbadge"></span></div>';
     var $ = function (id) { return doc.getElementById(id); };
     $("mo-sound").checked = state.sound;
     $("mo-sound").onchange = function () { state.sound = !!this.checked; ls.set("mesh.overlay.sound", state.sound ? "1" : "0"); if (state.sound) beep(); };
@@ -372,8 +334,8 @@ export const OVERLAY_JS: string = String.raw`(function (root) {
       var b = this; b.disabled = true; b.textContent = "…";
       fetch("http://localhost:" + state.port + "/switch", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ room: v }) })
         .then(function (r) { return r.json(); })
-        .then(function (j) { if (j && j.ok) { location.href = location.pathname + "?room=" + encodeURIComponent(j.room) + "&port=" + state.port; } else { b.disabled = false; b.textContent = "go"; var h = $("mo-hint"); if (h) { h.hidden = false; h.textContent = (j && j.error) || "could not switch"; } } })
-        .catch(function () { b.disabled = false; b.textContent = "go"; });
+        .then(function (j) { if (j && j.ok) { location.href = location.pathname + "?room=" + encodeURIComponent(j.room) + "&port=" + state.port; } else { b.disabled = false; b.textContent = "Go"; var h = $("mo-hint"); if (h) { h.hidden = false; h.textContent = (j && j.error) || "could not switch"; } } })
+        .catch(function () { b.disabled = false; b.textContent = "Go"; });
     };
     $("mo-room").onkeydown = function (e) { if (e.key === "Enter") $("mo-switch").click(); };
     // approvals mode: read from the daemon, set on change (POST /approvals)
@@ -392,41 +354,44 @@ export const OVERLAY_JS: string = String.raw`(function (root) {
     var leaveArmed = false;
     $("mo-leave").onclick = function () {
       var b = this;
-      if (!leaveArmed) { leaveArmed = true; b.textContent = "confirm leave"; b.classList.add("arm"); setTimeout(function () { leaveArmed = false; b.textContent = "leave"; b.classList.remove("arm"); }, 4000); return; }
+      if (!leaveArmed) { leaveArmed = true; b.textContent = "Confirm leave"; b.classList.add("arm"); setTimeout(function () { leaveArmed = false; b.textContent = "Leave room"; b.classList.remove("arm"); }, 4000); return; }
       leaveArmed = false; b.disabled = true; b.textContent = "leaving…";
       fetch("http://localhost:" + state.port + "/leave", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ reason: "left from the overlay" }) })
         .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { return r.ok && j && j.ok; }); })
         .then(function (ok) { var h = $("mo-hint");
-          if (!ok) { b.disabled = false; b.textContent = "leave"; if (h) { h.hidden = false; h.textContent = "This mesh daemon is too old to leave from here. Run: node ~/.mesh/mesh.mjs stop (then rerun the join command to update)."; } return; }
+          if (!ok) { b.disabled = false; b.textContent = "Leave room"; if (h) { h.hidden = false; h.textContent = "This mesh daemon is too old to leave from here. Run: node ~/.mesh/mesh.mjs stop (then rerun the join command to update)."; } return; }
           b.textContent = "left"; finish("You left the room. To come back, run the join command from the room page."); })
-        .catch(function () { b.disabled = false; b.textContent = "leave"; });
+        .catch(function () { b.disabled = false; b.textContent = "Leave room"; });
     };
     // End session (owner only; the daemon's /health says owner: true): same two-step confirm as leave.
     var endArmed = false;
     $("mo-end").onclick = function () {
       var b = this;
-      if (!endArmed) { endArmed = true; b.textContent = "confirm: end for everyone"; b.classList.add("arm"); setTimeout(function () { if (!endArmed) return; endArmed = false; b.textContent = "end session"; b.classList.remove("arm"); }, 4000); return; }
+      if (!endArmed) { endArmed = true; b.textContent = "Confirm: end for everyone"; b.classList.add("arm"); setTimeout(function () { if (!endArmed) return; endArmed = false; b.textContent = "End session for everyone"; b.classList.remove("arm"); }, 4000); return; }
       endArmed = false; b.disabled = true; b.textContent = "ending…";
       fetch("http://localhost:" + state.port + "/end", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ reason: "ended from the overlay" }) })
         .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { return { ok: r.ok && j && j.ok, status: r.status, error: j && j.error }; }); })
         .then(function (res) {
           if (!res.ok) {
-            b.disabled = false; b.textContent = "end session"; b.classList.remove("arm");
+            b.disabled = false; b.textContent = "End session for everyone"; b.classList.remove("arm");
             var h = $("mo-hint"); if (h) { h.hidden = false; h.textContent = res.error || (res.status === 404 ? "This mesh daemon is too old to end the session from here." : "could not end the session"); }
             return;
           }
           b.textContent = "ended"; finish("You ended the session for everyone.", true);
         })
-        .catch(function () { b.disabled = false; b.textContent = "end session"; b.classList.remove("arm"); });
+        .catch(function () { b.disabled = false; b.textContent = "End session for everyone"; b.classList.remove("arm"); });
     };
     /** Stop every loop (daemon + relay) for good and leave one line in the footer. ended=true marks the relay side "session ended". */
     function finish(msg, ended) {
       state.stopped = true; state.gen++; state.endedMsg = msg; if (ended) state.ended = true;
+      state.pending = []; state.deciding = {}; state.decisionErrors = {}; lastPendingSig = null;
       wakeRelay();
-      renderStatus();
+      setTitle(); renderPending(); renderStatus();
     }
     function checkOwner() {
+      var gen = state.gen;
       net.health().then(function (h) {
+        if (gen !== state.gen || state.stopped) return;
         state.owner = !!(h && h.owner === true);
         var eb = $("mo-end"); if (eb) eb.hidden = !state.owner || state.stopped;
       }, function () {});
@@ -505,17 +470,19 @@ export const OVERLAY_JS: string = String.raw`(function (root) {
     function renderPending(newIds) {
       var el = $("mo-pending"); if (!el) return;
       var list = state.pending.filter(function (p) { return !state.decided[p.id]; });
-      var sig = list.map(function (p) { return p.id + ":" + (state.deciding[p.id] || ""); }).join("|");
+      var sig = list.map(function (p) { return p.id + ":" + (state.deciding[p.id] || "") + ":" + (state.decisionErrors[p.id] || ""); }).join("|");
       if (sig === lastPendingSig && !newIds) return; // unchanged: don't rebuild DOM under the user's cursor
       lastPendingSig = sig;
-      if (!list.length) { el.innerHTML = '<div class="empty">nothing waiting on you</div>'; return; }
+      if (!list.length) { el.innerHTML = '<div class="empty">No requests waiting for your approval.</div>'; return; }
       el.innerHTML = list.map(function (p) {
         var body = p.command ? "$ " + p.command : (p.tool || "tool") + " " + pretty(p.args);
         var st = state.deciding[p.id];
+        var error = state.decisionErrors[p.id];
         return '<div class="req" data-id="' + esc(p.id) + '"><div class="who">' + esc(p.from) + ' <span>wants to use your machine</span></div>' +
-          '<div class="why"><i>why:</i> ' + esc(p.why || "(no reason given)") + '</div><pre>' + esc(body) + '</pre>' +
+          '<div class="why"><i>Reason:</i> ' + esc(p.why || "No reason given") + '</div><div class="detail-label">' + (p.command ? "Command" : "Tool and arguments") + '</div><pre>' + esc(body) + '</pre>' +
           '<div class="acts"><button class="ok" data-d="approved"' + (st ? " disabled" : "") + '>Approve</button><button class="no" data-d="denied"' + (st ? " disabled" : "") + '>Deny</button>' +
-          '<span class="st">' + (st ? esc(st) : fmtT(p.createdAt)) + '</span></div></div>';
+          '<span class="st">' + (st ? esc(st) : fmtT(p.createdAt)) + '</span></div>' +
+          (error ? '<div class="decision-error" role="alert">' + esc(error) + '</div>' : "") + '</div>';
       }).join("");
       var nodes = el.querySelectorAll(".req");
       for (var i = 0; i < nodes.length; i++) {
@@ -550,19 +517,20 @@ export const OVERLAY_JS: string = String.raw`(function (root) {
       if (r) { r.className = state.ended ? "off" : state.relayOk === null ? "" : state.relayOk ? "on" : "off"; r.innerHTML = '<span class="dot"></span>relay' + (state.ended ? " · session ended" : state.relayOk === false ? (state.keyNeeded ? " locked" : " unreachable") : ""); }
       var lk = $("mo-lock"); if (lk) lk.hidden = !state.key;
       var kb = $("mo-keybox"); if (kb) kb.hidden = !state.keyNeeded;
+      var settings = $("mo-settings");
+      if (state.keyNeeded && !state.keyPrompted) { if (settings) settings.open = true; state.keyPrompted = true; }
       if (h) {
         var hint = "";
         if (state.endedMsg) {
           // left / ended: one clear banner on top, and hide controls that need a live daemon or room
           h.hidden = true;
           var bn = $("mo-banner"); if (bn) { bn.textContent = state.endedMsg; bn.className = "banner" + (state.ended ? " ended" : ""); bn.hidden = false; }
-          ["mo-end", "mo-leave", "mo-keybox", "mo-lock"].forEach(function (id) { var x = $(id); if (x) x.hidden = true; });
-          var rm = doc.querySelector(".ft .room"); if (rm) rm.hidden = true;
+          ["mo-end", "mo-leave", "mo-keybox", "mo-lock", "mo-settings"].forEach(function (id) { var x = $(id); if (x) x.hidden = true; });
           return;
         }
-        if (state.daemonOk === false) hint = "Can't reach the mesh daemon at http://localhost:" + state.port + ". Open this overlay from the same browser on the machine running mesh, check it is running (node ~/.mesh/mesh.mjs status), or fix the port →";
+        if (state.daemonOk === false) hint = "Daemon unavailable at localhost:" + state.port + ". Check mesh status or change the port in Settings.";
         else if (state.keyNeeded) hint = ""; // the key box below already says it
-        else if (state.relayOk === false) hint = "Relay " + relayOrigin + " not responding; approvals still work, the live feed is paused.";
+        else if (state.relayOk === false) hint = "Relay unavailable. Approvals still work; activity will resume when it reconnects.";
         h.textContent = hint ? "\u26a0 " + hint : ""; h.hidden = !hint;
       }
     }
@@ -576,6 +544,7 @@ export const OVERLAY_JS: string = String.raw`(function (root) {
       ls.set(keyStorageKey(room), k);
       if (net && net.setKey) net.setKey(liveKey);
       state.keyNeeded = false;
+      state.keyPrompted = false;
       var inp = $("mo-key"); if (inp) inp.value = "";
       renderStatus();
       wakeRelay();
@@ -598,11 +567,13 @@ export const OVERLAY_JS: string = String.raw`(function (root) {
       for (var j = 0; j < list.length; j++) { now[list[j].id] = 1; if (!prev[list[j].id] && !state.decided[list[j].id]) { fresh[list[j].id] = 1; any = true; } }
       for (var id in state.decided) if (!now[id]) delete state.decided[id];
       for (var id2 in state.deciding) if (!now[id2]) delete state.deciding[id2];
+      for (var id3 in state.decisionErrors) if (!now[id3]) delete state.decisionErrors[id3];
       state.pending = list;
       return any ? fresh : null;
     }
 
     function decide(id, decision) {
+      delete state.decisionErrors[id];
       state.deciding[id] = decision === "approved" ? "approving…" : "denying…";
       renderPending();
       net.decide(id, decision).then(function () {
@@ -611,6 +582,7 @@ export const OVERLAY_JS: string = String.raw`(function (root) {
         setTitle(); renderPending();
       }, function (e) {
         if (e && e.status === 404) { state.decided[id] = 1; state.pending = state.pending.filter(function (p) { return p.id !== id; }); }
+        else state.decisionErrors[id] = "Could not send your decision. Check the daemon connection and retry.";
         delete state.deciding[id];
         setTitle(); renderPending();
       });
@@ -623,7 +595,7 @@ export const OVERLAY_JS: string = String.raw`(function (root) {
       net.sendMessage(to, text).then(function () {
         $("mo-text").value = ""; $("mo-send").disabled = false;
       }, function (e) {
-        $("mo-send").disabled = false; $("mo-send").textContent = "failed"; setTimeout(function () { $("mo-send").textContent = "send"; }, 1500);
+        $("mo-send").disabled = false; $("mo-send").textContent = "Failed"; setTimeout(function () { $("mo-send").textContent = "Send"; }, 1500);
         state.daemonOk = false; renderStatus();
       });
     }
@@ -704,8 +676,11 @@ export const OVERLAY_JS: string = String.raw`(function (root) {
 
     function setPort(p) {
       state.port = p; ls.set("mesh.port", String(p));
+      var portInput = $("mo-port"); if (portInput) portInput.value = String(p);
       net = createNet({ daemonBase: "http://localhost:" + p, relayOrigin: relayOrigin, fetch: opts.fetch, key: liveKey });
       state.gen++; state.daemonOk = null; state.pending = []; state.decided = {}; state.deciding = {};
+      state.decisionErrors = {}; state.owner = false;
+      var endButton = $("mo-end"); if (endButton) endButton.hidden = true;
       state.messages = []; state.seenMsg = {}; state.since = null; state.unread = 0; lastPendingSig = null;
       setTitle(); renderPending(); renderMessages(); renderStatus();
       daemonLoop(state.gen);

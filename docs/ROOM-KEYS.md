@@ -43,6 +43,29 @@ Room page and overlay read it from `location.hash` and remember it in `localStor
   Steps as today, commands include `--key`. If no key in the fragment: only the "paste the room link" box.
 - Overlay: reads key; footer shows a lock icon when keyed.
 
+## Owner token (End session)
+- `ownerToken = base32lower(HMAC-SHA256(ROOM_SECRET, "owner:" + room))[:16]` — same alphabet/length as a key, never equal to it
+  (room names can't contain `:`). Never stored; verified timing-safe.
+- Only `POST /api/rooms` returns it: `201 { room, key, link, ownerToken, ownerLink }`, `ownerLink = <origin>/r/<room>#k=<key>&o=<ownerToken>`.
+  The shareable `link` never has `o=`; `GET /api/rooms/:room` never returns it.
+- Landing "Start a session" redirects the creator to the owner link. The room page stores `o=` in `localStorage` `mesh.owner.<room>`,
+  scrubs it from the address bar (`history.replaceState` → `#k=<key>`), adds `--owner <token>` to the creator's commands
+  (`/join.cmd` / `/join.command` accept `&owner=`; `install.sh` / `install.ps1` pass extra args through to `mesh join`),
+  and shows an owner-only, two-step "End session for everyone" button.
+- `POST /api/rooms/:room/end` — key via `?key=` / `x-mesh-key` (401 `{ error }`), owner token via `x-mesh-owner` or body `{ owner }`,
+  optional body `{ by?, reason? }` (`by` must match `^[a-z0-9_-]{1,32}$`, `reason` ≤ 140 chars). Bad room → 400.
+  Missing/wrong owner token → 403 `{ error: "only the person who started this session can end it" }` — required even with `MESH_REQUIRE_KEY=0`.
+  → 200 `{ ok: true, room, ended: true, closed }`; already ended → 200 `{ ok: true, room, ended: true, closed: 0, alreadyEnded: true }`.
+- On end the relay sends `{ type: "room_ended", room, by?, message, ts }` (`message` = `"<by or 'the host'> ended the session[: reason]"`)
+  to every socket, closes each with **4410** (reason = message), forgets the room's history and artifacts, and tombstones the name
+  for `MESH_ENDED_TTL_MS` (default 24 h).
+- Tombstoned room: WS connect (after the key check) → `error` frame + close 4410 `"this session was ended by its owner"`;
+  `GET /api/rooms/:room` and `/api/files/:room…` → 410 `{ error, ended: true }`; `POST /api/rooms` never reissues the name.
+  `GET /health` adds `endedRooms`.
+- A relay restart forgets tombstones (keys are stateless). Daemons forget their saved join on end, so nothing auto-reconnects;
+  an old link typed in by hand after a restart would open an empty room with that name.
+- Overlay: shows "end session" when the daemon's `/health` says `owner: true` (POST `localhost:<port>/end`); stops polling the relay on 410.
+
 ## Tests
 Relay: create → key derivation deterministic under a fixed ROOM_SECRET; ws without key rejected 4401; wrong key rejected; right key ok; /api/rooms 401 without key; files 401 without key; MESH_REQUIRE_KEY=0 disables.
 Daemon: link parsing (`#k=`), key persisted, connect with key OK, connect without key → exit 2 with the message, artifacts carry the header, switch_room with keyed link.

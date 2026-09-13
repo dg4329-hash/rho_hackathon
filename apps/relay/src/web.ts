@@ -3,8 +3,11 @@
  * who's connected + a live feed, and two JSON routes the pages poll. Same port as the WebSocket.
  *
  *   GET  /                 landing: "Start a session" + "Join a room"
- *   POST /api/rooms        → { room, key, link }  create a room (link = <origin>/r/<room>#k=<key>)
- *   GET  /api/rooms/:room  → { room, members, events }   live state (polled every 2 s); needs ?key= / x-mesh-key
+ *   POST /api/rooms        → 201 { room, key, link, ownerToken, ownerLink }  create a room (link = <origin>/r/<room>#k=<key>,
+ *                            ownerLink = link + "&o=<ownerToken>", creator only; the only place the owner token is ever returned)
+ *   GET  /api/rooms/:room  → { room, members, events }   live state (polled every 2 s); needs ?key= / x-mesh-key; 410 once ended
+ *   POST /api/rooms/:room/end  key (?key= / x-mesh-key) + owner token (x-mesh-owner or body { owner }), body { by?, reason? }
+ *                            → 200 { ok, room, ended: true, closed[, alreadyEnded] } | 400 | 401 | 403
  *   GET  /r/:room          room page (reads #k=<key> from the fragment; no key → "paste the room link" box)
  *
  * One-command join (no clone / pnpm / npm account), all served from the same port:
@@ -18,8 +21,11 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { randomBytes } from "node:crypto";
 import { handleOverlay } from "./overlay.js";
-import { KEY_RE, checkKey, keyFromRequest, roomKey, roomLink } from "./keys.js";
+import { KEY_RE, OWNER_RE, checkKey, keyFromRequest, ownerLink, ownerToken, roomKey, roomLink, verifyOwner } from "./keys.js";
 import { clientIp, type RateLimiter } from "./limits.js";
+
+export const ENDED_MESSAGE = "this session was ended by its owner";
+export const NOT_OWNER_MESSAGE = "only the person who started this session can end it";
 
 export interface WebRoomView {
   members: Array<{ user: string; role: string; offers: Array<{ name: string; kind?: string; permission?: string }> }>;
@@ -37,6 +43,10 @@ export interface WebDeps {
   getRoom(name: string): WebRoomView | undefined;
   /** "full" when the relay is at its room cap (MESH_MAX_ROOMS) even after sweeping idle rooms. */
   createRoom(name: string): "ok" | "full";
+  /** End a room for everyone (index.ts): room_ended + close 4410 to every socket, forget it, tombstone the name. */
+  endRoom(name: string, opts: { by?: string; reason?: string }): { closed: number; alreadyEnded: boolean };
+  /** True while the name is tombstoned (ended, MESH_ENDED_TTL_MS). */
+  isEnded(name: string): boolean;
   /** Per-IP limiter for POST /api/rooms (limits.ts); absent = unlimited. */
   roomLimiter?: RateLimiter;
   repoUrl: string;
@@ -51,6 +61,32 @@ function newRoomName(): string {
   // 32 random bits x 12 words: a key is derived from the name alone, so a reissued name would hand out a live room's key.
   return `${w}-${randomBytes(4).toString("hex")}`;
 }
+
+/**
+ * A fresh room name, or "" after `tries` collisions. `isTaken` must cover live rooms AND ended (tombstoned) ones:
+ * a key is derived from the name alone, so reissuing either would hand out a working key / owner token for it.
+ */
+export function allocateRoomName(isTaken: (name: string) => boolean, gen: () => string = newRoomName, tries = 50): string {
+  for (let i = 0; i < tries; i++) {
+    const candidate = gen();
+    if (!isTaken(candidate)) return candidate;
+  }
+  return "";
+}
+
+/** `by` for room_ended: a mesh handle or nothing. */
+export function cleanBy(raw: unknown): string | undefined {
+  const s = typeof raw === "string" ? raw.trim() : "";
+  return /^[a-z0-9_-]{1,32}$/.test(s) ? s : undefined;
+}
+
+/** `reason` for room_ended: one line, ≤ 140 chars, or nothing. */
+export function cleanReason(raw: unknown): string | undefined {
+  const s = typeof raw === "string" ? raw.replace(/[\u0000-\u001f\u007f]+/g, " ").trim().slice(0, 140).trim() : "";
+  return s || undefined;
+}
+
+const END_BODY_MAX = 4096;
 
 function json(res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}): void {
   res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store", "access-control-allow-origin": "*", ...headers });
@@ -117,24 +153,62 @@ export function handleWeb(req: IncomingMessage, res: ServerResponse, url: URL, d
       return true;
     }
     // Never fall through to a name that exists: its key would let this caller into someone else's room.
-    let name = "";
-    for (let i = 0; i < 50 && !name; i++) {
-      const candidate = newRoomName();
-      if (!deps.getRoom(candidate)) name = candidate;
-    }
+    // Ended names count as taken too: their tombstone must not be handed to a new creator.
+    const name = allocateRoomName((candidate) => !!deps.getRoom(candidate) || deps.isEnded(candidate));
     if (!name) { json(res, 503, { error: "could not allocate a room name, retry" }, { "retry-after": "1" }); return true; }
     if (deps.createRoom(name) === "full") { json(res, 503, { error: "relay is full, try again later" }, { "retry-after": "60" }); return true; }
     const key = roomKey(name);
-    json(res, 201, { room: name, key, link: roomLink(publicOrigin(req).http, name, key) });
+    const owner = ownerToken(name);
+    const origin = publicOrigin(req).http;
+    json(res, 201, { room: name, key, link: roomLink(origin, name, key), ownerToken: owner, ownerLink: ownerLink(origin, name, key, owner) });
     return true;
   }
 
-  let m = pathname.match(/^\/api\/rooms\/([^/]+)$/);
+  let m = pathname.match(/^\/api\/rooms\/([^/]+)\/end$/);
+  if (m && method === "OPTIONS") {
+    res.writeHead(204, { "access-control-allow-origin": "*", "access-control-allow-methods": "POST, OPTIONS", "access-control-allow-headers": "content-type, x-mesh-key, x-mesh-owner", "access-control-max-age": "600" });
+    res.end();
+    return true;
+  }
+  if (m && method === "POST") {
+    let name = "";
+    try { name = decodeURIComponent(m[1]!); } catch { name = ""; }
+    if (!ROOM_RE.test(name)) { json(res, 400, { error: "bad room name" }); req.resume(); return true; }
+    const gate = checkKey(name, keyFromRequest(req, url));
+    if (!gate.ok) { json(res, 401, { error: gate.error }); req.resume(); return true; }
+    const chunks: Buffer[] = [];
+    let size = 0;
+    let tooBig = false;
+    req.on("data", (c: Buffer) => { size += c.length; if (size > END_BODY_MAX) tooBig = true; else chunks.push(c); });
+    req.on("error", () => { if (!res.headersSent) json(res, 400, { error: "bad request body" }); });
+    req.on("end", () => {
+      if (tooBig) { json(res, 413, { error: "body too large" }); return; }
+      let body: { owner?: unknown; by?: unknown; reason?: unknown } = {};
+      const raw = Buffer.concat(chunks).toString("utf8").trim();
+      if (raw) {
+        try {
+          const parsed = JSON.parse(raw) as unknown;
+          if (parsed && typeof parsed === "object") body = parsed as typeof body;
+        } catch { /* ignore: the owner token may still come in the header */ }
+      }
+      const h = req.headers["x-mesh-owner"];
+      const headerOwner = ((Array.isArray(h) ? h[0] : h) ?? "").trim();
+      const owner = headerOwner || (typeof body.owner === "string" ? body.owner.trim() : "");
+      // Always required, even with MESH_REQUIRE_KEY=0: ending kicks everyone out.
+      if (!verifyOwner(name, owner)) { json(res, 403, { error: NOT_OWNER_MESSAGE }); return; }
+      const r = deps.endRoom(name, { by: cleanBy(body.by), reason: cleanReason(body.reason) });
+      json(res, 200, r.alreadyEnded ? { ok: true, room: name, ended: true, closed: 0, alreadyEnded: true } : { ok: true, room: name, ended: true, closed: r.closed });
+    });
+    return true;
+  }
+
+  m = pathname.match(/^\/api\/rooms\/([^/]+)$/);
   if (method === "GET" && m) {
     const name = decodeURIComponent(m[1]!);
     if (!ROOM_RE.test(name)) { json(res, 400, { error: "bad room name" }); return true; }
     const gate = checkKey(name, keyFromRequest(req, url));
     if (!gate.ok) { json(res, 401, { error: gate.error }); return true; }
+    if (deps.isEnded(name)) { json(res, 410, { error: ENDED_MESSAGE, ended: true }); return true; }
     const room = deps.getRoom(name);
     if (!room) { json(res, 200, { room: name, members: [], events: [], exists: false }); return true; }
     const since = Number(url.searchParams.get("since") ?? 0);
@@ -161,7 +235,10 @@ export function handleWeb(req: IncomingMessage, res: ServerResponse, url: URL, d
     const key = (url.searchParams.get("key") ?? "").trim().toLowerCase();
     // The key is baked into the downloaded command so a double-click join works without the room page.
     const keyArg = KEY_RE.test(key) ? ` --key ${key}` : "";
-    const asArg = keyArg + (as ? ` --as ${as}` : "");
+    // The creator's download also carries the owner token (so their daemon can end the session); anyone else's never does.
+    const owner = (url.searchParams.get("owner") ?? "").trim().toLowerCase();
+    const ownerArg = OWNER_RE.test(owner) ? ` --owner ${owner}` : "";
+    const asArg = keyArg + ownerArg + (as ? ` --as ${as}` : "");
     if (pathname === "/join.cmd") {
       const body = `@echo off\r\ntitle mesh: joining ${room}\r\necho Joining mesh room ${room}...\r\npowershell -NoProfile -ExecutionPolicy Bypass -Command "& ([scriptblock]::Create((irm -Headers @{'ngrok-skip-browser-warning'='1'} ${origin}/install.ps1))) ${room}${asArg}"\r\necho.\r\necho Done. Restart your coding agent session once. You can close this window.\r\npause\r\n`;
       res.writeHead(200, { "content-type": "application/octet-stream", "content-disposition": `attachment; filename="mesh-join-${room}.cmd"`, "cache-control": "no-store" });
@@ -325,6 +402,7 @@ function page(opts: { repoUrl: string; room?: string }): string {
   .card h2{font-size:15px;margin:0 0 10px;color:var(--dim);text-transform:uppercase;letter-spacing:.08em}
   button,.btn{background:#0a84ff;color:#fff;border:0;border-radius:999px;padding:12px 18px;font-weight:600;font-size:15px;cursor:pointer}
   button.ghost{background:rgba(255,255,255,.06);color:var(--fg);border:1px solid rgba(255,255,255,.14);border-radius:999px;font-weight:500;padding:6px 12px;font-size:13px}
+  button.ghost.danger{color:var(--err);border-color:rgba(255,123,114,.45)}button:disabled{opacity:.6;cursor:default}
   input{background:#0b0d10;color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:10px 12px;font-size:15px;width:220px}
   pre{background:rgba(10,11,14,.6);border:1px solid rgba(255,255,255,.1);border-radius:12px;padding:12px 14px;overflow-x:auto;font:13.5px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;position:relative;margin:8px 0}
   pre .copy{position:absolute;top:8px;right:8px}
@@ -364,6 +442,13 @@ function keyFromHash(h) {
   for (const part of s.split(/[&;]/)) { const m = /^k=(.+)$/.exec(part.trim()); if (m) return decodeURIComponent(m[1]).trim().toLowerCase(); }
   return "";
 }
+// Owner token (End session): "#k=…&o=<token>" on the creator's link only → the token, or "".
+const OWNER_RE = /^[a-z2-7]{16}$/;
+function ownerFromHash(h) {
+  const s = String(h || "").replace(/^[^#]*#/, "").replace(/^#/, "");
+  for (const part of s.split(/[&;]/)) { const m = /^o=(.+)$/.exec(part.trim()); if (m) { const v = decodeURIComponent(m[1]).trim().toLowerCase(); return OWNER_RE.test(v) ? v : ""; } }
+  return "";
+}
 /** Parse anything a teammate might paste: a full room link, a "room#k=key", or a bare key. */
 function parseRoomLink(raw) {
   const v = String(raw || "").trim();
@@ -373,10 +458,10 @@ function parseRoomLink(raw) {
   try { u = new URL(v, location.origin); } catch (e) { u = null; }
   if (u) {
     const m = /^\\/r\\/([a-z0-9][a-z0-9-]{1,40})$/.exec(u.pathname);
-    if (m) return { room: m[1], key: keyFromHash(u.hash), origin: u.origin };
+    if (m) return { room: m[1], key: keyFromHash(u.hash), owner: ownerFromHash(u.hash), origin: u.origin };
   }
   const m2 = /^([a-z0-9][a-z0-9-]{1,40})(?:#|\\?)?/.exec(v);
-  return m2 ? { room: m2[1], key: keyFromHash(v) } : null;
+  return m2 ? { room: m2[1], key: keyFromHash(v), owner: ownerFromHash(v) } : null;
 }
 const keyed = (u, key) => (key && String(u).indexOf("/api/files/") >= 0 ? u + (String(u).indexOf("?") >= 0 ? "&" : "?") + "key=" + encodeURIComponent(key) : u);
 function lsGet(k){ try { return localStorage.getItem(k) || ""; } catch (e) { return ""; } }
@@ -385,6 +470,15 @@ function lsSet(k, v){ try { localStorage.setItem(k, v); } catch (e) {} }
 const HASH_KEY = ROOM ? keyFromHash(location.hash) : "";
 if (ROOM && HASH_KEY) lsSet("mesh.key." + ROOM, HASH_KEY);
 const KEY = ROOM ? (HASH_KEY || lsGet("mesh.key." + ROOM)) : "";
+function lsDel(k){ try { localStorage.removeItem(k); } catch (e) {} }
+// The owner token rides in the creator's fragment once: remember it, then scrub it from the address bar so copying
+// the URL never leaks it. The displayed/copyable share link never contains it.
+const HASH_OWNER = ROOM ? ownerFromHash(location.hash) : "";
+if (ROOM && HASH_OWNER) lsSet("mesh.owner." + ROOM, HASH_OWNER);
+if (ROOM && /(^|[#&;])o=/.test(location.hash)) {
+  try { history.replaceState(null, "", location.pathname + location.search + (HASH_KEY ? "#k=" + HASH_KEY : "")); } catch (e) {}
+}
+const OWNER = ROOM ? (HASH_OWNER || lsGet("mesh.owner." + ROOM)) : "";
 
 if (!ROOM) {
   $("#app").innerHTML = \`
@@ -411,14 +505,15 @@ if (!ROOM) {
     </div>\`;
   $("#start").onclick = async () => {
     const r = await fetch("/api/rooms", { method: "POST" }).then((x) => x.json());
-    location.href = r.key ? "/r/" + r.room + "#k=" + r.key : "/r/" + r.room;
+    // The creator lands on the owner link (#k=<key>&o=<owner>); the room page stores the owner token and scrubs it.
+    location.href = "/r/" + r.room + (r.key ? "#k=" + r.key + (r.ownerToken ? "&o=" + r.ownerToken : "") : "");
   };
   const go = (raw) => {
     const p = parseRoomLink(raw);
     const err = $("#jerr");
     if (!p || !p.room) { err.textContent = "That doesn't look like a room link. It should end in /r/<room>#k=<key>."; return; }
     const base = p.origin && p.origin !== location.origin ? p.origin : "";
-    location.href = base + "/r/" + p.room + (p.key ? "#k=" + p.key : "");
+    location.href = base + "/r/" + p.room + (p.key ? "#k=" + p.key + (p.owner ? "&o=" + p.owner : "") : "");
   };
   $("#jgo").onclick = () => go($("#jlink").value);
   $("#jlink").onkeydown = (e) => { if (e.key === "Enter") go($("#jlink").value); };
@@ -440,6 +535,7 @@ if (!ROOM) {
     if (!p || !p.key) { $("#kerr").textContent = "No key found in that. The link ends in #k=<key>."; return; }
     if (p.room && p.room !== ROOM) { location.href = (p.origin && p.origin !== location.origin ? p.origin : "") + "/r/" + p.room + "#k=" + p.key; return; }
     lsSet("mesh.key." + ROOM, p.key);
+    if (p.owner) lsSet("mesh.owner." + ROOM, p.owner);
     location.hash = "k=" + p.key;
     location.reload();
   };
@@ -449,7 +545,39 @@ if (!ROOM) {
   const LINK = location.origin + "/r/" + ROOM + "#k=" + KEY;
   let me = localStorage.getItem("mesh.user") || "";
   let shell = localStorage.getItem("mesh.shell") || "bash";
-  const asFlag = () => " --key " + KEY + (me ? " --as " + me : "");
+  const asFlag = () => " --key " + KEY + (OWNER ? " --owner " + OWNER : "") + (me ? " --as " + me : "");
+  let ended = false;
+  // Polling got 410 or this page ended the session: stop for good and say so.
+  const showEnded = (msg) => {
+    ended = true;
+    lsDel("mesh.owner." + ROOM);
+    $("#app").innerHTML = '<div class="card"><h2>room ' + esc(ROOM) + '</h2><p><b>This session has ended</b></p>' +
+      '<p class="small dim">' + esc(msg || "The person who started it ended it for everyone. Everyone was disconnected and this link no longer works.") + '</p>' +
+      '<p><a class="btn" href="/" style="text-decoration:none;display:inline-block">Start a new session</a></p></div>';
+  };
+  let endArmed = false, endTimer = null;
+  const endSession = async (b) => {
+    const err = $("#enderr");
+    if (!endArmed) {
+      endArmed = true; b.textContent = "Click again to end it for everyone — all teammates are disconnected and this link stops working";
+      endTimer = setTimeout(() => { endArmed = false; b.textContent = "End session for everyone"; }, 6000);
+      return;
+    }
+    clearTimeout(endTimer); endArmed = false; b.disabled = true; b.textContent = "Ending…";
+    try {
+      const res = await fetch("/api/rooms/" + encodeURIComponent(ROOM) + "/end?key=" + encodeURIComponent(KEY), {
+        method: "POST", headers: { "content-type": "application/json", "x-mesh-owner": OWNER },
+        body: JSON.stringify({ by: localStorage.getItem("mesh.user") || undefined }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (res.ok) { showEnded("You ended the session. Everyone was disconnected and this link no longer works."); return; }
+      b.disabled = false; b.textContent = "End session for everyone";
+      if (err) err.textContent = (j && j.error) || ("could not end the session (HTTP " + res.status + ")");
+    } catch (e) {
+      b.disabled = false; b.textContent = "End session for everyone";
+      if (err) err.textContent = "could not reach the relay";
+    }
+  };
   const joinCmd = (sh) => sh === "ps"
     ? "& ([scriptblock]::Create((irm -Headers @{'ngrok-skip-browser-warning'='1'} " + location.origin + "/install.ps1))) " + ROOM + asFlag()
     : "curl -fsSL " + location.origin + "/install.sh | bash -s -- " + ROOM + asFlag();
@@ -464,7 +592,8 @@ if (!ROOM) {
       <div class="card"><div class="row"><h2 style="margin:0">room</h2><span class="pill">\${esc(ROOM)}</span>
         <span class="dim small">this link is the only password</span></div>
         <pre id="link">\${copyBtn(LINK)}\${esc(LINK)}</pre>
-        <p class="small dim">⚠ anyone with this link can join; don't post it publicly.</p></div>
+        <p class="small dim">⚠ anyone with this link can join; don't post it publicly.</p>
+        \${OWNER ? '<div class="row" style="margin-top:6px"><button class="ghost danger" id="endbtn">End session for everyone</button><span class="dim small">You started this session, so only you can end it.</span></div><p class="small" id="enderr" style="color:var(--err);min-height:0;margin:6px 0 0"></p>' : ""}</div>
 
       <div class="card"><h2>step 1 · pick a name</h2>
         <div class="row"><label>your name <input id="me" value="\${esc(me)}" placeholder="e.g. tarush" maxlength="32" autocomplete="off"></label>
@@ -490,7 +619,7 @@ if (!ROOM) {
         \${pre("codex mcp add mesh --url http://localhost:7337/mcp")}
         <p class="small">Cursor: create a file called <code>.cursor/mcp.json</code> in your project with this content, then restart Cursor:</p>
         \${pre('{ "mcpServers": { "mesh": { "url": "http://localhost:7337/mcp" } } }')}
-        <p class="small dim">Developers of mesh itself can run from the repo instead: <code>pnpm -F daemon start join \${esc(ROOM)} --key \${esc(KEY)} --as &lt;you&gt; --relay \${esc(RELAY)}</code> (see <a href="\${esc(REPO)}">the repo</a>).</p>
+        <p class="small dim">Developers of mesh itself can run from the repo instead: <code>pnpm -F daemon start join \${esc(ROOM)} --key \${esc(KEY)}\${OWNER ? " --owner " + esc(OWNER) : ""} --as &lt;you&gt; --relay \${esc(RELAY)}</code> (see <a href="\${esc(REPO)}">the repo</a>).</p>
         </details></div>
 
       <div class="card"><h2>step 4 · use it</h2>
@@ -506,12 +635,13 @@ if (!ROOM) {
         <span class="dim small">approvals + messages in a floating window (needs mesh running on this machine)</span></div>
         <div id="members" class="members"><span class="dim">nobody yet — do step 2 and your name will appear here</span></div></div>
       <div class="card"><h2>live</h2><div id="feed" class="feed"><span class="dim">requests, approvals and output will appear here</span></div></div>\`;
-    const dl = () => { const q = "?room=" + encodeURIComponent(ROOM) + "&key=" + encodeURIComponent(KEY) + (me ? "&as=" + encodeURIComponent(me) : ""); const a = $("#dl-cmd"), b = $("#dl-command"); if (a) a.href = "/join.cmd" + q; if (b) b.href = "/join.command" + q; };
+    const dl = () => { const q = "?room=" + encodeURIComponent(ROOM) + "&key=" + encodeURIComponent(KEY) + (OWNER ? "&owner=" + encodeURIComponent(OWNER) : "") + (me ?"&as=" + encodeURIComponent(me) : ""); const a = $("#dl-cmd"), b = $("#dl-command"); if (a) a.href = "/join.cmd" + q; if (b) b.href = "/join.command" + q; };
     dl();
     $("#me").oninput = (e) => { me = e.target.value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, ""); localStorage.setItem("mesh.user", me); dl(); renderJoin(); };
     document.querySelectorAll(".tabs button").forEach((b) => { b.onclick = () => { shell = b.dataset.sh; localStorage.setItem("mesh.shell", shell); renderJoin(); }; });
     renderJoin();
     const po = $("#popout"); if (po) po.onclick = popOutOverlay;
+    const eb = $("#endbtn"); if (eb) eb.onclick = () => endSession(eb);
   };
   render();
 
@@ -572,8 +702,11 @@ if (!ROOM) {
     return null;
   };
   async function poll() {
+    if (ended) return;
     try {
       const res = await fetch("/api/rooms/" + ROOM + "?since=" + next + "&key=" + encodeURIComponent(KEY));
+      if (ended) return;
+      if (res.status === 410) { showEnded(); return; } // ended by its owner: stop polling for good
       if (res.status === 401) { // the key stopped working (relay restarted without ROOM_SECRET, or a stale one was remembered)
         lsSet("mesh.key." + ROOM, "");
         $("#app").innerHTML = '<div class="card"><h2>room ' + esc(ROOM) + '</h2><p><b>This room needs its link.</b> The key this page had is no longer valid — ask for the room link again.</p><p class="small"><a href="/r/' + esc(ROOM) + '">reload and paste it</a></p></div>';
@@ -590,7 +723,7 @@ if (!ROOM) {
       const feed = $("#feed");
       if (feed && lines.length) { feed.innerHTML = lines.slice(-200).map((l) => "<div>" + l + "</div>").join(""); feed.scrollTop = feed.scrollHeight; }
     } catch {}
-    setTimeout(poll, 2000);
+    if (!ended) setTimeout(poll, 2000);
   }
   poll();
 }

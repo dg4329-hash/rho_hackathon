@@ -70,6 +70,8 @@ export interface FileStore {
   startSweeper(intervalMs?: number): void;
   stopSweeper(): void;
   clear(): void;
+  /** Drop every artifact of one room (End session). Returns how many were removed. */
+  purgeRoom(room: string): number;
 }
 
 export function createFileStore(opts: FileStoreOptions = {}): FileStore {
@@ -142,6 +144,13 @@ export function createFileStore(opts: FileStoreOptions = {}): FileStore {
     },
     stopSweeper() { if (timer) { clearInterval(timer); timer = undefined; } },
     clear() { entries.clear(); totalBytes = 0; },
+    purgeRoom(room) {
+      let n = 0;
+      for (const [id, e] of entries) {
+        if (e.room === room) { drop(id); n++; }
+      }
+      return n;
+    },
   };
   return store;
 }
@@ -224,6 +233,8 @@ export interface FilesDeps {
   store: FileStore;
   /** Absolute origin for artifact URLs; defaults to publicOrigin(req).http (web.ts). */
   origin?: (req: IncomingMessage) => string;
+  /** True when the room was ended by its owner (index.ts tombstones) → 410 after the key check. */
+  isEnded?: (room: string) => boolean;
 }
 
 /**
@@ -248,6 +259,7 @@ export function handleFiles(req: IncomingMessage, res: ServerResponse, url: URL,
   if (seg) {
     const gate = checkKey(decodeURIComponent(seg[1]!), keyFromRequest(req, url));
     if (!gate.ok) { json(res, 401, { error: gate.error }); req.resume(); return true; }
+    if (deps.isEnded?.(decodeURIComponent(seg[1]!))) { json(res, 410, { error: "this session was ended by its owner", ended: true }); req.resume(); return true; }
   }
 
   // POST /api/files/:room

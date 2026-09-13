@@ -13,19 +13,21 @@ Everything here is what the three apps agree on. `packages/protocol/src/index.ts
 
 Connect: `ws://<relay>/?room=<room>&user=<user>&role=daemon|feed`
 
-HTTP on the same port: `GET /health` → `{ rooms, connections }`; web front door `GET /` (start a session, plain-words explanation), `POST /api/rooms` → `{ room, key, link }` (429 rate limited, 503 relay full), `GET /api/rooms/:room?since=<n>` → `{ room, members, watchers, events, next }`, `GET /r/:room` (beginner room page: pick a name, one-liner with room filled in, downloadable installer, "restart once" step with a self-check, who's online, live feed, **Pop out overlay** button), `GET /overlay?room=&port=` (the overlay page, shipping tonight; `docs/OVERLAY-API.md`); installers `GET /install.sh`, `GET /install.ps1` (public origin baked in from `Host` / `X-Forwarded-Proto`; both stop a running daemon before re-joining, so re-running updates + restarts), `GET /join.cmd?room=&as=` / `GET /join.command?room=&as=` (double-clickable wrappers around the same installers), `GET /mesh.mjs` (daemon bundle), `GET /emit.js` (hook emitter), `GET /plugin.tgz` (Claude Code plugin, built from `plugin/` + `.claude-plugin/` at relay start). Rooms match `^[a-z0-9][a-z0-9-]{1,40}$`.
+HTTP on the same port: `GET /health` → `{ rooms, connections }`; web front door `GET /` (start a session, plain-words explanation), `POST /api/rooms` → `{ room, key, link, ownerToken, ownerLink }` (429 rate limited, 503 relay full; never reissues a live or ended name), `GET /api/rooms/:room?since=<n>` → `{ room, members, watchers, events, next }` (410 `{ error, ended: true }` once the session was ended), `POST /api/rooms/:room/end` (§1a), `GET /r/:room` (beginner room page: pick a name, one-liner with room filled in, downloadable installer, "restart once" step with a self-check, who's online, live feed, **Pop out overlay** button), `GET /overlay?room=&port=` (the overlay page, shipping tonight; `docs/OVERLAY-API.md`); installers `GET /install.sh`, `GET /install.ps1` (public origin baked in from `Host` / `X-Forwarded-Proto`; both stop a running daemon before re-joining, so re-running updates + restarts), `GET /join.cmd?room=&as=` / `GET /join.command?room=&as=` (double-clickable wrappers around the same installers), `GET /mesh.mjs` (daemon bundle), `GET /emit.js` (hook emitter), `GET /plugin.tgz` (Claude Code plugin, built from `plugin/` + `.claude-plugin/` at relay start). Rooms match `^[a-z0-9][a-z0-9-]{1,40}$`.
 
 The relay is dumb: it validates `room`/`user` on connect, stamps nothing, and forwards every frame it receives to **every other** connection in the room. It also keeps the last 200 frames per room and replays them to a new connection on join (as-is, in order). Two frames the relay itself emits:
 
 ```ts
 { type: 'presence', members: Array<{ user: string; role: 'daemon'|'feed'; offers: Offer[] }> }  // on any join/leave
 { type: 'error', message: string }                                                                 // bad query params
+{ type: 'room_ended', room?: string, by?: string, message: string, ts?: string }                   // owner ended the session (§1a); sent right before close 4410
 ```
 
 Relay refusals and close codes:
 - **1008** bad query params.
 - **4401** missing/wrong room key (`"room key required"` | `"wrong room key"`); the daemon stops retrying. See `docs/ROOM-KEYS.md`.
 - **4409** `user "<name>" is already connected to this room as a daemon; pick another name with --as` — sent at the first `hello` of a `role=daemon` connection with non-empty `offers` while another offering daemon of the same user is in the room. The relay pings the existing connection first and refuses only if it answers within `MESH_DUP_PROBE_MS` (default 3 s); otherwise it terminates the silent one, so a reconnect after a dropped network still gets in. No-offer daemon connections (`mesh ask` under the owner's name) are never refused. The daemon's normal backoff retries.
+- **4410** `<by | the host> ended the session` (after a `room_ended` frame) or `this session was ended by its owner` (connect to an ended room). The daemon stops for good: answers in-flight requests like `leave_room`, forgets the saved join, exits 0. §1a. An `error` frame saying the session was ended is treated the same way.
 - **1013** `rate limited, retry in <n>s` or `relay is full, try again later`.
 - **1009** frame larger than the max frame size.
 
@@ -58,6 +60,15 @@ interface Offer {
 ```
 
 Routing: everything is broadcast. Daemons ignore `request` frames whose `to` isn't them, that are older than 30 s, or whose `id` already has a `decision` in replayed history (replay guard). For a job it owns, a daemon only accepts `decision`/`output`/`result` frames whose `from` equals the request's `to`. `id` ties request → decision → output* → result.
+
+## 1a. Ending a session (owner only)
+
+- **Owner token** = `base32lower(HMAC-SHA256(ROOM_SECRET, "owner:" + room))[:16]`, never stored (like the room key, `docs/ROOM-KEYS.md`). Only `POST /api/rooms` returns it, as `ownerToken` and `ownerLink = <origin>/r/<room>#k=<key>&o=<ownerToken>`. The shareable `link` never contains it. Whoever opened the ownerLink (the creator) is the owner; a room joined without it has no owner on that machine.
+- The room page stores `o=` in `localStorage["mesh.owner.<room>"]`, strips it from the address bar, adds `--owner <token>` to the creator's own join commands (and `/join.cmd?…&owner=`), and shows **End session for everyone** (two-step confirm) only when it holds the token. The overlay shows **end session** only when the local daemon's `/health` says `owner: true`.
+- `POST /api/rooms/:room/end` — key via `?key=` / `x-mesh-key` (401 like every keyed route); owner token via `x-mesh-owner` header or body `{ owner }` (always required, even with `MESH_REQUIRE_KEY=0`; wrong/missing → 403 `{ error: "only the person who started this session can end it" }`); optional body `{ by, reason }`. → 200 `{ ok: true, room, ended: true, closed }` (`alreadyEnded: true` when repeated).
+- The relay then sends `room_ended` to every socket in the room, closes each with **4410**, deletes the room (history and its artifacts), and **tombstones** the name for `MESH_ENDED_TTL_MS` (default 24 h): connects get `error` + 4410, `GET /api/rooms/:room` gets 410, `POST /api/rooms` never hands the name out.
+- Tombstones live in relay memory: a relay restart (or a Railway Serverless sleep) forgets them (keys are stateless). Accepted: every daemon forgot its saved join when the room ended, so nothing reconnects on its own; only someone pasting the old link by hand after a restart would reopen an empty room of that name.
+- Daemon: `end_session` tool, `POST /end`, `mesh end`. Owner token from `--owner`, the link's `o=`, team.json `owner`, `MESH_OWNER`, or the saved join for the same room+relay; saved in `~/.mesh/config.json`.
 
 ## 2. `team.json` (optional; `./team.json` or `~/.mesh/team.json` or `--config`)
 
@@ -138,7 +149,7 @@ Registration is automatic on `mesh join` (best-effort, one line each, never bloc
 
 Every client caches its tool list: the agent session must be restarted once after registration (Claude Code: or `/reload-plugins`). Manual equivalent: `claude mcp add --transport http mesh http://localhost:7337/mcp`.
 
-Twelve tools (names, inputs, outputs). Descriptions matter: they are the only thing that teaches the model when to use us.
+Tools (names, inputs, outputs). Descriptions matter: they are the only thing that teaches the model when to use us.
 
 | tool | input | returns |
 |---|---|---|
@@ -155,6 +166,7 @@ Twelve tools (names, inputs, outputs). Descriptions matter: they are the only th
 | `approve_request` | `{ id: string, decision: 'approved' \| 'denied', reason?: string }` | `{ ok, id, decision }`; error text if the id is no longer pending. Declares `_meta["anthropic/requiresUserInteraction"]`, so in Claude Code the permission prompt for this call is the owner's yes/no; never allowlisted |
 | `switch_room` | `{ room \| room link, relay? }` | `{ ok, room, relay }` — leaves the current room and joins another with the same identity/offers; also `POST /switch` and the overlay's room box |
 | `leave_room` | `{ reason? }` | `{ ok, left }` — disconnects, forgets the saved join (no auto-restart), answers every request still waiting on this machine (`decision denied` / final `result` with `exitCode: null`, reason "<user> left the room"), kills running shell jobs, open approval dialogs and imported stdio MCP servers, stops the daemon; a `switch_room` during the leave is refused; also `POST /leave` and the overlay's Leave button; rejoin with the join command |
+| `end_session` | `{ reason? }` | `{ ok, ended, closed, note }` — owner only (§1a): the relay ends the room for everyone (their daemons answer in-flight requests, forget the saved join and exit; the link stops working), then this daemon leaves the same way. Non-owner → tool error `only the person who started this session can end it (this machine joined without the owner link)`. Also `POST /end` and the overlay's end button |
 | `wait_for_events` | `{ timeoutSeconds?: number (default 60) }` | `{ messages: InboxMessage[], pending: PendingRequest[] }` — long-poll; returns on the next teammate message or pending request, or empty arrays at timeout. Codex/Cursor's manual watcher path. Never decides anything |
 
 Tool description text (copy into the server verbatim):
@@ -168,6 +180,7 @@ Tool description text (copy into the server verbatim):
 - `inbox`: "Unread messages from teammates addressed to you or to everyone. Call it when you start a task or when team_activity shows a message. Marks them read."
 - `team_activity`: "What teammates and their agents have done recently: prompts, tool calls, files touched, requests. Check before editing files others may be working on."
 - `approve_request`: "Approve or deny a teammate's pending request to use this machine. Only call this after the user has explicitly said yes or no to the specific request shown in the mesh notification. Claude Code's own permission prompt for this call is where they say it: when a mesh notification reports a pending request, call this with decision 'approved' right away and let that prompt ask the user; if the user rejects the prompt, call again with decision 'denied' (and their reason, if any) so the teammate is told. Never decide on the user's behalf."
+- `end_session`: "End this mesh session for everyone: disconnects every teammate, stops their daemons and makes the room link stop working. Only the person who started the session can do this. Only call it when the user explicitly asks to end the session for everyone (to just leave yourself, use leave_room)."
 - `wait_for_events`: "Wait for the next teammate message or request to use this machine (long-poll, up to timeoutSeconds). Returns messages and pending requests as information; approvals are decided by the user in the mesh overlay or dialog, never by you. Loop on this when the user asks you to watch mesh."
 
 `send_message` rejects an offline `to` (other than `all`). The recipient daemon keeps the last 500 messages in memory, prints each live, fires a native notification (skipped for replayed history older than 5 min), wakes `/pending` long-pollers (the overlay shows it with a reply box; the Claude Code watcher prints `mesh: message from <who>: …` into the session; `wait_for_events` returns it), and serves them via `inbox` / `GET /inbox`.
@@ -201,19 +214,21 @@ When the Claude Code plugin is installed it ships these same five hooks (`plugin
 - `GET /touched?path=<relative path>&minutes=10` — `{ touched: [{ user, ts }] }`: other users who reported a `file_touched` for that path in the window (from the activity buffer; one entry per user, newest first; a path matches when equal or when one is a `/`-suffix of the other, since hooks and the git watch may root paths differently). 400 without `path`. Backs the `pre_edit` hook (§4).
 - `GET /pending?wait=25&messages=1&consumer=overlay&since=<ISO>` — `{ pending: PendingRequest[], messages: InboxMessage[] }`; long-poll ≤ 25 s, returns early on a new request or message. Any caller counts as an attached watcher for 60 s (§2 approval rule). `consumer=overlay` + `since` returns messages newer than `since` without marking them read; the default consumer (the Claude Code watcher) marks them read.
 - `POST /decide` — `{ id, decision: 'approved'|'denied', reason? }` → `{ ok, id, decision }`; 404 if the id is not pending. Same effect as `approve_request`.
+- `POST /end` — `{ reason? }` → 200 `{ ok, ended, closed }` | 403 `{ ok: false, error }` (no owner token, or the relay rejected it) | 502 `{ error }` (relay unreachable / other failure). Same as `end_session`.
 - `POST /message` — `{ to, text }` → `{ ok: true }`; same as `send_message` (the overlay's reply box).
 - CORS: allowed for the relay's origin only, so the overlay page can call the daemon. Bound to 127.0.0.1.
-- `GET /health` — `{ user, room, relay: 'connected'|'disconnected', members: n }`. Also how `mesh status` / `--background` decide the daemon is alive.
+- `GET /health` — `{ user, room, relay: 'connected'|'disconnected', members: n, owner: boolean }` (`owner`: this daemon holds the room's owner token, §1a). Also how `mesh status` / `--background` decide the daemon is alive.
 
 ## 6. CLI surface
 ```
 mesh join <room | https://<relay>/r/<room>> [--as <user>] [--relay wss://…] [--config /abs/team.json] [--port 7337]
-          [--background] [--no-register] [--cursor] [--codex] [--no-git-watch] [--no-codex-wake]
+          [--key K] [--owner T] [--background] [--no-register] [--cursor] [--codex] [--no-git-watch] [--no-codex-wake]
 mesh status                                     # background daemon: user@room, relay state, members, pid, log path (exit 1 if none)
 mesh stop                                       # SIGTERM the background daemon, remove ~/.mesh/daemon.json and ~/.mesh/config.json (nothing restarts it)
 mesh leave [--port 7337]                        # POST /leave to the running daemon (exits, drops out of presence), forget the saved join
+mesh end [--port 7337] [--reason …]             # owner only: end the session for everyone (POST /end; with no daemon running, calls the relay with the saved join), forget the saved join
 mesh log                                        # print ~/.mesh/daemon.log
-mesh watch [--port 7337]                        # one line per pending request / teammate message; run by the Claude Code plugin monitor
+mesh watch [--port 7337]                        # one line per pending request / teammate message; run by the Claude Code plugin monitor. Localhost only (never the relay); retries every 3 s while a join is saved, every 30 s after leave/stop/end
 mesh ask <who> "<command>" [--why "…"] [--room] [--as] [--relay] [--config] [--wait 120]   # human-driven request; exit = remote exit code, 2 = denied/timeout
 mesh init                                       # writes a starter team.json in the current directory
 mesh feed <room> [--relay …]                    # Abhi's app

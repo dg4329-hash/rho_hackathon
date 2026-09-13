@@ -16,7 +16,9 @@
  *   close    remove conn, broadcast `presence`.
  *   ping     every PING_MS; a socket that missed the previous pong is terminated.
  *   sweep    rooms with no connections for ROOM_IDLE_MS are forgotten (only history is lost; keys are derived, links keep working).
- *   GET /health  → { rooms, connections }   (same port as the WebSocket server)
+ *   end      POST /api/rooms/:room/end (key + owner token, web.ts) → `room_ended` frame to every conn, close 4410, room + artifacts
+ *            forgotten, name tombstoned for MESH_ENDED_TTL_MS: later connects get `error` + 4410, GET /api/rooms/:room 410.
+ *   GET /health  → { rooms, connections, endedRooms }   (same port as the WebSocket server)
  *   GET /, /r/:room, /api/rooms…, /install.sh, /install.ps1, /mesh.mjs, /emit.js  → web.ts (front door + one-command join)
  *   POST/GET /api/files/:room[/:id[/meta]]  → files.ts (in-memory artifacts, docs/FILES-API.md)
  *
@@ -73,7 +75,22 @@ interface Room {
 const rooms = new Map<string, Room>();
 const limits = rateLimitsFromEnv();
 
-/** Forget rooms nobody has been connected to for ROOM_IDLE_MS. Returns how many were dropped. */
+/** Private close code: the room was ended by its owner (End session). Final — clients must not reconnect. */
+const ROOM_ENDED_CLOSE_CODE = 4410;
+const ENDED_MESSAGE = "this session was ended by its owner";
+const ENDED_TTL_MS = envInt("MESH_ENDED_TTL_MS", 24 * 60 * 60 * 1000);
+const MAX_TOMBSTONES = 100_000;
+/** Ended room names → expiresAt. In memory only: a relay restart forgets them (docs/ROOM-KEYS.md "Owner token"). */
+const ended = new Map<string, number>();
+
+function isEnded(name: string, now = Date.now()): boolean {
+  const exp = ended.get(name);
+  if (exp === undefined) return false;
+  if (exp <= now) { ended.delete(name); return false; }
+  return true;
+}
+
+/** Forget rooms nobody has been connected to for ROOM_IDLE_MS (and expired tombstones). Returns how many rooms were dropped. */
 function sweepRooms(now = Date.now()): number {
   let dropped = 0;
   for (const [name, room] of rooms) {
@@ -82,7 +99,45 @@ function sweepRooms(now = Date.now()): number {
       dropped++;
     }
   }
+  for (const [name, exp] of ended) if (exp <= now) ended.delete(name);
   return dropped;
+}
+
+/** Truncate to a valid WebSocket close reason (≤ 123 UTF-8 bytes). */
+function closeReason(s: string): string {
+  let out = s.slice(0, 120);
+  while (Buffer.byteLength(out) > 123) out = out.slice(0, -1);
+  return out;
+}
+
+/**
+ * End a room for everyone: room_ended frame to every socket, close 4410, forget the room + its artifacts, tombstone the name.
+ * The caller has already checked the key and the owner token.
+ */
+function endRoom(name: string, opts: { by?: string; reason?: string } = {}): { closed: number; alreadyEnded: boolean } {
+  if (isEnded(name)) return { closed: 0, alreadyEnded: true };
+  const message = `${opts.by || "the host"} ended the session${opts.reason ? `: ${opts.reason}` : ""}`;
+  const frame = JSON.stringify({ type: "room_ended", room: name, ...(opts.by ? { by: opts.by } : {}), message, ts: new Date().toISOString() });
+  if (ended.size >= MAX_TOMBSTONES) ended.delete(ended.keys().next().value as string);
+  ended.set(name, Date.now() + ENDED_TTL_MS);
+  const room = rooms.get(name);
+  rooms.delete(name); // history gone; the conns' close handlers see a detached room and never recreate it
+  let closed = 0;
+  if (room) {
+    const reason = closeReason(message);
+    for (const c of [...room.conns]) {
+      try {
+        if (c.ws.readyState === WebSocket.OPEN) c.ws.send(frame);
+        c.ws.close(ROOM_ENDED_CLOSE_CODE, reason);
+      } catch {
+        try { c.ws.terminate(); } catch { /* ignore */ }
+      }
+      closed++;
+    }
+  }
+  const purged = files.purgeRoom(name);
+  console.log(`x room "${name}" ended${opts.by ? ` by ${opts.by}` : ""} — closed ${closed} conn(s), purged ${purged} file(s)`);
+  return { closed, alreadyEnded: false };
 }
 
 /** The room, created on first use; undefined when the relay is at MAX_ROOMS even after a sweep. */
@@ -217,6 +272,8 @@ const webDeps = {
     };
   },
   createRoom: (name: string): "ok" | "full" => (getOrCreateRoom(name) ? "ok" : "full"),
+  endRoom,
+  isEnded: (name: string) => isEnded(name),
   roomLimiter: limits.rooms,
   repoUrl: REPO_URL,
   assets: loadAssets(),
@@ -228,11 +285,11 @@ files.startSweeper();
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
-  if (handleFiles(req, res, url, { store: files })) return;
+  if (handleFiles(req, res, url, { store: files, isEnded: (name) => isEnded(name) })) return;
   if (handleWeb(req, res, url, webDeps)) return;
   if ((req.method === "GET" || req.method === "HEAD") && url.pathname === "/health") {
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(req.method === "HEAD" ? undefined : JSON.stringify(counts()));
+    res.end(req.method === "HEAD" ? undefined : JSON.stringify({ ...counts(), endedRooms: ended.size }));
     return;
   }
   res.writeHead(404, { "content-type": "text/plain" });
@@ -264,6 +321,11 @@ wss.on("connection", (ws, req) => {
   const gate = checkKey(roomName, url.searchParams.get("key"));
   if (!gate.ok) {
     refuse(ws, 4401, gate.error);
+    return;
+  }
+  // Ended by its owner (End session): final, the daemon stops for good instead of reconnecting.
+  if (isEnded(roomName)) {
+    refuse(ws, ROOM_ENDED_CLOSE_CODE, ENDED_MESSAGE);
     return;
   }
 

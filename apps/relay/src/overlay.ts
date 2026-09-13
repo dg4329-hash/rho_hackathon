@@ -358,7 +358,7 @@ export const OVERLAY_JS: string = String.raw`(function (root) {
       '<h2>live</h2><div id="mo-feed" class="feed"></div>' +
       '</div>' +
       '<div class="ft glass"><div class="st"><span id="mo-daemon"><span class="dot"></span>daemon</span><span id="mo-relay"><span class="dot"></span>relay</span>' +
-      '<span class="port">port <input id="mo-port" type="number" min="1" max="65535" value="' + port + '"></span><span class="room"><input id="mo-room" placeholder="room" title="switch to another room" maxlength="42"><button class="ghost" id="mo-switch" title="join this room instead">go</button></span><button class="ghost leave" id="mo-leave" title="disconnect this machine from the room">leave</button><span class="lock" id="mo-lock" title="this room is keyed" hidden>🔒</span></div>' +
+      '<span class="port">port <input id="mo-port" type="number" min="1" max="65535" value="' + port + '"></span><span class="room"><input id="mo-room" placeholder="room" title="switch to another room" maxlength="42"><button class="ghost" id="mo-switch" title="join this room instead">go</button></span><button class="ghost leave" id="mo-leave" title="disconnect this machine from the room">leave</button><button class="ghost end" id="mo-end" title="end this session for everyone (you started it)" hidden>end session</button><span class="lock" id="mo-lock" title="this room is keyed" hidden>🔒</span></div>' +
       '<div class="keybox" id="mo-keybox" hidden>this room needs its link<input id="mo-key" placeholder="key" title="paste the room key (the #k= part of the room link)" maxlength="64" autocomplete="off" spellcheck="false"><button class="ghost" id="mo-keygo">use key</button></div>' +
       '<div id="mo-hint" class="hint" hidden></div></div>' +
       '<div class="widget glass" id="mo-widget" role="button" tabindex="0" title="mesh — click to expand"><span class="glyph">m</span><span class="wbadge" id="mo-wbadge"></span></div>';
@@ -396,9 +396,39 @@ export const OVERLAY_JS: string = String.raw`(function (root) {
         .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { return r.ok && j && j.ok; }); })
         .then(function (ok) { var h = $("mo-hint");
           if (!ok) { b.disabled = false; b.textContent = "leave"; if (h) { h.hidden = false; h.textContent = "This mesh daemon is too old to leave from here. Run: node ~/.mesh/mesh.mjs stop (then rerun the join command to update)."; } return; }
-          state.stopped = true; b.textContent = "left"; if (h) { h.hidden = false; h.textContent = "You left the room. To come back, run the join command from the room page."; } })
+          b.textContent = "left"; finish("You left the room. To come back, run the join command from the room page."); })
         .catch(function () { b.disabled = false; b.textContent = "leave"; });
     };
+    // End session (owner only; the daemon's /health says owner: true): same two-step confirm as leave.
+    var endArmed = false;
+    $("mo-end").onclick = function () {
+      var b = this;
+      if (!endArmed) { endArmed = true; b.textContent = "confirm: end for everyone"; b.classList.add("arm"); setTimeout(function () { if (!endArmed) return; endArmed = false; b.textContent = "end session"; b.classList.remove("arm"); }, 4000); return; }
+      endArmed = false; b.disabled = true; b.textContent = "ending…";
+      fetch("http://localhost:" + state.port + "/end", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ reason: "ended from the overlay" }) })
+        .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { return { ok: r.ok && j && j.ok, status: r.status, error: j && j.error }; }); })
+        .then(function (res) {
+          if (!res.ok) {
+            b.disabled = false; b.textContent = "end session"; b.classList.remove("arm");
+            var h = $("mo-hint"); if (h) { h.hidden = false; h.textContent = res.error || (res.status === 404 ? "This mesh daemon is too old to end the session from here." : "could not end the session"); }
+            return;
+          }
+          b.textContent = "ended"; finish("You ended the session for everyone.", true);
+        })
+        .catch(function () { b.disabled = false; b.textContent = "end session"; b.classList.remove("arm"); });
+    };
+    /** Stop every loop (daemon + relay) for good and leave one line in the footer. ended=true marks the relay side "session ended". */
+    function finish(msg, ended) {
+      state.stopped = true; state.gen++; state.endedMsg = msg; if (ended) state.ended = true;
+      wakeRelay();
+      renderStatus();
+    }
+    function checkOwner() {
+      net.health().then(function (h) {
+        state.owner = !!(h && h.owner === true);
+        var eb = $("mo-end"); if (eb) eb.hidden = !state.owner || state.stopped;
+      }, function () {});
+    }
     $("mo-keygo").onclick = function () { applyKey($("mo-key").value); };
     $("mo-key").onkeydown = function (e) { if (e.key === "Enter") { e.preventDefault(); applyKey(this.value); } };
     $("mo-port").onchange = function () { var p = Number(this.value); if (Number.isInteger(p) && p > 0 && p < 65536) setPort(p); else this.value = state.port; };
@@ -515,11 +545,12 @@ export const OVERLAY_JS: string = String.raw`(function (root) {
     function renderStatus() {
       var d = $("mo-daemon"), r = $("mo-relay"), h = $("mo-hint");
       if (d) { d.className = state.daemonOk === null ? "" : state.daemonOk ? "on" : "off"; d.innerHTML = '<span class="dot"></span>daemon localhost:' + state.port + (state.daemonOk === false ? " unreachable" : ""); }
-      if (r) { r.className = state.relayOk === null ? "" : state.relayOk ? "on" : "off"; r.innerHTML = '<span class="dot"></span>relay' + (state.relayOk === false ? (state.keyNeeded ? " locked" : " unreachable") : ""); }
+      if (r) { r.className = state.ended ? "off" : state.relayOk === null ? "" : state.relayOk ? "on" : "off"; r.innerHTML = '<span class="dot"></span>relay' + (state.ended ? " · session ended" : state.relayOk === false ? (state.keyNeeded ? " locked" : " unreachable") : ""); }
       var lk = $("mo-lock"); if (lk) lk.hidden = !state.key;
       var kb = $("mo-keybox"); if (kb) kb.hidden = !state.keyNeeded;
       if (h) {
         var hint = "";
+        if (state.endedMsg) { h.textContent = state.endedMsg; h.hidden = false; var eb = $("mo-end"); if (eb && !state.ended) eb.hidden = true; return; }
         if (state.daemonOk === false) hint = "Can't reach the mesh daemon at http://localhost:" + state.port + ". Open this overlay from the same browser on the machine running mesh, check it is running (node ~/.mesh/mesh.mjs status), or fix the port →";
         else if (state.keyNeeded) hint = ""; // the key box below already says it
         else if (state.relayOk === false) hint = "Relay " + relayOrigin + " not responding; approvals still work, the live feed is paused.";
@@ -608,7 +639,7 @@ export const OVERLAY_JS: string = String.raw`(function (root) {
         var inbox = await net.inbox();
         if (gen !== state.gen || state.stopped) return;
         absorbMessages((inbox && inbox.messages) || []); renderMessages(null);
-        state.daemonOk = true; renderStatus();
+        state.daemonOk = true; renderStatus(); checkOwner();
       } catch (e) { state.daemonOk = false; renderStatus(); }
       while (!state.stopped && gen === state.gen) {
         var t0 = Date.now();
@@ -616,7 +647,7 @@ export const OVERLAY_JS: string = String.raw`(function (root) {
           var r = await net.pollOnce(state.since);
           if (gen !== state.gen || state.stopped) return;
           backoff = 0;
-          if (state.daemonOk !== true) { state.daemonOk = true; renderStatus(); }
+          if (state.daemonOk !== true) { state.daemonOk = true; renderStatus(); checkOwner(); }
           var freshP = absorbPending(r.pending);
           var freshM = absorbMessages(r.messages);
           if (freshM && state.collapsed) state.unread += Object.keys(freshM).length;
@@ -637,6 +668,7 @@ export const OVERLAY_JS: string = String.raw`(function (root) {
       while (!state.stopped) {
         try {
           var r = await net.roomFeed(room, state.feedNext);
+          if (state.stopped) break;
           state.relayOk = true; state.keyNeeded = false; state.feedNext = r.next || 0;
           state.members = (r.members || []).map(function (m) { return m.user; });
           var dl = $("mo-members"); if (dl) dl.innerHTML = ["all"].concat(state.members).map(function (u) { return '<option value="' + esc(u) + '">'; }).join("");
@@ -648,11 +680,15 @@ export const OVERLAY_JS: string = String.raw`(function (root) {
           if (state.feed.length > 300) state.feed.splice(0, state.feed.length - 300);
           if (changed) { renderFeed(); var el = $("mo-feed"); if (el) el.scrollTop = el.scrollHeight; }
         } catch (e) {
+          if (state.stopped) break;
           state.relayOk = false;
+          // 410: the owner ended this session — stop polling the relay for good (no endless loop against it).
+          if (e && e.status === 410) { finish("This session has ended." + (e.body && e.body.error ? " (" + e.body.error + ")" : ""), true); break; }
           // 401: this room is keyed and we have no key (or the wrong one) — ask for the link.
           if (e && e.status === 401) state.keyNeeded = true;
         }
         renderStatus();
+        if (state.stopped) break;
         await relaySleep(RELAY_POLL_MS);
       }
     }

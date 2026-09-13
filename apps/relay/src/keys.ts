@@ -95,3 +95,29 @@ export function checkKey(room: string, key: string | null | undefined, env: Node
 export function roomLink(origin: string, room: string, key: string): string {
   return `${origin.replace(/\/+$/, "")}/r/${encodeURIComponent(room)}#k=${key}`;
 }
+
+// ---------- owner token (End session) ----------
+// ownerToken = base32lower(HMAC-SHA256(ROOM_SECRET, "owner:" + room))[:16]. Room names can't contain ':' so it never
+// collides with a room key. Only POST /api/rooms hands it out (in the creator's link fragment, `&o=`); never stored.
+export const OWNER_RE = /^[a-z2-7]{16}$/;
+
+/** The owner token for a room: whoever holds it may end the session for everyone. */
+export function ownerToken(room: string): string {
+  return base32lower(createHmac("sha256", roomSecret()).update(`owner:${room}`, "utf8").digest()).slice(0, KEY_LEN);
+}
+
+/** Timing-safe compare against the room's owner token. Always required (MESH_REQUIRE_KEY=0 does not waive it). */
+export function verifyOwner(room: string, token: string | null | undefined): boolean {
+  const expected = Buffer.from(ownerToken(room), "utf8");
+  const got = Buffer.from(String(token ?? "").trim(), "utf8");
+  if (got.length !== expected.length) {
+    timingSafeEqual(expected, expected); // constant-ish work for a wrong-length guess
+    return false;
+  }
+  return timingSafeEqual(expected, got);
+}
+
+/** The creator-only link: the share link plus `&o=<ownerToken>` in the fragment. */
+export function ownerLink(origin: string, room: string, key: string, owner: string): string {
+  return `${roomLink(origin, room, key)}&o=${owner}`;
+}

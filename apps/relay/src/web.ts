@@ -19,6 +19,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { randomBytes } from "node:crypto";
 import { handleOverlay } from "./overlay.js";
 import { KEY_RE, checkKey, keyFromRequest, roomKey, roomLink } from "./keys.js";
+import { clientIp, type RateLimiter } from "./limits.js";
 
 export interface WebRoomView {
   members: Array<{ user: string; role: string; offers: Array<{ name: string; kind?: string; permission?: string }> }>;
@@ -34,7 +35,10 @@ export interface WebAssets {
 
 export interface WebDeps {
   getRoom(name: string): WebRoomView | undefined;
-  createRoom(name: string): void;
+  /** "full" when the relay is at its room cap (MESH_MAX_ROOMS) even after sweeping idle rooms. */
+  createRoom(name: string): "ok" | "full";
+  /** Per-IP limiter for POST /api/rooms (limits.ts); absent = unlimited. */
+  roomLimiter?: RateLimiter;
   repoUrl: string;
   assets: WebAssets;
 }
@@ -44,11 +48,12 @@ const WORDS = ["otter", "maple", "comet", "ember", "delta", "pixel", "quartz", "
 
 function newRoomName(): string {
   const w = WORDS[randomBytes(1)[0]! % WORDS.length];
-  return `${w}-${randomBytes(2).toString("hex")}`;
+  // 32 random bits x 12 words: a key is derived from the name alone, so a reissued name would hand out a live room's key.
+  return `${w}-${randomBytes(4).toString("hex")}`;
 }
 
-function json(res: ServerResponse, status: number, body: unknown): void {
-  res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store", "access-control-allow-origin": "*" });
+function json(res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}): void {
+  res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store", "access-control-allow-origin": "*", ...headers });
   res.end(JSON.stringify(body));
 }
 
@@ -106,9 +111,19 @@ export function handleWeb(req: IncomingMessage, res: ServerResponse, url: URL, d
   if (handleOverlay(req, res, url)) return true; // GET /overlay?room=&port=  +  GET /overlay.js  (overlay.ts)
 
   if (method === "POST" && pathname === "/api/rooms") {
-    let name = newRoomName();
-    for (let i = 0; i < 5 && deps.getRoom(name); i++) name = newRoomName();
-    deps.createRoom(name);
+    const take = deps.roomLimiter?.take(clientIp(req));
+    if (take && !take.ok) {
+      json(res, 429, { error: `rate limited, retry in ${take.retryAfterSec}s` }, { "retry-after": String(take.retryAfterSec) });
+      return true;
+    }
+    // Never fall through to a name that exists: its key would let this caller into someone else's room.
+    let name = "";
+    for (let i = 0; i < 50 && !name; i++) {
+      const candidate = newRoomName();
+      if (!deps.getRoom(candidate)) name = candidate;
+    }
+    if (!name) { json(res, 503, { error: "could not allocate a room name, retry" }, { "retry-after": "1" }); return true; }
+    if (deps.createRoom(name) === "full") { json(res, 503, { error: "relay is full, try again later" }, { "retry-after": "60" }); return true; }
     const key = roomKey(name);
     json(res, 201, { room: name, key, link: roomLink(publicOrigin(req).http, name, key) });
     return true;

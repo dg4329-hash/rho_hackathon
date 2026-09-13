@@ -4,12 +4,18 @@
  *
  * Behaviour (all of it):
  *   connect  ws://host/?room=<room>&user=<user>&role=daemon|feed&key=<roomKey>
- *            → bad/missing params: `error` frame + close; missing/wrong key: `error` frame + close 4401 (docs/ROOM-KEYS.md)
+ *            → bad/missing params: `error` frame + close 1008; missing/wrong key: `error` frame + close 4401 (docs/ROOM-KEYS.md)
+ *            → per-IP connect rate limit or room cap reached: `error` frame + close 1013
+ *            → first hello from a role=daemon conn WITH offers while another offering daemon of the same user is in the room:
+ *              the existing conn is pinged; if it answers within DUP_PROBE_MS the newcomer gets `error` + close 4409, otherwise
+ *              the silent one is terminated and the newcomer proceeds (a reconnect after a dropped network must still get in).
+ *              Frames sent meanwhile are buffered. No-offer daemons (`mesh ask` under the owner's own name) are never refused.
  *   hello    cache offers; on the FIRST hello replay the room's last HISTORY_LIMIT frames (as-is, in order),
  *            then broadcast `presence` to the whole room (sender included). hello is never forwarded or stored.
- *   other    push to history (ring buffer of HISTORY_LIMIT), forward verbatim to every OTHER conn in the room.
+ *   other    push to history (ring buffer of HISTORY_LIMIT frames and ≤ HISTORY_MAX_BYTES), forward verbatim to every OTHER conn.
  *   close    remove conn, broadcast `presence`.
  *   ping     every PING_MS; a socket that missed the previous pong is terminated.
+ *   sweep    rooms with no connections for ROOM_IDLE_MS are forgotten (only history is lost; keys are derived, links keep working).
  *   GET /health  → { rooms, connections }   (same port as the WebSocket server)
  *   GET /, /r/:room, /api/rooms…, /install.sh, /install.ps1, /mesh.mjs, /emit.js  → web.ts (front door + one-command join)
  *   POST/GET /api/files/:room[/:id[/meta]]  → files.ts (in-memory artifacts, docs/FILES-API.md)
@@ -20,6 +26,7 @@
 import { handleWeb, type WebAssets } from "./web.js";
 import { fileStoreFromEnv, handleFiles } from "./files.js";
 import { checkKey, requireKey, roomSecret } from "./keys.js";
+import { clientIp, rateLimitsFromEnv } from "./limits.js";
 import fs from "node:fs";
 import http from "node:http";
 import { spawnSync } from "node:child_process";
@@ -28,8 +35,24 @@ import { URL, fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket, type RawData } from "ws";
 import { HISTORY_LIMIT, type Offer, type Role } from "@mesh/protocol";
 
+function envInt(name: string, fallback: number): number {
+  const n = Number(process.env[name]);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
+}
+
 const PORT = Number(process.env.PORT) || 8080;
 const PING_MS = 25_000;
+/** Public-relay guards (README "Relay limits"). All env-tunable, mainly for tests. */
+const MAX_ROOMS = envInt("MESH_MAX_ROOMS", 10_000);
+const ROOM_IDLE_MS = envInt("MESH_ROOM_IDLE_MS", 2 * 60 * 60 * 1000);
+const DUP_PROBE_MS = envInt("MESH_DUP_PROBE_MS", 3000);
+const MAX_FRAME_BYTES = envInt("MESH_MAX_FRAME_BYTES", 2 * 1024 * 1024);
+const HISTORY_MAX_BYTES = envInt("MESH_HISTORY_MAX_BYTES", 4 * 1024 * 1024);
+const MAX_PARAM_LEN = 128;
+/** Private close code: this user name is already connected to the room as a daemon. */
+const DUPLICATE_CLOSE_CODE = 4409;
+/** RFC 6455 "Try Again Later". */
+const TRY_AGAIN_CLOSE_CODE = 1013;
 
 interface Conn {
   ws: WebSocket;
@@ -43,14 +66,32 @@ interface Conn {
 interface Room {
   conns: Set<Conn>;
   history: string[]; // raw JSON strings, ≤ HISTORY_LIMIT, oldest first
+  historyBytes: number;
+  lastActive: number;
 }
 
 const rooms = new Map<string, Room>();
+const limits = rateLimitsFromEnv();
 
-function getOrCreateRoom(name: string): Room {
+/** Forget rooms nobody has been connected to for ROOM_IDLE_MS. Returns how many were dropped. */
+function sweepRooms(now = Date.now()): number {
+  let dropped = 0;
+  for (const [name, room] of rooms) {
+    if (room.conns.size === 0 && now - room.lastActive >= ROOM_IDLE_MS) {
+      rooms.delete(name);
+      dropped++;
+    }
+  }
+  return dropped;
+}
+
+/** The room, created on first use; undefined when the relay is at MAX_ROOMS even after a sweep. */
+function getOrCreateRoom(name: string): Room | undefined {
   let room = rooms.get(name);
   if (!room) {
-    room = { conns: new Set(), history: [] };
+    if (rooms.size >= MAX_ROOMS) sweepRooms();
+    if (rooms.size >= MAX_ROOMS) return undefined;
+    room = { conns: new Set(), history: [], historyBytes: 0, lastActive: Date.now() };
     rooms.set(name, room);
   }
   return room;
@@ -87,6 +128,11 @@ function sendError(ws: WebSocket, message: string): void {
   }
 }
 
+function refuse(ws: WebSocket, code: number, message: string): void {
+  sendError(ws, message);
+  ws.close(code, message.slice(0, 120)); // close reasons are capped at 123 bytes
+}
+
 function parseRole(raw: string | null): Role | null {
   if (raw === "daemon" || raw === "feed") return raw;
   return null;
@@ -101,7 +147,15 @@ function rawToString(data: RawData): string {
 
 /** Drop an empty room once its history is gone too, so the map cannot grow forever. */
 function maybePrune(name: string, room: Room): void {
-  if (room.conns.size === 0 && room.history.length === 0) rooms.delete(name);
+  if (room.conns.size === 0 && room.history.length === 0 && rooms.get(name) === room) rooms.delete(name);
+}
+
+function pushHistory(room: Room, raw: string): void {
+  room.history.push(raw);
+  room.historyBytes += Buffer.byteLength(raw);
+  while (room.history.length > HISTORY_LIMIT || (room.historyBytes > HISTORY_MAX_BYTES && room.history.length > 1)) {
+    room.historyBytes -= Buffer.byteLength(room.history.shift()!);
+  }
 }
 
 const REPO_URL = process.env.MESH_REPO_URL ?? "https://github.com/dg4329-hash/rho_hackathon";
@@ -162,7 +216,8 @@ const webDeps = {
       history: room.history,
     };
   },
-  createRoom: (name: string) => { getOrCreateRoom(name); },
+  createRoom: (name: string): "ok" | "full" => (getOrCreateRoom(name) ? "ok" : "full"),
+  roomLimiter: limits.rooms,
   repoUrl: REPO_URL,
   assets: loadAssets(),
 };
@@ -184,7 +239,8 @@ const server = http.createServer((req, res) => {
   res.end("not found");
 });
 
-const wss = new WebSocketServer({ server });
+// maxPayload: an oversized frame closes the socket with 1009 instead of being buffered (ws defaults to 100 MiB).
+const wss = new WebSocketServer({ server, maxPayload: MAX_FRAME_BYTES });
 
 wss.on("connection", (ws, req) => {
   const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
@@ -192,9 +248,14 @@ wss.on("connection", (ws, req) => {
   const user = url.searchParams.get("user");
   const role = parseRole(url.searchParams.get("role"));
 
-  if (!roomName || !user || !role) {
-    sendError(ws, "missing or invalid query params: require room, user, role=daemon|feed");
-    ws.close(1008, "bad query params");
+  if (!roomName || !user || !role || roomName.length > MAX_PARAM_LEN || user.length > MAX_PARAM_LEN) {
+    refuse(ws, 1008, "missing or invalid query params: require room, user, role=daemon|feed");
+    return;
+  }
+
+  const take = limits.ws.take(clientIp(req));
+  if (!take.ok) {
+    refuse(ws, TRY_AGAIN_CLOSE_CODE, `rate limited, retry in ${take.retryAfterSec}s`);
     return;
   }
 
@@ -202,24 +263,68 @@ wss.on("connection", (ws, req) => {
   // recognises as "get the room link" rather than retrying forever.
   const gate = checkKey(roomName, url.searchParams.get("key"));
   if (!gate.ok) {
-    sendError(ws, gate.error);
-    ws.close(4401, gate.error);
+    refuse(ws, 4401, gate.error);
     return;
   }
 
   const room = getOrCreateRoom(roomName);
+  if (!room) {
+    refuse(ws, TRY_AGAIN_CLOSE_CODE, "relay is full, try again later");
+    return;
+  }
+  room.lastActive = Date.now();
+
   const conn: Conn = { ws, user, role, offers: [], helloed: false, alive: true };
   room.conns.add(conn);
   console.log(`+ ${user} (${role}) joined room "${roomName}" — ${room.conns.size} conn(s)`);
+  let cleaned = false;
+  let probing = false;
+  const buffered: string[] = []; // frames that arrive while a duplicate-name probe is running
 
-  ws.on("pong", () => {
-    conn.alive = true;
-  });
+  /**
+   * Another daemon with this name that offers something. Only offering daemons count: `mesh ask` connects as
+   * role=daemon under the owner's own name with no offers, alongside the owner's running daemon, and must keep working.
+   */
+  const liveDuplicate = (): Conn | undefined =>
+    [...room.conns].find((c) => c !== conn && c.role === "daemon" && c.user === user && c.helloed && c.offers.length > 0 && c.ws.readyState === WebSocket.OPEN);
 
-  ws.on("message", (data: RawData, isBinary: boolean) => {
-    if (isBinary) return;
-    const raw = rawToString(data);
+  /** Same offering daemon name already here: a live teammate (refuse us) or a ghost from a dropped network (replace it)? */
+  const probe = (existing: Conn, helloRaw: string) => {
+    probing = true;
+    let settled = false;
+    const settle = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      existing.ws.off("pong", onPong);
+      existing.ws.off("close", onGone);
+      fn();
+    };
+    const proceed = () => {
+      if (cleaned || ws.readyState !== WebSocket.OPEN) return;
+      probing = false;
+      handleFrame(helloRaw); // re-checks, in case yet another conn took the name meanwhile
+      while (!probing && buffered.length > 0 && ws.readyState === WebSocket.OPEN) handleFrame(buffered.shift()!);
+    };
+    const onPong = () => settle(() => refuse(ws, DUPLICATE_CLOSE_CODE, duplicateMessage(user)));
+    const onGone = () => settle(proceed);
+    const timer = setTimeout(() => settle(() => {
+      console.log(`! ${user} in "${roomName}" did not answer a ping — replacing it with the new connection`);
+      existing.ws.terminate(); // its close handler removes it from the room and broadcasts presence
+      proceed();
+    }), DUP_PROBE_MS);
+    existing.ws.on("pong", onPong);
+    existing.ws.on("close", onGone);
+    ws.once("close", () => settle(() => undefined));
+    try {
+      existing.ws.ping();
+    } catch {
+      settle(proceed);
+    }
+  };
 
+  const handleFrame = (raw: string) => {
+    room.lastActive = Date.now();
     // Parse only far enough to read `type` (and `offers` for hello). Everything else is opaque.
     let obj: { type?: unknown; offers?: unknown };
     try {
@@ -234,7 +339,15 @@ wss.on("connection", (ws, req) => {
     }
 
     if (obj.type === "hello") {
-      conn.offers = Array.isArray(obj.offers) ? (obj.offers as Offer[]) : [];
+      const offers = Array.isArray(obj.offers) ? (obj.offers as Offer[]) : [];
+      if (!conn.helloed && role === "daemon" && offers.length > 0) {
+        const existing = liveDuplicate();
+        if (existing) {
+          probe(existing, raw);
+          return;
+        }
+      }
+      conn.offers = offers;
       const first = !conn.helloed;
       conn.helloed = true;
       if (first) {
@@ -246,21 +359,32 @@ wss.on("connection", (ws, req) => {
       return;
     }
 
-    room.history.push(raw);
-    if (room.history.length > HISTORY_LIMIT) {
-      room.history.splice(0, room.history.length - HISTORY_LIMIT);
-    }
+    pushHistory(room, raw);
     for (const other of room.conns) {
       if (other === conn) continue;
       if (other.ws.readyState === WebSocket.OPEN) other.ws.send(raw);
     }
+  };
+
+  ws.on("pong", () => {
+    conn.alive = true;
   });
 
-  let cleaned = false;
+  ws.on("message", (data: RawData, isBinary: boolean) => {
+    if (isBinary) return;
+    const raw = rawToString(data);
+    if (probing) {
+      if (buffered.length < 1000) buffered.push(raw);
+      return;
+    }
+    handleFrame(raw);
+  });
+
   const cleanup = () => {
     if (cleaned) return;
     cleaned = true;
     room.conns.delete(conn);
+    room.lastActive = Date.now();
     console.log(`- ${user} (${role}) left room "${roomName}" — ${room.conns.size} conn(s)`);
     if (conn.helloed) broadcastPresence(room);
     maybePrune(roomName, room);
@@ -278,6 +402,10 @@ wss.on("connection", (ws, req) => {
   });
 });
 
+function duplicateMessage(user: string): string {
+  return `user "${user.slice(0, 40)}" is already connected to this room as a daemon; pick another name with --as`;
+}
+
 // Ping every PING_MS; terminate sockets that missed the previous pong (their `close` handler does the cleanup).
 const pingInterval = setInterval(() => {
   for (const room of rooms.values()) {
@@ -294,6 +422,9 @@ const pingInterval = setInterval(() => {
 }, PING_MS);
 pingInterval.unref?.();
 
+const sweepInterval = setInterval(() => sweepRooms(), Math.max(100, Math.min(60_000, Math.floor(ROOM_IDLE_MS / 2))));
+sweepInterval.unref?.();
+
 server.listen(PORT, () => {
   if (requireKey()) roomSecret(); // warns once when ROOM_SECRET is unset (keys would reset on restart)
   else console.warn("! MESH_REQUIRE_KEY=0: room keys are NOT enforced on this relay");
@@ -303,6 +434,7 @@ server.listen(PORT, () => {
 function shutdown(signal: string): void {
   console.log(`${signal} — shutting down`);
   clearInterval(pingInterval);
+  clearInterval(sweepInterval);
   files.stopSweeper();
   for (const c of wss.clients) c.terminate();
   wss.close();

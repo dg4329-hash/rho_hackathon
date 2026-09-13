@@ -13,7 +13,7 @@ Everything here is what the three apps agree on. `packages/protocol/src/index.ts
 
 Connect: `ws://<relay>/?room=<room>&user=<user>&role=daemon|feed`
 
-HTTP on the same port: `GET /health` → `{ rooms, connections }`; web front door `GET /` (start a session, plain-words explanation), `POST /api/rooms` → `{ room }`, `GET /api/rooms/:room?since=<n>` → `{ room, members, watchers, events, next }`, `GET /r/:room` (beginner room page: pick a name, one-liner with room filled in, downloadable installer, "restart once" step with a self-check, who's online, live feed, **Pop out overlay** button), `GET /overlay?room=&port=` (the overlay page, shipping tonight; `docs/OVERLAY-API.md`); installers `GET /install.sh`, `GET /install.ps1` (public origin baked in from `Host` / `X-Forwarded-Proto`; both stop a running daemon before re-joining, so re-running updates + restarts), `GET /join.cmd?room=&as=` / `GET /join.command?room=&as=` (double-clickable wrappers around the same installers), `GET /mesh.mjs` (daemon bundle), `GET /emit.js` (hook emitter), `GET /plugin.tgz` (Claude Code plugin, built from `plugin/` + `.claude-plugin/` at relay start). Rooms match `^[a-z0-9][a-z0-9-]{1,40}$`.
+HTTP on the same port: `GET /health` → `{ rooms, connections }`; web front door `GET /` (start a session, plain-words explanation), `POST /api/rooms` → `{ room, key, link }` (429 rate limited, 503 relay full), `GET /api/rooms/:room?since=<n>` → `{ room, members, watchers, events, next }`, `GET /r/:room` (beginner room page: pick a name, one-liner with room filled in, downloadable installer, "restart once" step with a self-check, who's online, live feed, **Pop out overlay** button), `GET /overlay?room=&port=` (the overlay page, shipping tonight; `docs/OVERLAY-API.md`); installers `GET /install.sh`, `GET /install.ps1` (public origin baked in from `Host` / `X-Forwarded-Proto`; both stop a running daemon before re-joining, so re-running updates + restarts), `GET /join.cmd?room=&as=` / `GET /join.command?room=&as=` (double-clickable wrappers around the same installers), `GET /mesh.mjs` (daemon bundle), `GET /emit.js` (hook emitter), `GET /plugin.tgz` (Claude Code plugin, built from `plugin/` + `.claude-plugin/` at relay start). Rooms match `^[a-z0-9][a-z0-9-]{1,40}$`.
 
 The relay is dumb: it validates `room`/`user` on connect, stamps nothing, and forwards every frame it receives to **every other** connection in the room. It also keeps the last 200 frames per room and replays them to a new connection on join (as-is, in order). Two frames the relay itself emits:
 
@@ -21,6 +21,13 @@ The relay is dumb: it validates `room`/`user` on connect, stamps nothing, and fo
 { type: 'presence', members: Array<{ user: string; role: 'daemon'|'feed'; offers: Offer[] }> }  // on any join/leave
 { type: 'error', message: string }                                                                 // bad query params
 ```
+
+Relay refusals and close codes:
+- **1008** bad query params.
+- **4401** missing/wrong room key (`"room key required"` | `"wrong room key"`); the daemon stops retrying. See `docs/ROOM-KEYS.md`.
+- **4409** `user "<name>" is already connected to this room as a daemon; pick another name with --as` — sent at the first `hello` of a `role=daemon` connection with non-empty `offers` while another offering daemon of the same user is in the room. The relay pings the existing connection first and refuses only if it answers within `MESH_DUP_PROBE_MS` (default 3 s); otherwise it terminates the silent one, so a reconnect after a dropped network still gets in. No-offer daemon connections (`mesh ask` under the owner's name) are never refused. The daemon's normal backoff retries.
+- **1013** `rate limited, retry in <n>s` or `relay is full, try again later`.
+- **1009** frame larger than the max frame size.
 
 Frames clients send (all carry `from: user` and `ts`):
 

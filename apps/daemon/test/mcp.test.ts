@@ -71,7 +71,9 @@ async function testLocalServer() {
       return { id: "art-1", name: path.basename(filePath), mime: "text/plain", size: 3, url: "https://relay.example/api/files/rho/art-1" };
     },
     async fetchArtifact() { throw new Error("no artifact with id 'x'"); },
-  };
+    isOwner: () => false,
+    async endSession() { throw new Error("endSession must not be called without an owner token"); },
+  } as DaemonCore;
 
   const port = await freePort();
   const server = createLocalServer();
@@ -81,7 +83,8 @@ async function testLocalServer() {
     await client.connect(new StreamableHTTPClientTransport(new URL(`http://localhost:${port}/mcp`)));
 
     const { tools } = await client.listTools();
-    check(tools.length === 14, "listTools returns 14 tools", tools.map((t) => t.name));
+    check(tools.length === 15, "listTools returns 15 tools", tools.map((t) => t.name));
+    check(tools.some((t) => t.name === "end_session"), "end_session registered");
     check(tools.some((t) => t.name === "send_file") && tools.some((t) => t.name === "fetch_artifact"), "send_file + fetch_artifact registered");
     check(tools.every((t) => (t.description ?? "").length > 0), "every tool has a description");
     const approve = tools.find((t) => t.name === "approve_request");
@@ -136,7 +139,11 @@ async function testLocalServer() {
     check(fa.isError === true && textOf(fa).includes("no artifact"), "fetch_artifact core error → isError", textOf(fa));
 
     const health = await (await fetch(`http://localhost:${port}/health`)).json();
-    check(health.user === "dev" && health.room === "rho" && health.relay === "connected" && health.members === 2, "/health", health);
+    check(health.user === "dev" && health.room === "rho" && health.relay === "connected" && health.members === 2 && health.owner === false, "/health (owner: false)", health);
+    const es = await client.callTool({ name: "end_session", arguments: {} });
+    check(es.isError === true && textOf(es).includes("only the person who started this session"), "end_session without owner token → isError", textOf(es));
+    const endRes = await fetch(`http://localhost:${port}/end`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+    check(endRes.status === 403, "POST /end without owner token → 403", endRes.status);
     const ev = await (await fetch(`http://localhost:${port}/event`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ kind: "status", summary: "idle" }) })).json();
     check(ev.ok === true, "POST /event ok");
     const act = await (await fetch(`http://localhost:${port}/activity?sinceMinutes=5`)).json();

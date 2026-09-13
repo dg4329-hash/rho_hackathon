@@ -18,6 +18,7 @@ import {
 } from "@mesh/protocol";
 import type { DaemonCore, LocalServer } from "./api.js";
 import { parseRoomArg } from "./register.js";
+import { NOT_OWNER_MESSAGE, NotOwnerError } from "./owner.js";
 import { exampleArgs, validateAgainstSchema } from "./schema.js";
 
 const SUMMARY_CHARS = 120;
@@ -184,6 +185,16 @@ export function buildMcpServer(core: DaemonCore): McpServer {
     return ok({ ok: true, left: core.config.room, note: "daemon stopping; run mesh join again to come back" });
   }));
 
+  server.registerTool("end_session", {
+    description: "End this mesh session for everyone: disconnects every teammate, stops their daemons and makes the room link stop working. Only the person who started the session can do this. Only call it when the user explicitly asks to end the session for everyone (to just leave yourself, use leave_room).",
+    inputSchema: { reason: z.string().max(140).optional().describe("shown to teammates when their session ends") },
+  }, guard(async (raw) => {
+    const reason = (raw as { reason?: string }).reason;
+    if (!core.isOwner()) return fail(NOT_OWNER_MESSAGE);
+    const r = await core.endSession(reason);
+    return ok({ ok: true, ended: r.room, closed: r.closed, note: "session ended for everyone; this daemon is stopping" });
+  }));
+
   server.registerTool("wait_for_events", {
     description: "Wait for the next teammate message or request to use this machine (long-poll, up to timeoutSeconds). Returns messages and pending requests as information; approvals are decided by the user in the mesh overlay or dialog, never by you. Loop on this when the user asks you to watch mesh.",
     inputSchema: { timeoutSeconds: z.number().int().min(1).max(55).optional().describe("how long to wait (default 50)") },
@@ -347,6 +358,18 @@ export function buildApp(core: DaemonCore): express.Express {
     core.leave(reason, 300);
   });
 
+  app.post("/end", async (req: Request, res: Response) => {
+    const raw = (req.body as { reason?: unknown } | undefined)?.reason;
+    const reason = typeof raw === "string" ? raw.slice(0, 140) : undefined;
+    if (!core.isOwner()) { res.status(403).json({ ok: false, error: NOT_OWNER_MESSAGE }); return; }
+    try {
+      const r = await core.endSession(reason);
+      res.json({ ok: true, ended: r.room, closed: r.closed });
+    } catch (e) {
+      res.status(e instanceof NotOwnerError ? 403 : 502).json({ ok: false, error: (e as Error).message });
+    }
+  });
+
   app.post("/message", (req: Request, res: Response) => {
     const parsed = SendMessageInput.safeParse(req.body);
     if (!parsed.success) { res.status(400).json({ ok: false, error: parsed.error.issues.map((i) => i.message).join("; ") }); return; }
@@ -381,7 +404,7 @@ export function buildApp(core: DaemonCore): express.Express {
   });
 
   app.get("/health", (_req, res) => {
-    res.json({ approvals: core.approvalsMode(), user: core.me, room: core.config.room, relay: core.relayStatus(), members: core.members().length });
+    res.json({ approvals: core.approvalsMode(), user: core.me, room: core.config.room, relay: core.relayStatus(), members: core.members().length, owner: core.isOwner?.() ?? false });
   });
 
   // In-tool approvals (`mesh watch` + the plugin monitor). GET long-polls up to ?wait= seconds (max 60);

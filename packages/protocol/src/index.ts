@@ -78,9 +78,19 @@ export const PresenceFrame = z.object({
   members: z.array(z.object({ user: z.string(), role: Role, offers: z.array(Offer) })),
 });
 export const ErrorFrame = z.object({ type: z.literal("error"), message: z.string() });
+/** The room's owner ended the session: sent to every socket just before the relay closes it with ROOM_ENDED_CLOSE_CODE. */
+export const RoomEndedFrame = z.object({
+  type: z.literal("room_ended"),
+  room: z.string().optional(),
+  by: z.string().optional(),
+  message: z.string(),
+  ts: z.string().optional(),
+});
+/** Relay close code: the session was ended by its owner (also on connecting to an ended room). Clients never reconnect. */
+export const ROOM_ENDED_CLOSE_CODE = 4410;
 
 export const Frame = z.union([
-  HelloFrame, RequestFrame, DecisionFrame, OutputFrame, ResultFrame, EventFrame, PresenceFrame, ErrorFrame,
+  HelloFrame, RequestFrame, DecisionFrame, OutputFrame, ResultFrame, EventFrame, PresenceFrame, ErrorFrame, RoomEndedFrame,
 ]);
 export type Frame = z.infer<typeof Frame>;
 export type HelloFrame = z.infer<typeof HelloFrame>;
@@ -90,6 +100,7 @@ export type OutputFrame = z.infer<typeof OutputFrame>;
 export type ResultFrame = z.infer<typeof ResultFrame>;
 export type EventFrame = z.infer<typeof EventFrame>;
 export type PresenceFrame = z.infer<typeof PresenceFrame>;
+export type RoomEndedFrame = z.infer<typeof RoomEndedFrame>;
 
 /** Parse one WebSocket frame. Throws ZodError on anything malformed. */
 export function parseFrame(json: unknown): Frame {
@@ -116,6 +127,7 @@ export const TeamConfig = z.object({
   room: z.string().min(1),
   relay: z.string().url(),
   key: z.string().optional(),                      // room key (docs/ROOM-KEYS.md); also from --key / a room link / MESH_KEY
+  owner: z.string().optional(),                    // owner token: lets this machine end the session (--owner / a link's #k=…&o= / MESH_OWNER)
   cwd: z.string().optional(),
   timeoutSeconds: z.number().int().positive().default(120),
   allowArbitrary: z.enum(["ask", "never"]).default("ask"),

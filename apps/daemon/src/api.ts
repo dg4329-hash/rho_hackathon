@@ -69,6 +69,13 @@ export interface DaemonCore {
   setApprovalsMode(mode: string): string;
   /** Leave the room: disconnect, forget the saved join so nothing auto-restarts, and exit the daemon (after `delayMs`). */
   leave(reason?: string, delayMs?: number): void;
+  /** True when this daemon holds the room's owner token (it may end the session for everyone). */
+  isOwner(): boolean;
+  /**
+   * End the session for everyone via the relay (POST /api/rooms/<room>/end with the owner token), then leave locally.
+   * Throws NotOwnerError (owner.ts) without a valid owner token, or an Error with the relay's wording.
+   */
+  endSession(reason?: string): Promise<{ ok: true; room: string; closed: number }>;
   /**
    * Switch to another room (same identity/offers). `room` may be a room link (a `#k=` fragment supplies
    * relay and key). The current key carries over only on the same relay when no new key is given; if the

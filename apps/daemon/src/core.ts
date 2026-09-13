@@ -28,7 +28,8 @@ import { APPROVALS_MODES, PendingApprovals, type ApprovalsMode } from "./pending
 import { Jobs, toJobResult } from "./jobs.js";
 import { resolvePermission } from "./permissions.js";
 import { parseRoomArg } from "./register.js";
-import { RelayClient, debug, RoomKeyError } from "./relay-client.js";
+import { RelayClient, debug, RoomEndedError, RoomKeyError } from "./relay-client.js";
+import { endRoomOnRelay, NotOwnerError } from "./owner.js";
 import { CHUNK_CHARS, isCompound, matchShellOffer, resolveOfferCommand, runShell } from "./shell.js";
 
 export interface CoreOptions {
@@ -288,6 +289,8 @@ export function createCore(opts: CoreOptions): DaemonCore & { client: RelayClien
   const REQUEST_MAX_AGE_MS = 30_000;
   const seenRequests = new Set<string>();
   let leaving = false;
+  /** endSession() calls whose HTTP answer may still be flushing (see leave()). */
+  let endingBy = 0;
   /** Requests addressed to me that are waiting for an approval ("deciding") or executing ("running"). */
   const inflight = new Map<string, { phase: "deciding" | "running"; startedAt: number }>();
   function markRunning(id: string): void {
@@ -476,6 +479,8 @@ export function createCore(opts: CoreOptions): DaemonCore & { client: RelayClien
     leave(reason?: string, delayMs = 300) {
       if (leaving) return;
       leaving = true;
+      // end_session / POST /end is still answering: the relay's 4410 arrives before our HTTP reply, so give it time to flush.
+      if (endingBy > 0) delayMs = Math.max(delayMs, 800);
       // Nothing may outlive the leave: every requester still waiting on me gets an answer before the socket closes.
       // Waiting for approval -> denied; executing -> a final result (the CLI kills the process itself on stop).
       const why = `${me} left the room`;
@@ -512,6 +517,7 @@ export function createCore(opts: CoreOptions): DaemonCore & { client: RelayClien
             `(https://<relay>/r/${target}#k=<key>) and pass it as \`room\`. Still in '${config.room}'.`,
           );
         }
+        if (e instanceof RoomEndedError) throw new Error(`'${target}' was ended by its owner (relay said: ${e.relayMessage}). Still in '${config.room}'.`);
         throw e;
       }
       if (leaving) {
@@ -522,8 +528,29 @@ export function createCore(opts: CoreOptions): DaemonCore & { client: RelayClien
       config.room = target;
       config.relay = nextRelay;
       config.key = nextKey;
+      config.owner = undefined; // an owner token is for one room only
       opts.onSwitch?.(target, config.relay, nextKey);
       return { room: target, relay: config.relay };
+    },
+
+    isOwner() {
+      return !!config.owner;
+    },
+
+    async endSession(reason?: string) {
+      if (!config.owner) throw new NotOwnerError();
+      if (leaving) throw new Error("already leaving the room");
+      const room = config.room;
+      endingBy++;
+      try {
+        const r = await endRoomOnRelay({ relay: config.relay, room, key: config.key, owner: config.owner, by: me, reason: reason?.trim() || undefined });
+        say(chalk.yellow(`ended the session ${room} for everyone${r.closed ? ` (${r.closed} connection${r.closed === 1 ? "" : "s"} closed)` : ""}`));
+        // Normally the relay's room_ended / 4410 has already started the leave; this covers a lost close.
+        setTimeout(() => core.leave("you ended the session", 800), 1500).unref?.();
+        return { ok: true as const, room, closed: r.closed };
+      } finally {
+        setTimeout(() => { endingBy--; }, 1000).unref?.();
+      }
     },
 
     approvalsMode() { return pending.mode; },

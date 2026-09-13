@@ -16,7 +16,8 @@ import { createMcpImport } from "./mcp-import.js";
 import { claudeHooksInstalled, findGitRoot, startGitWatch } from "./gitwatch.js";
 import { resolveNotes, resolvePermission } from "./permissions.js";
 import { defaultHandle, installClaudeHooks, maskKey, parseRoomArg, printRegister, registerApproveAskRule, registerClaudeCode, registerClaudePlugin, registerCodex, registerCursor, type RegisterResult } from "./register.js";
-import { RelayClient, RoomKeyError } from "./relay-client.js";
+import { RelayClient, RoomEndedError, RoomKeyError } from "./relay-client.js";
+import { endRoomOnRelay, maskOwner, ownerFromLink } from "./owner.js";
 import { isFixedOffer } from "./shell.js";
 import { restoreTerminal } from "./approval.js";
 import { killTrackedChildren } from "./children.js";
@@ -96,6 +97,7 @@ program
   .option("--relay <url>", "relay websocket url (derived from a room link)")
   .option("--key <key>", "room key (a room link's #k=<key> carries it; also team.json \"key\" or MESH_KEY)")
   .option("--config <path>", "path to team.json")
+  .option("--owner <token>", "owner token: lets this machine end the session for everyone (the creator's link carries it as #k=<key>&o=<token>)")
   .option("--port <n>", "local MCP/HTTP port", String(DEFAULT_PORT))
   .option("--no-register", "don't touch Claude Code / Cursor / Codex config or hooks")
   .option("--cursor", "force Cursor registration even if no .cursor dir is present")
@@ -104,7 +106,7 @@ program
   .option("--no-git-offers", "don't add the default read-only git offers (git.status/diff/log/branch)")
   .option("--no-git-watch", "don't emit file_touched events from git status (on by default inside a git repo)")
   .option("--no-codex-wake", "temporarily disable background Codex runs enabled in team.json")
-  .action(async (roomArg: string, flags: CommonFlags & { port: string; register: boolean; cursor?: boolean; codex?: boolean; background?: boolean; gitWatch?: boolean; gitOffers?: boolean; codexWake?: boolean }) => {
+  .action(async (roomArg: string, flags: CommonFlags & { owner?: string; port: string; register: boolean; cursor?: boolean; codex?: boolean; background?: boolean; gitWatch?: boolean; gitOffers?: boolean; codexWake?: boolean }) => {
     const target = parseRoomArg(roomArg);
     const room = target.room;
     if (target.relay && !flags.relay) flags.relay = target.relay;
@@ -112,9 +114,11 @@ program
     const explicitKey = flags.key?.trim() || target.key;
     const { config, cwd, source } = loadWithFlags(room, flags, explicitKey);
     config.key = config.key || process.env.MESH_KEY?.trim() || rememberedKey(config.room, config.relay);
+    // Owner token (end the session for everyone): --owner, the link's &o=, team.json "owner", MESH_OWNER, the last join.
+    config.owner = flags.owner?.trim() || ownerFromLink(roomArg) || config.owner || process.env.MESH_OWNER?.trim() || rememberedOwner(config.room, config.relay) || undefined;
     const port = Number(flags.port) || DEFAULT_PORT;
     // Remember how we joined so the Claude Code plugin's SessionStart hook can bring the daemon back later.
-    try { writeJoinConfig({ room: config.room, relay: config.relay, user: config.user, port, cwd, updatedAt: new Date().toISOString(), ...(config.key ? { key: config.key } : {}) }); } catch { /* best effort */ }
+    try { writeJoinConfig({ room: config.room, relay: config.relay, user: config.user, port, cwd, updatedAt: new Date().toISOString(), ...(config.key ? { key: config.key } : {}), ...(config.owner ? { owner: config.owner } : {}) }); } catch { /* best effort */ }
 
     if (flags.background) {
       const running = await readState(port);
@@ -130,7 +134,7 @@ program
         cwd: userCwd(), env: { ...process.env, INIT_CWD: userCwd(), MESH_BACKGROUND: "1" }, detached: true, stdio: ["ignore", log, log], windowsHide: true,
       });
       child.unref();
-      writeState({ pid: child.pid ?? 0, port, room: config.room, relay: config.relay, user: config.user, cwd, startedAt: new Date().toISOString(), ...(config.key ? { key: config.key } : {}) });
+      writeState({ pid: child.pid ?? 0, port, room: config.room, relay: config.relay, user: config.user, cwd, startedAt: new Date().toISOString(), ...(config.key ? { key: config.key } : {}), ...(config.owner ? { owner: config.owner } : {}) });
       // wait briefly for /health so the user gets a definite answer
       const alive = () => { try { return child.pid ? process.kill(child.pid, 0) : false; } catch { return false; } };
       const okHealth = await waitHealth(port, 15_000, alive);
@@ -181,16 +185,23 @@ program
       ? new CodexWake({ cwd, room: () => client.room, me: config.user, log: (line) => console.log(chalk.dim(line)) })
       : undefined;
     console.log(chalk.dim(`Codex wake: ${wake ? "on (fresh teammate messages start a background Codex run)" : config.codexWake ? "off (codex unavailable or --no-codex-wake)" : "off (set codexWake: true in team.json to enable)"}`));
+    let leaveRequested = false; // leave (e.g. the room was already ended) before stop() exists: run it once it does
     const core = createCore({
-      onLeave: () => leaveRef.current?.(),
-      onSwitch: (room, relay, key) => { try { writeJoinConfig({ room, relay, user: config.user, port, cwd, updatedAt: new Date().toISOString(), ...(key ? { key } : {}) }); } catch { /* best effort */ } try { const st = loadState(); if (st) writeState({ ...st, room, relay, key }); } catch { /* ignore */ } }, config, cwd, client, mcpImport, shellOffers, mcpOffers: imported.offers,
+      onLeave: () => { if (leaveRef.current) leaveRef.current(); else leaveRequested = true; },
+      onSwitch: (room, relay, key) => { try { writeJoinConfig({ room, relay, user: config.user, port, cwd, updatedAt: new Date().toISOString(), ...(key ? { key } : {}) }); } catch { /* best effort */ } try { const st = loadState(); if (st) writeState({ ...st, room, relay, key, owner: undefined }); } catch { /* ignore */ } }, config, cwd, client, mcpImport, shellOffers, mcpOffers: imported.offers,
       onIncomingMessage: (message) => { wake?.enqueue(message); },
     });
-    client.on("open", () => console.log(chalk.green(`● connected to ${config.relay} room=${config.room} as ${config.user}`) + (config.key ? chalk.dim(`  ${maskKey(config.key)}`) : "")));
+    client.on("open", () => console.log(chalk.green(`● connected to ${config.relay} room=${config.room} as ${config.user}`) + (config.key ? chalk.dim(`  ${maskKey(config.key)}`) : "") + (config.owner ? chalk.dim(`  owner ${maskOwner(config.owner)} (mesh end ends it for everyone)`) : "")));
     // The relay refused our room key: nothing this daemon can do without the room link, so stop (CONTRACT / ROOM-KEYS).
     client.on("keyError", () => {
       if (client.switching) return; // a failed switch_room: the tool reports it and we stay in the old room
       setTimeout(() => process.exit(2), 50); // let the message flush
+    });
+    // The owner ended the session: the ordinary leave path (answer in-flight requests, forget the saved join, stop, exit 0).
+    client.on("roomEnded", (message) => {
+      if (client.switching) return; // a failed switch_room into an ended room: we stay where we were
+      console.log(chalk.yellow(`■ ${message}`));
+      core.leave(message, 100);
     });
     client.on("close", () => console.log(chalk.yellow("○ relay disconnected; reconnecting…")));
     client.on("presence", (p) => {
@@ -259,6 +270,7 @@ program
       forgetJoin();
       void stop();
     };
+    if (leaveRequested) leaveRef.current();
     process.on("SIGINT", stop);
     process.on("SIGTERM", stop);
   });
@@ -285,6 +297,10 @@ program
     const mcpImport = createMcpImport();
     const core = createCore({ config, cwd, client, mcpImport, shellOffers: [], mcpOffers: [], quiet: true });
 
+    client.on("roomEnded", (message) => {
+      console.error(chalk.red(message));
+      process.exit(2);
+    });
     let sawOutput = false;
     client.on("frame", (f) => {
       if (f.type === "output" && core.jobs.has(f.id)) {
@@ -298,7 +314,7 @@ program
       await client.connect();
     } catch (e) {
       clearTimeout(timer);
-      if (e instanceof RoomKeyError) process.exit(2); // the client already printed what to do
+      if (e instanceof RoomKeyError || e instanceof RoomEndedError) process.exit(2); // already printed
       throw e;
     }
     clearTimeout(timer);
@@ -369,8 +385,10 @@ program
         }
       } catch { /* daemon down or restarting */ }
       if (!list) {
-        if (!down) { console.error(`mesh watch: no daemon on :${port}; retrying every 3 s (mesh status / mesh join <room> --background)`); down = true; }
-        await sleep(3000);
+        // No daemon and no saved join (left / stopped / the session was ended): nothing will bring one back soon, so back off.
+        const idleMs = existsSync(configPath()) ? 3000 : 30_000;
+        if (!down) { console.error(`mesh watch: no daemon on :${port}; retrying every ${idleMs / 1000} s (mesh status / mesh join <room> --background)`); down = true; }
+        await sleep(idleMs);
         continue;
       }
       if (down) { console.error(`mesh watch: connected to :${port}`); down = false; }
@@ -381,9 +399,9 @@ program
   });
 
 // ---------- background state ----------
-interface DaemonState { pid: number; port: number; room: string; relay: string; user: string; cwd: string; startedAt: string; key?: string }
+interface DaemonState { pid: number; port: number; room: string; relay: string; user: string; cwd: string; startedAt: string; key?: string; owner?: string }
 /** ~/.mesh/config.json: how the last `mesh join` was invoked (the plugin's SessionStart hook restarts the daemon from it). */
-interface JoinConfig { room: string; relay: string; user: string; port: number; cwd: string; updatedAt: string; key?: string }
+interface JoinConfig { room: string; relay: string; user: string; port: number; cwd: string; updatedAt: string; key?: string; owner?: string }
 const meshHome = () => path.join(homedir(), ".mesh");
 const statePath = () => path.join(meshHome(), "daemon.json");
 const logPath = () => path.join(meshHome(), "daemon.log");
@@ -408,13 +426,21 @@ function rememberedKey(room: string, relay: string): string | undefined {
   if (c.relay && norm(c.relay) !== norm(relay)) return undefined;
   return c.key;
 }
+/** The owner token remembered from the last join — only for that same room on that same relay. */
+function rememberedOwner(room: string, relay: string): string | undefined {
+  const c = loadJoinConfig();
+  if (!c?.owner || c.room !== room) return undefined;
+  const norm = (u: string) => u.replace(/\/+$/, "");
+  if (c.relay && norm(c.relay) !== norm(relay)) return undefined;
+  return c.owner;
+}
 /** Last error-looking line the background daemon logged since `from` (ANSI stripped), for `--background` failures. */
 function lastErrorLine(from: number): string | undefined {
   let tail = "";
   try { tail = readFileSync(logPath(), "utf8").slice(from); } catch { return undefined; }
   // eslint-disable-next-line no-control-regex
   const lines = tail.replace(/\u001b\[[0-9;]*m/g, "").split("\n").map((l) => l.trim()).filter(Boolean);
-  return [...lines].reverse().find((l) => /room link|room key|error|failed|refused|EADDRINUSE|not found/i.test(l));
+  return [...lines].reverse().find((l) => /room link|room key|ended|error|failed|refused|EADDRINUSE|not found/i.test(l));
 }
 async function health(port: number): Promise<Record<string, unknown> | undefined> {
   try { const r = await fetch(`http://localhost:${port}/health`, { signal: AbortSignal.timeout(1500) }); return r.ok ? (await r.json()) as Record<string, unknown> : undefined; } catch { return undefined; }
@@ -481,6 +507,42 @@ program
     const until = Date.now() + 5000;
     while (Date.now() < until && (await health(port))) await new Promise((r) => setTimeout(r, 200));
     console.log(chalk.green(`left ${left}`) + chalk.dim("  (mesh join <room-link> to come back)"));
+  });
+
+program
+  .command("end")
+  .description("end the session for everyone (only whoever started it): every teammate is disconnected and the room link stops working")
+  .option("--port <n>", "local daemon port (default: the running daemon's, else 7337)")
+  .option("--reason <text>", "shown to teammates")
+  .action(async (flags: { port?: string; reason?: string }) => {
+    const st = loadState();
+    const saved = loadJoinConfig();
+    const port = Number(flags.port) || st?.port || saved?.port || DEFAULT_PORT;
+    const reason = flags.reason?.trim() || undefined;
+    let r: Response | undefined;
+    try {
+      r = await fetch(`http://127.0.0.1:${port}/end`, {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(reason ? { reason } : {}), signal: AbortSignal.timeout(15_000),
+      });
+    } catch { /* no daemon on that port */ }
+    if (r) {
+      const body = (await r.json().catch(() => ({}))) as { ended?: unknown; error?: unknown };
+      if (!r.ok) fail(`could not end the session: ${String(body.error ?? `HTTP ${r.status}`)}`);
+      const until = Date.now() + 5000;
+      while (Date.now() < until && (await health(port))) await new Promise((res) => setTimeout(res, 200));
+      console.log(chalk.green(`ended ${String(body.ended ?? "the session")} for everyone`));
+      return;
+    }
+    // No daemon: end it straight from the saved join, if that join carried the owner token.
+    if (!saved?.room || !saved.relay) fail(`mesh is not running on :${port} and there is no saved session to end`);
+    if (!saved.owner) fail("only the person who started this session can end it (this machine joined without the owner link)");
+    try {
+      const res = await endRoomOnRelay({ relay: saved.relay, room: saved.room, key: saved.key, owner: saved.owner, by: saved.user, reason });
+      forgetJoin();
+      console.log(chalk.green(`ended ${res.room} for everyone`) + (res.alreadyEnded ? chalk.dim("  (it had already ended)") : ""));
+    } catch (e) {
+      fail(`could not end the session: ${(e as Error).message}`);
+    }
   });
 
 program

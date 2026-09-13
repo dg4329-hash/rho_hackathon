@@ -65,7 +65,21 @@ export interface FakeRelay {
   wsAttempts(): number;
   /** `x-mesh-key` / `?key=` seen on the file routes, oldest first (`null` = none sent). */
   fileKeys(): Array<string | null>;
+  /**
+   * End a room like the real relay: `room_ended` to every socket, close 4410, forget history, and refuse later connects
+   * (error frame + 4410). Returns the number of sockets closed.
+   */
+  endRoom(room: string, by?: string, reason?: string): number;
+  /** `POST /api/rooms/<room>/end` calls seen, oldest first. */
+  endCalls(): Array<{ room: string; key: string | null; owner: string | null; body: Record<string, unknown> }>;
 }
+
+/** Owner token as the relay derives it: `base32lower(HMAC-SHA256(ROOM_SECRET, "owner:" + room))[:16]`. */
+export function ownerToken(secret: string, room: string): string {
+  return roomKey(secret, `owner:${room}`);
+}
+const ENDED_MESSAGE = "this session was ended by its owner";
+const ROOM_ENDED_CLOSE = 4410;
 
 export function startFakeRelay(port: number, options: FakeRelayOptions = {}): Promise<FakeRelay> {
   const requireKey = options.requireKey === true;
@@ -75,11 +89,52 @@ export function startFakeRelay(port: number, options: FakeRelayOptions = {}): Pr
   const fileKeys: Array<string | null> = [];
   const rooms = new Map<string, Room>();
   const files = new Map<string, Map<string, StoredFile>>(); // room → id → file
+  const ended = new Set<string>();
+  const endCalls: Array<{ room: string; key: string | null; owner: string | null; body: Record<string, unknown> }> = [];
   const http = createServer((req, res) => handleFiles(req, res));
   const wss = new WebSocketServer({ server: http });
 
+  function endRoom(roomName: string, by?: string, reason?: string): number {
+    const message = `${by ?? "the host"} ended the session${reason ? `: ${reason}` : ""}`;
+    const frame = JSON.stringify({ type: "room_ended", room: roomName, ...(by ? { by } : {}), message, ts: new Date().toISOString() });
+    ended.add(roomName);
+    const r = rooms.get(roomName);
+    rooms.delete(roomName);
+    let closed = 0;
+    for (const c of r?.conns ?? []) {
+      if (c.ws.readyState !== WebSocket.OPEN) continue;
+      c.ws.send(frame);
+      c.ws.close(ROOM_ENDED_CLOSE, message.slice(0, 120));
+      closed++;
+    }
+    return closed;
+  }
+
+  function handleEnd(req: IncomingMessage, res: ServerResponse, roomName: string, url: URL): void {
+    const chunks: Buffer[] = [];
+    req.on("data", (c: Buffer) => chunks.push(c));
+    req.on("end", () => {
+      let body: Record<string, unknown> = {};
+      try { body = JSON.parse(Buffer.concat(chunks).toString() || "{}"); } catch { /* keep empty */ }
+      const key = (req.headers["x-mesh-key"] ? String(req.headers["x-mesh-key"]) : url.searchParams.get("key")) ?? null;
+      const owner = (req.headers["x-mesh-owner"] ? String(req.headers["x-mesh-owner"]) : typeof body.owner === "string" ? body.owner : null) ?? null;
+      endCalls.push({ room: roomName, key, owner, body });
+      const json = (status: number, obj: unknown) => res.writeHead(status, { "content-type": "application/json" }).end(JSON.stringify(obj));
+      if (requireKey && (!key || !sameKey(key, expected(roomName)))) return json(401, { error: key ? "wrong room key" : "room key required" });
+      if (!owner || !sameKey(owner, ownerToken(secret, roomName))) return json(403, { error: "only the person who started this session can end it" });
+      if (ended.has(roomName)) return json(200, { ok: true, room: roomName, ended: true, closed: 0, alreadyEnded: true });
+      const by = typeof body.by === "string" && /^[a-z0-9_-]{1,32}$/.test(body.by) ? body.by : undefined;
+      const reason = typeof body.reason === "string" ? body.reason.slice(0, 140) : undefined;
+      // Answer after the sockets are closed, like the real relay (the ender's own daemon sees 4410 before this reply).
+      const closed = endRoom(roomName, by, reason);
+      json(200, { ok: true, room: roomName, ended: true, closed });
+    });
+  }
+
   function handleFiles(req: IncomingMessage, res: ServerResponse): void {
     const url = new URL(req.url ?? "/", "http://x");
+    const end = url.pathname.match(/^\/api\/rooms\/([^/]+)\/end$/);
+    if (end && req.method === "POST") { handleEnd(req, res, decodeURIComponent(end[1]!), url); return; }
     const m = url.pathname.match(/^\/api\/files\/([^/]+)(?:\/([^/]+))?(\/meta)?$/);
     if (!m) { res.writeHead(404).end("not found"); return; }
     const roomName = decodeURIComponent(m[1]!);
@@ -168,6 +223,11 @@ export function startFakeRelay(port: number, options: FakeRelayOptions = {}): Pr
         return;
       }
     }
+    if (ended.has(roomName)) {
+      ws.send(JSON.stringify({ type: "error", message: ENDED_MESSAGE }));
+      ws.close(ROOM_ENDED_CLOSE, ENDED_MESSAGE);
+      return;
+    }
     const r = room(roomName);
     const conn: Conn = { ws, user, role, offers: [], helloed: false };
     r.conns.add(conn);
@@ -208,6 +268,8 @@ export function startFakeRelay(port: number, options: FakeRelayOptions = {}): Pr
         port: bound,
         wsAttempts: () => wsAttempts,
         fileKeys: () => fileKeys.slice(),
+        endRoom,
+        endCalls: () => endCalls.slice(),
         close: () =>
           new Promise<void>((res) => {
             for (const c of wss.clients) c.terminate();

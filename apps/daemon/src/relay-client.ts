@@ -5,7 +5,7 @@
 import { EventEmitter } from "node:events";
 import WebSocket from "ws";
 import chalk from "chalk";
-import { HISTORY_LIMIT, parseFrame, type Frame, type Offer, type PresenceFrame, type Role } from "@mesh/protocol";
+import { HISTORY_LIMIT, ROOM_ENDED_CLOSE_CODE, parseFrame, type Frame, type Offer, type PresenceFrame, type Role } from "@mesh/protocol";
 
 export const DEBUG = process.env.MESH_DEBUG === "1";
 export function debug(...args: unknown[]): void {
@@ -41,6 +41,21 @@ export class RoomKeyError extends Error {
   }
 }
 
+/** The relay's `error` frame on connecting to a room whose owner ended it: "this session was ended by its owner". */
+export function isRoomEndedError(message: string): boolean {
+  return /session (was|has been) ended/i.test(message);
+}
+
+/** Thrown by connect()/switchRoom() when the room was ended by its owner. `relayMessage` is the relay's own wording. */
+export class RoomEndedError extends Error {
+  readonly relayMessage: string;
+  constructor(relayMessage: string) {
+    super(relayMessage);
+    this.name = "RoomEndedError";
+    this.relayMessage = relayMessage;
+  }
+}
+
 export interface SeenFrame {
   frame: Frame;
   receivedAt: number;
@@ -59,6 +74,11 @@ export interface RelayClientEvents {
   presence: [PresenceFrame];
   /** The relay refused our key (error frame mentioning the room key, or close 4401). No reconnect follows. */
   keyError: [string];
+  /**
+   * The room was ended by its owner (`room_ended` frame, close 4410, or the "ended" error frame on connect). No reconnect
+   * follows. Outside a switchRoom() the client is shut down for good; during one, the switch fails and returns to the old room.
+   */
+  roomEnded: [string];
 }
 
 const OUTBOX_LIMIT = 500;
@@ -123,14 +143,17 @@ export class RelayClient extends EventEmitter<RelayClientEvents> {
         this.off("open", onOpen);
         this.off("presence", onPresence);
         this.off("keyError", onKey);
+        this.off("roomEnded", onEnded);
         fn();
       };
       const onOpen = () => { if (!settled && !grace) grace = setTimeout(() => done(resolve), OPEN_GRACE_MS); };
       const onPresence = () => done(resolve);
       const onKey = (message: string) => done(() => reject(new RoomKeyError(message)));
+      const onEnded = (message: string) => done(() => reject(new RoomEndedError(message)));
       this.on("open", onOpen);
       this.on("presence", onPresence);
       this.on("keyError", onKey);
+      this.on("roomEnded", onEnded);
       this.dial();
     });
   }
@@ -142,6 +165,18 @@ export class RelayClient extends EventEmitter<RelayClientEvents> {
     this.close();
     console.error(chalk.red(ROOM_KEY_HELP));
     this.emit("keyError", message);
+  }
+
+  /**
+   * The owner ended the room: never reconnect. While switching, the switch fails (switchRoom's catch goes back to the
+   * previous room); otherwise this client is shut down for good.
+   */
+  private endRoom(message: string): void {
+    if (this.closed && !this.ws) return; // already handled (room_ended / error frame, then close 4410)
+    debug("room ended", message);
+    if (this.switching) this.close();
+    else this.shutdown();
+    this.emit("roomEnded", message);
   }
 
   private gen = 0;
@@ -171,6 +206,12 @@ export class RelayClient extends EventEmitter<RelayClientEvents> {
         this.rejectKey(reason.toString() || "room key required");
         return;
       }
+      if (code === ROOM_ENDED_CLOSE_CODE) {
+        this.connected = false;
+        if (this.ws === ws) this.ws = undefined;
+        this.endRoom(reason.toString() || "this session was ended by its owner");
+        return;
+      }
       const was = this.connected;
       this.connected = false;
       if (this.ws === ws) this.ws = undefined;
@@ -197,7 +238,14 @@ export class RelayClient extends EventEmitter<RelayClientEvents> {
       this.replaying = false; // relay sends presence right after the replay
       this.lastPresence = frame;
       this.emit("presence", frame);
+    } else if (frame.type === "room_ended") {
+      this.endRoom(frame.message);
+      return;
     } else if (frame.type === "error") {
+      if (isRoomEndedError(frame.message)) {
+        this.endRoom(frame.message);
+        return;
+      }
       if (isRoomKeyError(frame.message)) {
         console.error(chalk.red(`relay error: ${frame.message}`));
         this.rejectKey(frame.message);

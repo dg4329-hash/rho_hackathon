@@ -3,7 +3,7 @@
  *   - parse a room link (https://host/r/room) into relay + room
  *   - default handle from git config / OS user
  *   - register the local MCP server with Claude Code, Cursor, Codex (whichever are present)
- *   - install the Claude Code hooks (prompt/file/tool/stop → daemon) into the current project
+ *   - install the Claude Code hooks (prompt/pre-edit/file/tool/stop → daemon) into the current project
  * Every step is best-effort: a failure prints one dim line and never blocks the join.
  */
 import { execFileSync, spawnSync } from "node:child_process";
@@ -193,6 +193,7 @@ export function installClaudeHooks(cwd: string, port: number): RegisterResult {
   const entry = (kind: string, matcher?: string) => ({ ...(matcher ? { matcher } : {}), hooks: [{ type: "command", command: cmd(kind), timeout: 5 }] });
   const before = JSON.stringify(hooks);
   hooks.UserPromptSubmit = [...strip(hooks.UserPromptSubmit), entry("prompt")];
+  hooks.PreToolUse = [...strip(hooks.PreToolUse), entry("pre_edit", "Edit|Write|MultiEdit")]; // conflict warning: who else touched this file
   hooks.PostToolUse = [...strip(hooks.PostToolUse), entry("file_touched", "Edit|Write|MultiEdit"), entry("tool_call", "mcp__.*")];
   hooks.Stop = [...strip(hooks.Stop), entry("status")];
   if (JSON.stringify(hooks) === before) return { tool: "Claude Code hooks", status: "already" };

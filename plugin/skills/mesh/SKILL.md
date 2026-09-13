@@ -36,3 +36,8 @@ Requests wait about 2 minutes for an answer, then the daemon falls back to a nat
 
 If the tools are missing, the daemon is not running: tell the user to run `mesh join <room-link> --background`
 (or the relay's install one-liner); the plugin's SessionStart hook restarts it automatically afterwards.
+
+## Rooms: join, switch, leave
+- **Switch/join another room** (daemon already running): call `switch_room` with the room name or the room link the user gave you (`https://<relay>/r/<room>`). Only when the user explicitly asks.
+- **Leave**: call `leave_room` only when the user explicitly asks to leave or disconnect. The daemon stops; it will not auto-restart.
+- **Join from nothing** (no mesh tools available): run the join in a shell — `node ~/.mesh/mesh.mjs join <room-or-link> --background` — or the relay's one-liner from the room page; then tell the user to restart the session once so the tools appear.

@@ -33,6 +33,8 @@ import { CHUNK_CHARS, isCompound, matchShellOffer, resolveOfferCommand, runShell
 export interface CoreOptions {
   /** Called by leave(): the CLI stops everything and exits. */
   onLeave?: (reason?: string) => void;
+  /** Called after a successful switchRoom so the CLI can persist the new join target. */
+  onSwitch?: (room: string, relay: string) => void;
   config: TeamConfig;
   cwd: string;
   client: RelayClient;
@@ -455,6 +457,19 @@ export function createCore(opts: CoreOptions): DaemonCore & { client: RelayClien
       say(chalk.yellow(`leaving room ${config.room}${reason ? ` (${reason})` : ""}`));
       client.send({ type: "event", kind: "status", summary: `left the room${reason ? `: ${reason}` : ""}` });
       setTimeout(() => opts.onLeave?.(reason), delayMs);
+    },
+
+    async switchRoom(room: string, relay?: string) {
+      const target = room.trim().toLowerCase();
+      if (!/^[a-z0-9][a-z0-9-]{1,40}$/.test(target)) throw new Error(`bad room name '${room}' (letters, digits, dashes)`);
+      say(chalk.yellow(`switching room ${config.room} → ${target}${relay ? ` via ${relay}` : ""}`));
+      client.send({ type: "event", kind: "status", summary: `left the room (switched to ${target})` });
+      await new Promise((r) => setTimeout(r, 150));
+      await client.switchRoom(target, relay);
+      config.room = target;
+      if (relay) config.relay = relay;
+      opts.onSwitch?.(target, config.relay);
+      return { room: target, relay: config.relay };
     },
 
     relayStatus() {

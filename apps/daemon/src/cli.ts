@@ -167,7 +167,8 @@ program
     });
     const leaveRef: { current?: () => void } = {};
     const core = createCore({
-      onLeave: () => leaveRef.current?.(), config, cwd, client, mcpImport, shellOffers, mcpOffers: imported.offers });
+      onLeave: () => leaveRef.current?.(),
+      onSwitch: (room, relay) => { try { writeJoinConfig({ room, relay, user: config.user, port, cwd, updatedAt: new Date().toISOString() }); } catch { /* best effort */ } try { const st = loadState(); if (st) writeState({ ...st, room, relay }); } catch { /* ignore */ } }, config, cwd, client, mcpImport, shellOffers, mcpOffers: imported.offers });
     client.on("open", () => console.log(chalk.green(`● connected to ${config.relay} room=${config.room} as ${config.user}`)));
     client.on("close", () => console.log(chalk.yellow("○ relay disconnected; reconnecting…")));
     client.on("presence", (p) => {

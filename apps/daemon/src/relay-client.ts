@@ -45,8 +45,8 @@ export class RelayClient extends EventEmitter<RelayClientEvents> {
   /** True between (re)connect and the relay's post-replay presence frame. Requests seen while replaying are history, not new work. */
   replaying = false;
   readonly user: string;
-  readonly room: string;
-  readonly relay: string;
+  room: string;
+  relay: string;
   readonly role: Role;
   offers: Offer[];
   private ws: WebSocket | undefined;
@@ -81,12 +81,16 @@ export class RelayClient extends EventEmitter<RelayClientEvents> {
     });
   }
 
+  private gen = 0;
+
   private dial(): void {
     if (this.closed) return;
     debug("dial", this.url);
     const ws = new WebSocket(this.url);
+    const gen = ++this.gen; // events from an older socket (e.g. after switchRoom) must not reconnect or mutate state
     this.ws = ws;
     ws.on("open", () => {
+      if (gen !== this.gen) { try { ws.close(); } catch { /* ignore */ } return; }
       this.connected = true;
       this.backoffMs = 1000;
       this.replaying = true;
@@ -94,9 +98,10 @@ export class RelayClient extends EventEmitter<RelayClientEvents> {
       this.flushOutbox();
       this.emit("open");
     });
-    ws.on("message", (data) => this.onMessage(data.toString()));
+    ws.on("message", (data) => { if (gen === this.gen) this.onMessage(data.toString()); });
     ws.on("error", (err) => debug("ws error", err.message));
     ws.on("close", (code, reason) => {
+      if (gen !== this.gen) return; // stale socket: the newer connection owns reconnect
       const was = this.connected;
       this.connected = false;
       if (this.ws === ws) this.ws = undefined;
@@ -173,6 +178,18 @@ export class RelayClient extends EventEmitter<RelayClientEvents> {
 
   status(): "connected" | "disconnected" {
     return this.connected ? "connected" : "disconnected";
+  }
+
+  /** Leave the current room and join another (optionally on another relay). History and presence reset. */
+  switchRoom(room: string, relay?: string): Promise<void> {
+    this.close();
+    this.room = room;
+    if (relay) this.relay = relay;
+    this.history.length = 0;
+    this.lastPresence = undefined;
+    this.replaying = false;
+    this.backoffMs = 1000;
+    return this.connect();
   }
 
   close(): void {

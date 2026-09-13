@@ -5,6 +5,7 @@
   "cwd": ".",
   "timeoutSeconds": 120,
   "allowArbitrary": "ask",
+  "gitOffers": true,
   "import": { "fromClaudeCode": true, "fromCursor": true, "servers": ["*"], "defaultPermission": "ask" },
   "permissions": { "*.list_*": "always", "*.get_*": "always", "*.delete_*": "never" },
   "notes": { "supabase.*": "Prod project ref abcd1234. Users are in public.profiles. Read-only unless the user says otherwise." },

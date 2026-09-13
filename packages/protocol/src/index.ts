@@ -122,6 +122,7 @@ export const TeamConfig = z.object({
   permissions: z.record(Permission).default({}),   // glob on offer name → permission
   notes: z.record(z.string()).default({}),         // glob on offer name → owner notes
   offers: z.array(ShellOfferConfig).default([]),   // shell offers
+  gitOffers: z.boolean().default(true),            // add read-only git.status/diff/log/branch offers when cwd is a git repo
 });
 export type ShellOfferConfig = z.infer<typeof ShellOfferConfig>;
 export type TeamConfig = z.infer<typeof TeamConfig>;

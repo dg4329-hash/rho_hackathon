@@ -4,10 +4,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import chalk from "chalk";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, openSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { DEFAULT_PORT, type Offer, type PendingRequest, type TeamConfig } from "@mesh/protocol";
+import { DEFAULT_PORT, type Offer, type PendingRequest, type ShellOfferConfig, type TeamConfig } from "@mesh/protocol";
 import { configFromFlags, loadConfig, userCwd } from "./config.js";
 import { createCore } from "./core.js";
 import { createLocalServer } from "./local-server.js";
@@ -32,6 +32,29 @@ program.name("mesh").description("borrow a teammate's machine, not their credent
 function fail(msg: string, code = 1): never {
   console.error(chalk.red(msg));
   process.exit(code);
+}
+
+/**
+ * Default visibility offers: read-only git commands, added automatically when the daemon's cwd is a git repo and the
+ * owner hasn't defined an offer with the same name. Fixed lines (exact match only), so `always` can't leak into other
+ * git commands. Disable with --no-git-offers or `"gitOffers": false` in team.json.
+ */
+export const DEFAULT_GIT_OFFERS: ShellOfferConfig[] = [
+  { name: "git.status", command: "git status --short --branch", description: "Working-tree status of my repo (read-only). Call by name.", permission: "always" },
+  { name: "git.diff", command: "git diff HEAD", description: "My uncommitted diff, staged + unstaged (read-only). Call by name.", permission: "always" },
+  { name: "git.log", command: "git log --oneline -20", description: "My last 20 commits (read-only). Call by name.", permission: "always" },
+  { name: "git.branch", command: "git rev-parse --abbrev-ref HEAD", description: "Which branch I'm on (read-only). Call by name.", permission: "always" },
+];
+
+function isGitRepo(dir: string): boolean {
+  return spawnSync("git", ["rev-parse", "--is-inside-work-tree"], { cwd: dir, stdio: "ignore" }).status === 0;
+}
+
+/** config.offers plus DEFAULT_GIT_OFFERS (when enabled and in a git repo), without overriding user-defined names. */
+export function effectiveShellOffers(config: TeamConfig, cwd: string, enableGitOffers: boolean): ShellOfferConfig[] {
+  if (!enableGitOffers || config.gitOffers === false || !isGitRepo(cwd)) return config.offers;
+  const names = new Set(config.offers.map((o) => o.name));
+  return [...config.offers, ...DEFAULT_GIT_OFFERS.filter((o) => !names.has(o.name))];
 }
 
 function shellOffersFrom(config: TeamConfig): Offer[] {
@@ -75,8 +98,9 @@ program
   .option("--cursor", "force Cursor registration even if no .cursor dir is present")
   .option("--codex", "force Codex registration even if codex isn't installed")
   .option("--background", "run detached in the background (approvals via native OS dialogs); see `mesh status` / `mesh stop`")
+  .option("--no-git-offers", "don't add the default read-only git offers (git.status/diff/log/branch)")
   .option("--no-git-watch", "don't emit file_touched events from git status (on by default inside a git repo)")
-  .action(async (roomArg: string, flags: CommonFlags & { port: string; register: boolean; cursor?: boolean; codex?: boolean; background?: boolean; gitWatch?: boolean }) => {
+  .action(async (roomArg: string, flags: CommonFlags & { port: string; register: boolean; cursor?: boolean; codex?: boolean; background?: boolean; gitWatch?: boolean; gitOffers?: boolean }) => {
     const target = parseRoomArg(roomArg);
     const room = target.room;
     if (target.relay && !flags.relay) flags.relay = target.relay;
@@ -126,6 +150,7 @@ program
     );
     if (imported.skipped.length) console.log(chalk.dim("  (add a shell offer in team.json for anything skipped)"));
 
+    config.offers = effectiveShellOffers(config, cwd, flags.gitOffers !== false);
     const shellOffers = shellOffersFrom(config);
     const client = new RelayClient({
       relay: config.relay,

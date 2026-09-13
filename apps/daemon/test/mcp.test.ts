@@ -62,7 +62,13 @@ async function testLocalServer() {
     ],
     relayStatus: () => "connected",
     async pendingApprovals() { return []; },
+    async watchPoll() { return { pending: [], messages: [] }; },
     decide: (id) => id === "req-1",
+    cwd: os.tmpdir(),
+    async sendFile(_to, filePath) {
+      return { id: "art-1", name: path.basename(filePath), mime: "text/plain", size: 3, url: "https://relay.example/api/files/rho/art-1" };
+    },
+    async fetchArtifact() { throw new Error("no artifact with id 'x'"); },
   };
 
   const port = await freePort();
@@ -73,7 +79,8 @@ async function testLocalServer() {
     await client.connect(new StreamableHTTPClientTransport(new URL(`http://localhost:${port}/mcp`)));
 
     const { tools } = await client.listTools();
-    check(tools.length === 10, "listTools returns 10 tools", tools.map((t) => t.name));
+    check(tools.length === 12, "listTools returns 12 tools", tools.map((t) => t.name));
+    check(tools.some((t) => t.name === "send_file") && tools.some((t) => t.name === "fetch_artifact"), "send_file + fetch_artifact registered");
     check(tools.every((t) => (t.description ?? "").length > 0), "every tool has a description");
     const approve = tools.find((t) => t.name === "approve_request");
     check((approve?._meta as Record<string, unknown> | undefined)?.["anthropic/requiresUserInteraction"] === true, "approve_request carries anthropic/requiresUserInteraction", approve?._meta);
@@ -118,6 +125,13 @@ async function testLocalServer() {
     check(pe.ok === true, "post_event ok");
     const ta = JSON.parse(textOf(await client.callTool({ name: "team_activity", arguments: {} })));
     check(ta.events.length === 2, "team_activity returns 2 entries", ta);
+
+    const sf = JSON.parse(textOf(await client.callTool({ name: "send_file", arguments: { to: "tarush", path: "a.txt" } })));
+    check(sf.ok === true && sf.artifact.name === "a.txt", "send_file returns the artifact", sf);
+    const sfOff = await client.callTool({ name: "send_file", arguments: { to: "ghost", path: "a.txt" } });
+    check(sfOff.isError === true && textOf(sfOff).includes("not online"), "send_file to offline teammate → isError");
+    const fa = await client.callTool({ name: "fetch_artifact", arguments: { id: "x" } });
+    check(fa.isError === true && textOf(fa).includes("no artifact"), "fetch_artifact core error → isError", textOf(fa));
 
     const health = await (await fetch(`http://localhost:${port}/health`)).json();
     check(health.user === "dev" && health.room === "rho" && health.relay === "connected" && health.members === 2, "/health", health);

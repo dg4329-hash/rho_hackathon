@@ -10,15 +10,19 @@ import express, { type Request, type Response } from "express";
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import fs from "node:fs";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import {
   TOOL_DESCRIPTIONS, AskTeammateInput, CheckJobInput, PostEventInput, TeamActivityInput, DescribeCapabilityInput, SendMessageInput, InboxInput,
-  ApproveRequestInput, EventKind, type Offer,
+  ApproveRequestInput, EventKind, SendFileInput, FetchArtifactInput, type Offer,
 } from "@mesh/protocol";
 import type { DaemonCore, LocalServer } from "./api.js";
 import { exampleArgs, validateAgainstSchema } from "./schema.js";
 
 const SUMMARY_CHARS = 120;
+/** fetch_artifact returns images inline up to this size, and text / JSON up to INLINE_TEXT_BYTES. */
+const INLINE_IMAGE_BYTES = 5 * 1024 * 1024;
+const INLINE_TEXT_BYTES = 200 * 1024;
 
 // ---------- result helpers ----------
 
@@ -170,6 +174,41 @@ export function buildMcpServer(core: DaemonCore): McpServer {
   }, guard((raw) => {
     const opts = InboxInput.parse(raw);
     return ok({ messages: core.inbox(opts) });
+  }));
+
+  server.registerTool("send_file", {
+    description: TOOL_DESCRIPTIONS.send_file,
+    inputSchema: {
+      to: z.string().min(1).describe("teammate handle from list_teammates, or 'all'"),
+      path: z.string().min(1).describe("file to send; absolute or relative to the project directory (must be inside the project or ~/.mesh)"),
+      note: z.string().max(500).optional().describe("one line for the recipient: what this is / what to do with it"),
+    },
+  }, guard(async (raw) => {
+    const { to, path: filePath, note } = SendFileInput.parse(raw);
+    if (to !== "all" && !core.members().some((m) => m.user === to)) return fail(`no teammate '${to}' online. ${offerNames(core, to)}`);
+    const artifact = await core.sendFile(to, filePath, note);
+    return ok({ ok: true, to, artifact });
+  }));
+
+  server.registerTool("fetch_artifact", {
+    description: TOOL_DESCRIPTIONS.fetch_artifact,
+    inputSchema: {
+      url: z.string().url().optional().describe("artifact url from ask_teammate / check_job / inbox output"),
+      id: z.string().optional().describe("artifact id (from the same places) if you'd rather not paste the url"),
+      saveAs: z.string().optional().describe("file name to save under mesh-artifacts/<from>/ (default: the artifact's own name)"),
+    },
+  }, guard(async (raw) => {
+    const input = FetchArtifactInput.parse(raw);
+    if (!input.url && !input.id) return fail("pass url or id (both come from ask_teammate / check_job results, inbox messages, or team_activity)");
+    const fetched = await core.fetchArtifact(input);
+    const content: CallToolResult["content"] = [{ type: "text", text: JSON.stringify({ path: fetched.path, name: fetched.name, mime: fetched.mime, size: fetched.size }, null, 2) }];
+    const mime = fetched.mime.toLowerCase();
+    if (mime.startsWith("image/") && mime !== "image/svg+xml" && fetched.size <= INLINE_IMAGE_BYTES) {
+      content.push({ type: "image", data: fs.readFileSync(fetched.path).toString("base64"), mimeType: mime });
+    } else if ((mime.startsWith("text/") || mime === "application/json" || mime === "image/svg+xml") && fetched.size <= INLINE_TEXT_BYTES) {
+      content.push({ type: "text", text: fs.readFileSync(fetched.path, "utf8") });
+    }
+    return { content };
   }));
 
   server.registerTool("team_activity", {

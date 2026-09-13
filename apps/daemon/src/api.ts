@@ -5,7 +5,7 @@
  *   local-server.ts(HTTP + MCP server for the IDE agent)           implements LocalServer
  * Do not change these interfaces without telling the other builder.
  */
-import type { Offer, Role, TeamConfig, JobResult, EventKind, InboxMessage, PendingRequest } from "@mesh/protocol";
+import type { Offer, Role, TeamConfig, JobResult, EventKind, InboxMessage, PendingRequest, Artifact } from "@mesh/protocol";
 
 export interface Member { user: string; role: Role; offers: Offer[] }
 
@@ -23,7 +23,15 @@ export interface Job {
   durationMs?: number;
   reason?: string;           // when denied
   createdAt: number;         // Date.now()
+  artifacts?: Artifact[];    // from the result frame (docs/FILES-API.md)
+  artifactErrors?: string[];
 }
+
+/** What fetch_artifact writes to disk. `from` is the uploader (the mesh-artifacts/<from>/ folder). */
+export interface FetchedArtifact { path: string; name: string; mime: string; size: number; from: string }
+
+/** A non-text MCP content part passed through callTool so core can upload images / blobs as artifacts. */
+export interface McpContentPart { type: string; mimeType?: string; data?: string; uri?: string; blob?: string }
 
 export interface ActivityEntry { ts: string; from: string; type: string; summary: string }
 
@@ -40,6 +48,8 @@ export interface AskInput {
 export interface DaemonCore {
   readonly me: string;
   readonly config: TeamConfig;
+  /** Working directory shell offers run in and artifacts are saved under (mesh-artifacts/). */
+  readonly cwd: string;
   /** Members from the last presence frame, excluding self. Feeds included with role 'feed'. */
   members(): Member[];
   findOffer(who: string, name: string): Offer | undefined;
@@ -64,6 +74,16 @@ export interface DaemonCore {
   watchPoll(waitMs: number, opts?: { since?: string }): Promise<{ pending: PendingRequest[]; messages: InboxMessage[] }>;
   /** Answer a pending request. False when the id is not (or no longer) pending. */
   decide(id: string, decision: "approved" | "denied", reason?: string): boolean;
+  /**
+   * Upload a file (must be under cwd or ~/.mesh) to the relay and emit an `event` kind `file` to a teammate
+   * ('all' = everyone). Throws with a readable message when the path is outside those roots or the upload fails.
+   */
+  sendFile(to: string, filePath: string, note?: string): Promise<Artifact>;
+  /**
+   * Download an artifact (by url, or by id looked up in recent results / inbox) to
+   * <cwd>/mesh-artifacts/<from>/<name>. saveAs overrides the file name; never writes outside cwd.
+   */
+  fetchArtifact(input: { url?: string; id?: string; saveAs?: string }): Promise<FetchedArtifact>;
 }
 
 /** Implemented by mcp-import.ts. Consumed by core.ts when serving incoming `tool` requests and when building `hello` offers. */
@@ -72,8 +92,11 @@ export interface McpImport {
   start(config: TeamConfig, cwd: string): Promise<{ offers: Offer[]; skipped: Array<{ server: string; reason: string }> }>;
   /** null if args satisfy the offer's inputSchema, else a human-readable error. Unknown offer → error string. */
   validateArgs(offerName: string, args: Record<string, unknown>): string | null;
-  /** Call the tool on the owner's server. Flatten content to text. Throws on transport failure. */
-  callTool(offerName: string, args: Record<string, unknown>): Promise<{ text: string; isError: boolean }>;
+  /**
+   * Call the tool on the owner's server. Flatten content to text. Throws on transport failure.
+   * `parts` carries the non-text content parts (image / audio / resource) verbatim so core can turn them into artifacts.
+   */
+  callTool(offerName: string, args: Record<string, unknown>): Promise<{ text: string; isError: boolean; parts?: McpContentPart[] }>;
   stop(): Promise<void>;
 }
 

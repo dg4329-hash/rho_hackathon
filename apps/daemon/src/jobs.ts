@@ -75,6 +75,8 @@ export function toJobResult(job: Job): JobResult {
         exitCode: job.exitCode ?? null,
         output: jobTail(job),
         durationMs: job.durationMs ?? 0,
+        ...(job.artifacts?.length ? { artifacts: job.artifacts } : {}),
+        ...(job.artifactErrors?.length ? { artifactErrors: job.artifactErrors } : {}),
       };
     default:
       return { jobId: job.id, status: job.status };

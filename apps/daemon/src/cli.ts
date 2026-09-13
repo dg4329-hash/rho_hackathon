@@ -261,11 +261,15 @@ program
       try {
         const r = await fetch(`${base}/pending?wait=25&messages=1`, { signal: AbortSignal.timeout(40_000) });
         if (r.ok) {
-          const body = (await r.json()) as { pending?: PendingRequest[]; messages?: Array<{ id: string; from: string; to: string; text: string }> };
+          const body = (await r.json()) as { pending?: PendingRequest[]; messages?: Array<{ id: string; from: string; to: string; text: string; artifact?: { id: string; name: string; mime: string; size: number; url: string } }> };
           list = body.pending ?? [];
           for (const m of body.messages ?? []) {
             if (printed.has("msg:" + m.id)) continue;
             printed.add("msg:" + m.id);
+            if (m.artifact) {
+              console.log(`mesh: ${m.from} sent you a file${m.to === "all" ? " (to everyone)" : ""}: ${m.artifact.name} (${m.artifact.mime}, ${m.artifact.size} bytes)${m.text && m.text !== `sent ${m.artifact.name}` ? `, note: ${JSON.stringify(m.text)}` : ""}. Tell the user; to look at it call the mesh fetch_artifact tool with url ${JSON.stringify(m.artifact.url)} (it lands in ./mesh-artifacts/ and images come back inline).`);
+              continue;
+            }
             console.log(`mesh: message from ${m.from}${m.to === "all" ? " (to everyone)" : ""}: ${JSON.stringify(m.text)}. Tell the user, and if a reply is needed use the mesh send_message tool (to: ${JSON.stringify(m.from)}).`);
           }
         }

@@ -15,7 +15,7 @@ import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
 import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { Offer, Permission, TeamConfig } from "@mesh/protocol";
-import type { McpImport } from "./api.js";
+import type { McpContentPart, McpImport } from "./api.js";
 import { validateAgainstSchema } from "./schema.js";
 
 const CONNECT_TIMEOUT_MS = 10_000;
@@ -208,6 +208,27 @@ export function flattenContent(content: unknown): string {
   return text;
 }
 
+/** Non-text parts, verbatim enough for core to upload them (image data / resource blob). */
+export function rawParts(content: unknown): McpContentPart[] {
+  if (!Array.isArray(content)) return [];
+  const out: McpContentPart[] = [];
+  for (const raw of content as ContentPart[]) {
+    if (raw.type === "text") continue;
+    if (raw.type === "resource") {
+      const r = (raw.resource ?? {}) as { uri?: string; mimeType?: string; blob?: string };
+      out.push({ type: "resource", uri: r.uri, mimeType: r.mimeType, blob: typeof r.blob === "string" ? r.blob : undefined });
+      continue;
+    }
+    out.push({
+      type: raw.type,
+      mimeType: typeof raw.mimeType === "string" ? raw.mimeType : undefined,
+      data: typeof raw.data === "string" ? raw.data : undefined,
+      uri: typeof raw.uri === "string" ? raw.uri : undefined,
+    });
+  }
+  return out;
+}
+
 // ---------- McpImport ----------
 
 interface Imported { entry: ServerEntry; client: Client | null; tools: Map<string, object | undefined> }
@@ -286,7 +307,8 @@ export function createMcpImport(): McpImport {
         s.client = null;
         result = await run(); // second failure propagates
       }
-      return { text: flattenContent(result.content), isError: !!result.isError };
+      const parts = rawParts(result.content);
+      return { text: flattenContent(result.content), isError: !!result.isError, ...(parts.length ? { parts } : {}) };
     },
 
     async stop() {

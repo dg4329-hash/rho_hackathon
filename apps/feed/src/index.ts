@@ -46,6 +46,7 @@ const c = {
   status: chalk.dim,
   note: chalk.white,
   message: chalk.cyanBright,
+  file: chalk.greenBright,
   header: chalk.bold.bgBlue.white,
   rule: chalk.blue.dim,
   online: chalk.green,
@@ -53,7 +54,7 @@ const c = {
 };
 
 const ICON: Record<EventFrame["kind"], string> = {
-  prompt: "💬", tool_call: "🔧", file_touched: "📁", status: "⏸ ", note: "📝", message: "✉ ",
+  prompt: "💬", tool_call: "🔧", file_touched: "📁", status: "⏸ ", note: "📝", message: "✉ ", file: "📎",
 };
 
 const pad = (s: string, w = NAME_W) => s.length >= w ? s : s + " ".repeat(w - s.length);

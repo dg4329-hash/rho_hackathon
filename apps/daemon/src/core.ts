@@ -3,9 +3,13 @@
  * (permission → approval → shell/mcp execution → frames), events, activity, members.
  */
 import { randomUUID } from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import chalk from "chalk";
 import {
   OUTPUT_TAIL_BYTES,
+  Artifact,
   type EventKind,
   type Frame,
   type Offer,
@@ -16,8 +20,9 @@ import {
   type InboxMessage,
   type EventFrame,
 } from "@mesh/protocol";
-import type { ActivityEntry, AskInput, DaemonCore, Job, McpImport, Member } from "./api.js";
+import type { ActivityEntry, AskInput, DaemonCore, FetchedArtifact, Job, McpContentPart, McpImport, Member } from "./api.js";
 import { askApproval } from "./approval.js";
+import { artifactMeta, downloadArtifact, extFor, formatSize, mimeFor, scanOutputForFiles, uploadBytes, uploadFile } from "./artifacts.js";
 import { nativeNotify } from "./native.js";
 import { PendingApprovals } from "./pending.js";
 import { Jobs, toJobResult } from "./jobs.js";
@@ -39,6 +44,9 @@ export interface CoreOptions {
 }
 
 const ACTIVITY_LIMIT = 100;
+/** Full command output kept for the MESH_FILE scan (the frame tail stays 8 KB). */
+const SCAN_CAPTURE_BYTES = 8 * 1024 * 1024;
+const KNOWN_ARTIFACTS_LIMIT = 500;
 
 function chunkText(text: string, size = CHUNK_CHARS): string[] {
   const out: string[] = [];
@@ -54,6 +62,20 @@ export function createCore(opts: CoreOptions): DaemonCore & { client: RelayClien
   const say = (line: string) => {
     if (!opts.quiet) console.log(line);
   };
+
+  // ---------- artifacts we have seen (results + inbox), for fetch_artifact by id / url ----------
+  const knownArtifacts = new Map<string, { artifact: Artifact; from: string }>();
+  function remember(artifact: Artifact, from: string): void {
+    knownArtifacts.set(artifact.id, { artifact, from });
+    if (knownArtifacts.size > KNOWN_ARTIFACTS_LIMIT) knownArtifacts.delete(knownArtifacts.keys().next().value as string);
+  }
+  function knownByUrl(url: string): { artifact: Artifact; from: string } | undefined {
+    for (const k of knownArtifacts.values()) if (k.artifact.url === url) return k;
+    return undefined;
+  }
+  async function upload(name: string, bytes: Uint8Array, mime?: string): Promise<Artifact> {
+    return uploadBytes(config.relay, config.room, me, name, bytes, mime);
+  }
 
   // ---------- frames for jobs we own ----------
   function onOwnedFrame(frame: Frame): void {
@@ -84,6 +106,11 @@ export function createCore(opts: CoreOptions): DaemonCore & { client: RelayClien
         job.exitCode = frame.exitCode;
         job.durationMs = frame.durationMs;
         if (job.chunks.length === 0 && frame.tail) job.chunks.push(...chunkText(frame.tail));
+        if (frame.artifacts?.length) {
+          job.artifacts = frame.artifacts;
+          for (const a of frame.artifacts) remember(a, frame.from);
+        }
+        if (frame.artifactErrors?.length) job.artifactErrors = frame.artifactErrors;
         break;
     }
     jobs.notify(job.id);
@@ -130,15 +157,70 @@ export function createCore(opts: CoreOptions): DaemonCore & { client: RelayClien
     // Substitute the owner's real command path for a matched offer (requester only knows the basename from the offer text).
     const actual = match.kind === "offer" ? resolveOfferCommand(command, match.offer.command) : command;
     if (permission !== "always") say(chalk.dim(`  running for ${req.from}: ${actual}`));
+    // Capture the whole output (not just the 8 KB tail) so a `MESH_FILE:` line early in a long run is still found.
+    // Per stream, so a stderr chunk landing mid-line can't split a stdout `MESH_FILE:` line.
+    const captured = { stdout: "", stderr: "" };
+    let capturedOverflow = false;
     const result = await runShell(actual, { cwd, timeoutSeconds: config.timeoutSeconds }, (stream, chunk) => {
+      if (captured[stream].length < SCAN_CAPTURE_BYTES) captured[stream] += chunk; else capturedOverflow = true;
       client.send({ type: "output", id: req.id, stream, chunk });
     });
-    client.send({ type: "result", id: req.id, ...result });
+    const { artifacts, artifactErrors } = await shipOutputFiles(req.from, `${captured.stdout}\n${captured.stderr}`, capturedOverflow);
+    client.send({
+      type: "result", id: req.id, ...result,
+      ...(artifacts.length ? { artifacts } : {}),
+      ...(artifactErrors.length ? { artifactErrors } : {}),
+    });
     say(
       chalk.dim(
-        `  ✔ ${req.from} › ${command.length > 60 ? command.slice(0, 59) + "…" : command}  exit ${result.exitCode ?? "null"} in ${result.durationMs} ms${result.timedOut ? " (timed out)" : ""}`,
+        `  ✔ ${req.from} › ${command.length > 60 ? command.slice(0, 59) + "…" : command}  exit ${result.exitCode ?? "null"} in ${result.durationMs} ms${result.timedOut ? " (timed out)" : ""}` +
+          (artifacts.length ? `  📎 ${artifacts.map((a) => a.name).join(", ")}` : ""),
       ),
     );
+  }
+
+  /** `MESH_FILE: <path>` / `PNG: <x.png>` lines in the output → upload each existing file. Failures never fail the job. */
+  async function shipOutputFiles(requester: string, output: string, overflow: boolean): Promise<{ artifacts: Artifact[]; artifactErrors: string[] }> {
+    const artifacts: Artifact[] = [];
+    const artifactErrors: string[] = [];
+    if (overflow) artifactErrors.push(`output exceeded ${formatSize(SCAN_CAPTURE_BYTES)}; MESH_FILE lines after that were not scanned`);
+    for (const file of scanOutputForFiles(output, cwd)) {
+      try {
+        const a = await uploadFile(config.relay, config.room, me, file);
+        artifacts.push(a);
+        remember(a, me);
+      } catch (e) {
+        const msg = (e as Error).message;
+        artifactErrors.push(msg);
+        say(chalk.yellow(`  ⚠ artifact for ${requester}: ${msg}`));
+      }
+    }
+    return { artifacts, artifactErrors };
+  }
+
+  /** MCP `image` parts (base64) and `resource` parts with a blob → artifacts named `<tool>-<n>.<ext>`. */
+  async function shipToolParts(tool: string, parts: McpContentPart[] | undefined): Promise<{ artifacts: Artifact[]; artifactErrors: string[] }> {
+    const artifacts: Artifact[] = [];
+    const artifactErrors: string[] = [];
+    let n = 0;
+    for (const part of parts ?? []) {
+      const b64 = part.type === "image" || part.type === "audio" ? part.data : part.type === "resource" ? part.blob : undefined;
+      if (!b64) continue;
+      n++;
+      const mime = part.mimeType ?? (part.uri ? mimeFor(part.uri) : "application/octet-stream");
+      const fromUri = part.type === "resource" && part.uri ? path.basename(part.uri.replace(/^[a-z]+:\/\//i, "")) : "";
+      const name = fromUri && path.extname(fromUri) ? fromUri : `${tool}-${n}.${extFor(mime)}`;
+      try {
+        const a = await upload(name, Buffer.from(b64, "base64"), mime);
+        artifacts.push(a);
+        remember(a, me);
+      } catch (e) {
+        const msg = (e as Error).message;
+        artifactErrors.push(msg);
+        say(chalk.yellow(`  ⚠ artifact from ${tool}: ${msg}`));
+      }
+    }
+    return { artifacts, artifactErrors };
   }
 
   async function serveTool(req: RequestFrame, tool: string): Promise<void> {
@@ -166,13 +248,15 @@ export function createCore(opts: CoreOptions): DaemonCore & { client: RelayClien
     if (permission !== "always") say(chalk.dim(`  calling for ${req.from}: ${tool}`));
     let text: string;
     let isError: boolean;
+    let parts: McpContentPart[] | undefined;
     try {
-      ({ text, isError } = await mcpImport.callTool(tool, args));
+      ({ text, isError, parts } = await mcpImport.callTool(tool, args));
     } catch (e) {
       text = `tool call failed: ${(e as Error).message}`;
       isError = true;
     }
     for (const chunk of chunkText(text)) client.send({ type: "output", id: req.id, stream: isError ? "stderr" : "stdout", chunk });
+    const { artifacts, artifactErrors } = await shipToolParts(tool, parts);
     client.send({
       type: "result",
       id: req.id,
@@ -180,8 +264,10 @@ export function createCore(opts: CoreOptions): DaemonCore & { client: RelayClien
       durationMs: Date.now() - started,
       timedOut: false,
       tail: text.slice(-OUTPUT_TAIL_BYTES),
+      ...(artifacts.length ? { artifacts } : {}),
+      ...(artifactErrors.length ? { artifactErrors } : {}),
     });
-    say(chalk.dim(`  ✔ ${req.from} › ${tool}  exit ${isError ? 1 : 0} in ${Date.now() - started} ms`));
+    say(chalk.dim(`  ✔ ${req.from} › ${tool}  exit ${isError ? 1 : 0} in ${Date.now() - started} ms` + (artifacts.length ? `  📎 ${artifacts.map((a) => a.name).join(", ")}` : "")));
   }
 
   const REQUEST_MAX_AGE_MS = 30_000;
@@ -208,18 +294,30 @@ export function createCore(opts: CoreOptions): DaemonCore & { client: RelayClien
   // ---------- messages addressed to me ----------
   const messages = new Map<string, InboxMessage>();
   function onMessage(frame: EventFrame): void {
-    if (frame.kind !== "message" || frame.from === me) return;
+    if ((frame.kind !== "message" && frame.kind !== "file") || frame.from === me) return;
     const to = String(frame.data?.to ?? "all");
     if (to !== me && to !== "all") return;
-    const text = String(frame.data?.text ?? frame.summary);
-    const id = typeof frame.data?.id === "string" ? frame.data.id : `${frame.from}:${frame.ts}:${text.slice(0, 40)}`;
+    let artifact: Artifact | undefined;
+    if (frame.kind === "file") {
+      const parsed = Artifact.safeParse(frame.data?.artifact);
+      if (!parsed.success) { debug(`ignoring file event from ${frame.from}: malformed artifact`); return; }
+      artifact = parsed.data;
+      remember(artifact, frame.from);
+    }
+    const note = typeof frame.data?.note === "string" && frame.data.note.trim() ? frame.data.note.trim() : undefined;
+    const text = artifact ? (note ?? `sent ${artifact.name} (${formatSize(artifact.size)})`) : String(frame.data?.text ?? frame.summary);
+    const id = typeof frame.data?.id === "string" ? frame.data.id : artifact ? `${frame.from}:file:${artifact.id}` : `${frame.from}:${frame.ts}:${text.slice(0, 40)}`;
     if (messages.has(id)) return;
-    messages.set(id, { id, ts: frame.ts, from: frame.from, to, text, read: false });
+    messages.set(id, { id, ts: frame.ts, from: frame.from, to, text, read: false, ...(artifact ? { artifact } : {}) });
     pending.wakeAll();
     if (messages.size > 500) messages.delete(messages.keys().next().value as string);
-    say(`${chalk.cyan("✉")} ${chalk.magenta(frame.from)}${to === "all" ? chalk.dim(" (to all)") : ""}: ${text.length > 300 ? text.slice(0, 299) + "…" : text}`);
+    if (artifact) {
+      say(`${chalk.cyan("📎")} ${chalk.magenta(frame.from)}${to === "all" ? chalk.dim(" (to all)") : ""} sent ${chalk.bold(artifact.name)} ${chalk.dim(`(${formatSize(artifact.size)})`)}${note ? `: ${note.length > 200 ? note.slice(0, 199) + "…" : note}` : ""}`);
+    } else {
+      say(`${chalk.cyan("✉")} ${chalk.magenta(frame.from)}${to === "all" ? chalk.dim(" (to all)") : ""}: ${text.length > 300 ? text.slice(0, 299) + "…" : text}`);
+    }
     // OS notification only when nothing better is attached: an overlay or the Claude Code watcher already shows it live.
-    if (!opts.quiet && !pending.watcherAttached() && Math.abs(Date.now() - Date.parse(frame.ts)) < 5 * 60_000) { debug("notify", frame.from); nativeNotify(`mesh: message from ${frame.from}`, text); }
+    if (!opts.quiet && !pending.watcherAttached() && Math.abs(Date.now() - Date.parse(frame.ts)) < 5 * 60_000) { debug("notify", frame.from); nativeNotify(artifact ? `mesh: file from ${frame.from}` : `mesh: message from ${frame.from}`, text); }
   }
 
   client.on("frame", (frame) => {
@@ -232,6 +330,7 @@ export function createCore(opts: CoreOptions): DaemonCore & { client: RelayClien
   const core: DaemonCore & { client: RelayClient; jobs: Jobs } = {
     me,
     config,
+    cwd,
     client,
     jobs,
 
@@ -373,6 +472,57 @@ export function createCore(opts: CoreOptions): DaemonCore & { client: RelayClien
 
     decide(id, decision, reason) {
       return pending.decide(id, decision, reason);
+    },
+
+    async sendFile(to, filePath, note) {
+      const roots = [cwd, path.join(os.homedir(), ".mesh")];
+      const abs = path.resolve(cwd, filePath);
+      let real = abs;
+      try { real = fs.realpathSync(abs); } catch { throw new Error(`${filePath}: no such file`); }
+      const under = (root: string) => { let r = root; try { r = fs.realpathSync(root); } catch { /* keep as-is */ } return real === r || real.startsWith(r + path.sep); };
+      if (!roots.some(under)) throw new Error(`${filePath} is outside the project (${cwd}) and ~/.mesh; send_file only ships files from those.`);
+      const st = fs.statSync(real);
+      if (!st.isFile()) throw new Error(`${filePath} is not a regular file`);
+      const artifact = await uploadFile(config.relay, config.room, me, real);
+      remember(artifact, me);
+      const trimmed = note?.trim() || undefined;
+      client.send({
+        type: "event", kind: "file",
+        summary: `→ ${to}: ${artifact.name} (${formatSize(artifact.size)})${trimmed ? ` — ${trimmed.slice(0, 120)}` : ""}`,
+        data: { id: randomUUID(), to, artifact, ...(trimmed ? { note: trimmed } : {}) },
+      });
+      say(chalk.dim(`  📎 sent ${artifact.name} (${formatSize(artifact.size)}) to ${to}`));
+      return artifact;
+    },
+
+    async fetchArtifact(input): Promise<FetchedArtifact> {
+      let known: { artifact: Artifact; from: string } | undefined;
+      let url = input.url;
+      if (input.id) {
+        known = knownArtifacts.get(input.id);
+        if (!known && !url) {
+          throw new Error(`no artifact with id '${input.id}' in recent results or inbox; pass its url instead (from ask_teammate / check_job / inbox output)`);
+        }
+        url ??= known?.artifact.url;
+      }
+      if (!url) throw new Error("fetch_artifact needs url or id");
+      known ??= knownByUrl(url);
+      let from = known?.from;
+      let name = known?.artifact.name;
+      if (!from || !name) {
+        const meta = await artifactMeta(url);
+        from ??= meta?.from ?? "unknown";
+        name ??= meta?.name ?? decodeURIComponent(path.basename(new URL(url).pathname)) ?? "artifact";
+      }
+      const clean = (s: string) => path.basename(s).replace(/[\/\\\0]/g, "_") || "_";
+      const root = path.resolve(cwd, "mesh-artifacts");
+      const dest = path.resolve(root, clean(from), input.saveAs?.trim() ? input.saveAs.trim() : clean(name));
+      const cwdReal = path.resolve(cwd);
+      if (dest !== cwdReal && !dest.startsWith(cwdReal + path.sep)) throw new Error(`saveAs '${input.saveAs}' would write outside ${cwd}; artifacts stay under mesh-artifacts/`);
+      const { size, mime: servedMime } = await downloadArtifact(url, dest);
+      const mime = known?.artifact.mime ?? (servedMime !== "application/octet-stream" ? servedMime : mimeFor(dest));
+      say(chalk.dim(`  📥 fetched ${path.relative(cwd, dest)} (${formatSize(size)}) from ${from}`));
+      return { path: dest, name: path.basename(dest), mime, size, from };
     },
   };
 

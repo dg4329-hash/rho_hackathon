@@ -33,7 +33,7 @@ Those move your team into a hosted sandbox and pool credentials in a vault. We c
                               │ /r/… │       └────────────────────┘
                               └──▲───┘
                                  │
-                    Abhi: `mesh feed` + the room page (everything in the room)
+                    `mesh feed` / the room page / the overlay (everything in the room)
 ```
 
 1. **relay** (`apps/relay`) — one Node process. WebSocket server with rooms, fan-out of every frame, last 200 frames replayed to late joiners. Same port serves the web front door (`/`, `/r/<room>` room page with the join command, who's online, live feed) the installers (`/install.sh`, `/install.ps1`, downloadable `/join.cmd` / `/join.command`, `/mesh.mjs`, `/emit.js`, `/plugin.tgz`) and the pop-out approval **overlay** (`/overlay`, shipping tonight). No auth: the room name is the secret, and we say so on stage.
@@ -48,25 +48,25 @@ On main: the Claude Code plugin (`docs/PLUGIN.md`) delivers requests and message
 
 Status as of 2026-09-12 (night, `main` @ `c5e4cdc`): cross-laptop proven over the public relay, Mac↔Mac and Mac↔Windows (real Windows: PowerShell one-liner, dialog, message box), one-command install, plugin auto-install, agent-to-agent messages both ways. Overlay + `wait_for_events` shipping tonight.
 
-| step | what | owner | status | acceptance test |
-|---|---|---|---|---|
-| 0 | `packages/protocol` types + CONTRACT.md | Dev | done (10 tools, `message` event, `PendingRequest`) | `pnpm -r typecheck` passes; others can import |
-| 1 | Relay + two terminals echoing | Tarush | done (28/28 contract checks, soak OK); + web front door, room page, installers; public via ngrok on Dev's Mac; **Railway not done** | two `wscat` clients in room `x` see each other's `event` messages |
-| 2 | Daemon: join, offers, approve, spawn, stream | Dev | done; **cross-laptop with two humans, Mac↔Mac and Mac↔Windows** (Git `bash.exe`); native dialog verified on macOS and on a real Windows box (MessageBox); chained commands never inherit `always` | Tarush's daemon runs `echo hi` requested from Dev's laptop, stdout appears on both |
-| 2b | One-command install, zero-config join, auto-registration, background mode | Dev | done (`install.sh` verified macOS + Git Bash; `claude mcp add`, hooks, `codex mcp add` with codex-cli 0.154, `.cursor/mcp.json`; PowerShell installer verified on real Windows; `.cmd`/`.command` downloads; installers stop + restart a running daemon; Claude Code plugin auto-installed from `/plugin.tgz`); one restart (or `/reload-plugins`) still required | fresh laptop: one-liner → `mesh status` shows running → agent lists mesh tools after restart |
-| 3 | Local MCP server in the daemon | Dev | done; called from live Claude Code; **Codex tool calls not exercised (no login)** | Claude Code on Dev's laptop calls `ask_teammate` and gets stdout back in the tool result |
-| 3b | Import owner's MCP servers as offers; `describe_capability`; mcp-form `ask_teammate` | Dev | done (real Claude Code / Cursor configs imported by default; self-import excluded); **no keyed server (Supabase/GitHub) borrowed yet**; OAuth remotes can't be imported | Dev's Claude Code lists, describes, calls a tool imported on Tarush's laptop, gets the tool result |
-| 3c | Agent-to-agent messages (`send_message` / `inbox`, prompt-hook injection, notifications) | Dev | done cross-laptop both ways; live in Claude Code via the plugin watcher; Codex/Cursor via `inbox` / `wait_for_events` (tonight); overlay reply box (tonight) | message sent from Dev's agent shows in Tarush's terminal + notification, and in his agent's next prompt / `inbox` |
-| 4 | Broadcast + `mesh feed` (+ room page) | Abhi | done (real relay + daemons); **not yet on the projector** | third laptop running `mesh feed` shows request → approval → output live |
-| 5 | Hooks: prompts, files touched | Abhi | done; installed automatically by `mesh join`; **prompt → feed not yet timed from live Claude Code on two laptops** | typing a prompt in Claude Code on any laptop shows up in everyone's feed within 2 s |
-| 6 | Real MCPs on Tarush's laptop + Figma shell script | Tarush | partial: `figma-export.sh` supports name lookup (`"Onboarding/Step 2"`, `FIGMA_FILE_KEY`), dry-verified against a mock; **no live `FIGMA_TOKEN` run; no keyed MCP server configured** | each imports cleanly on `mesh join`; `describe_capability` reads well; `figma-export.sh "<frame>"` returns in < 5 s |
-| 7 | End-to-end demo rehearsal | all | not done | the script in §5 runs clean twice in a row |
-| S1 | `check_job` for long commands | Tarush | done (`sleep 70` → running → `check_job` → done; relay soak OK) | `ask_teammate` on `sleep 70` returns a jobId; `check_job` returns exit 0 |
-| S2 | Deny path + `never` permission shown in demo | Dev | done in tests and once by hand; **never on stage** | denied request returns a clear error to the agent |
-| S3 | Web dashboard | Abhi | superseded by the relay's room page (`/r/<room>`) | — |
-| P | Claude Code plugin (in-session approvals + messages) | Dev | on main, auto-installed by `mesh join`; headless flow verified; interactive 3/3 pending | `mesh join` → `/mcp` lists the plugin's tools; a teammate's request appears in the session, **1** approves |
-| O | Overlay: pop-out approval window from the room page | Dev | **shipping tonight** — the demo's approval surface | `Pop out overlay` → request card → **Approve** → output back; close it → OS dialog fallback |
-| W | `wait_for_events` for Codex/Cursor | Dev | **shipping tonight** | *"Codex, watch mesh for the next 10 minutes"* → agent reports the next message/request without approving |
+| step | what | status | acceptance test |
+| --- | --- | --- | --- |
+| 0 | `packages/protocol` types + CONTRACT.md | done (10 tools, `message` event, `PendingRequest`) | `pnpm -r typecheck` passes; others can import |
+| 1 | Relay + two terminals echoing | done (28/28 contract checks, soak OK); + web front door, room page, installers; public via ngrok on Dev's Mac; **Railway not done** | two `wscat` clients in room `x` see each other's `event` messages |
+| 2 | Daemon: join, offers, approve, spawn, stream | done; **cross-laptop with two humans, Mac↔Mac and Mac↔Windows** (Git `bash.exe`); native dialog verified on macOS and on a real Windows box (MessageBox); chained commands never inherit `always` | Tarush's daemon runs `echo hi` requested from Dev's laptop, stdout appears on both |
+| 2b | One-command install, zero-config join, auto-registration, background mode | done (`install.sh` verified macOS + Git Bash; `claude mcp add`, hooks, `codex mcp add` with codex-cli 0.154, `.cursor/mcp.json`; PowerShell installer verified on real Windows; `.cmd`/`.command` downloads; installers stop + restart a running daemon; Claude Code plugin auto-installed from `/plugin.tgz`); one restart (or `/reload-plugins`) still required | fresh laptop: one-liner → `mesh status` shows running → agent lists mesh tools after restart |
+| 3 | Local MCP server in the daemon | done; called from live Claude Code; **Codex tool calls not exercised (no login)** | Claude Code on Dev's laptop calls `ask_teammate` and gets stdout back in the tool result |
+| 3b | Import owner's MCP servers as offers; `describe_capability`; mcp-form `ask_teammate` | done (real Claude Code / Cursor configs imported by default; self-import excluded); **no keyed server (Supabase/GitHub) borrowed yet**; OAuth remotes can't be imported | Dev's Claude Code lists, describes, calls a tool imported on Tarush's laptop, gets the tool result |
+| 3c | Agent-to-agent messages (`send_message` / `inbox`, prompt-hook injection, notifications) | done cross-laptop both ways; live in Claude Code via the plugin watcher; Codex/Cursor via `inbox` / `wait_for_events` (tonight); overlay reply box (tonight) | message sent from Dev's agent shows in Tarush's terminal + notification, and in his agent's next prompt / `inbox` |
+| 4 | Broadcast + `mesh feed` (+ room page) | done (real relay + daemons); **not yet on the projector** | third laptop running `mesh feed` shows request → approval → output live |
+| 5 | Hooks: prompts, files touched | done; installed automatically by `mesh join`; **prompt → feed not yet timed from live Claude Code on two laptops** | typing a prompt in Claude Code on any laptop shows up in everyone's feed within 2 s |
+| 6 | Real MCPs on Tarush's laptop + Figma shell script | partial: `figma-export.sh` supports name lookup (`"Onboarding/Step 2"`, `FIGMA_FILE_KEY`), dry-verified against a mock; **no live `FIGMA_TOKEN` run; no keyed MCP server configured** | each imports cleanly on `mesh join`; `describe_capability` reads well; `figma-export.sh "<frame>"` returns in < 5 s |
+| 7 | End-to-end demo rehearsal | not done | the script in §5 runs clean twice in a row |
+| S1 | `check_job` for long commands | done (`sleep 70` → running → `check_job` → done; relay soak OK) | `ask_teammate` on `sleep 70` returns a jobId; `check_job` returns exit 0 |
+| S2 | Deny path + `never` permission shown in demo | done in tests and once by hand; **never on stage** | denied request returns a clear error to the agent |
+| S3 | Web dashboard | superseded by the relay's room page (`/r/<room>`) | — |
+| P | Claude Code plugin (in-session approvals + messages) | on main, auto-installed by `mesh join`; headless flow verified; interactive 3/3 pending | `mesh join` → `/mcp` lists the plugin's tools; a teammate's request appears in the session, **1** approves |
+| O | Overlay: pop-out approval window from the room page | **shipping tonight** — the demo's approval surface | `Pop out overlay` → request card → **Approve** → output back; close it → OS dialog fallback |
+| W | `wait_for_events` for Codex/Cursor | **shipping tonight** | *"Codex, watch mesh for the next 10 minutes"* → agent reports the next message/request without approving |
 
 Steps 1-2 are a working product with zero AI in it. If step 3 fights you, demo 1-2 plus the feed.
 

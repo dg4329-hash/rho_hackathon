@@ -10,12 +10,12 @@ owner's machine. Agents can also message each other, and every terminal in the r
 
 ## Layout
 ```
-apps/relay      WebSocket relay + web front door + installers + overlay — Tarush
-apps/daemon     `mesh join` + local MCP server + approvals       — Dev
-apps/feed       `mesh feed`, hooks, demo                          — Abhi
-packages/protocol   shared TS types for every message/tool       — Dev writes, everyone imports
-scripts/        figma-export.sh, tunnel-relay.sh                  — Tarush
-plugin/         Claude Code plugin (MCP server, hooks, watcher); relay serves it as /plugin.tgz — Dev
+apps/relay      WebSocket relay + web front door + installers + overlay
+apps/daemon     `mesh join` + local MCP server + approvals
+apps/feed       `mesh feed`, hooks, demo
+packages/protocol   shared TS types for every message/tool (source of truth)       — Dev writes, everyone imports
+scripts/        figma-export.sh, tunnel-relay.sh
+plugin/         Claude Code plugin (MCP server, hooks, watcher); relay serves it as /plugin.tgz
 docs/
 ```
 

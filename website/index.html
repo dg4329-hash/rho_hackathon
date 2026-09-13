@@ -239,6 +239,39 @@ section { padding-block: 104px; }
 .feed-list .actor { color: var(--label); font-weight: 500; }
 @media (prefers-reduced-motion: reduce) { .feed-list li { transition: none; } }
 
+/* File handoff: the exported frame travels from Taylor's overlay into Alex's session */
+.stage { position: relative; }
+.handoff { opacity: 0; transform: translateY(8px) scale(.98); transition: opacity .35s cubic-bezier(.2,.8,.2,1), transform .35s cubic-bezier(.2,.8,.2,1); }
+.handoff.in { opacity: 1; transform: none; }
+.handoff-head { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--label-2); margin-bottom: 10px; min-width: 0; }
+.handoff-head .icon { font-size: 16px; color: var(--accent-text); }
+.handoff-head .frame-name { font-family: var(--mono); color: var(--label); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.handoff-file { display: flex; align-items: center; gap: 14px; padding: 12px; border-radius: var(--radius-md); background: var(--surface-2); border: 1px solid var(--separator); }
+.thumb { flex: none; width: 128px; aspect-ratio: 16 / 10; border-radius: 8px; overflow: hidden; background: #fbfbfd; border: 1px solid var(--separator-strong); box-shadow: 0 1px 2px rgba(0,0,0,.06); }
+.thumb svg { display: block; width: 100%; height: 100%; }
+.file-meta { flex: 1; min-width: 0; }
+.file-name { font: 500 13px/1.35 var(--mono); color: var(--label); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-sub { margin-top: 2px; font-size: 12px; color: var(--label-2); font-variant-numeric: tabular-nums; }
+.progress { height: 4px; margin-top: 10px; border-radius: 2px; background: var(--fill-2); overflow: hidden; }
+.progress > i { display: block; width: 0; height: 100%; border-radius: inherit; background: var(--accent); transition: background-color .3s; }
+.handoff.delivered .progress > i { background: var(--green); }
+.handoff-status { display: flex; align-items: center; gap: 6px; min-height: 18px; margin-top: 12px; font-size: 12px; color: var(--label-3); font-variant-numeric: tabular-nums; transition: color .3s; }
+.handoff-status .icon { font-size: 16px; }
+.handoff.delivered .handoff-status { color: var(--green); }
+.file-fly { position: absolute; z-index: 5; margin: 0; pointer-events: none; transform-origin: 0 0; will-change: transform; box-shadow: 0 18px 40px -12px rgba(0,0,0,.45), 0 2px 6px rgba(0,0,0,.12); }
+/* The file as it lands in Alex's terminal (always dark) */
+.term .artifact { display: flex; align-items: center; gap: 12px; max-width: 380px; margin: 4px 0 8px 5ch; padding: 8px 14px 8px 8px; border-radius: 10px; background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.1); white-space: normal; opacity: 0; transform: translateY(4px); transition: opacity .3s, transform .3s cubic-bezier(.2,.8,.2,1); }
+.term .artifact.in { opacity: 1; transform: none; }
+.term .artifact .thumb { width: 88px; border-color: rgba(255,255,255,.14); box-shadow: none; }
+.term .artifact .thumb.pending { background: transparent; border-style: dashed; }
+.term .artifact .thumb.pending svg { opacity: 0; }
+.term .artifact .file-name { color: #fff; font-size: 12.5px; }
+.term .artifact .file-sub { color: var(--term-dim); font-size: 11.5px; }
+/* Feed row that carries a file */
+.feed-list li.file { align-items: center; }
+.feed-list .thumb.mini { width: 36px; margin-left: auto; border-radius: 4px; box-shadow: none; }
+@media (prefers-reduced-motion: reduce) { .handoff, .term .artifact, .progress > i, .handoff-status { transition: none; } }
+
 /* Modal (functional layer; glass allowed on the backdrop only) */
 dialog.demo-modal { width: min(1200px, calc(100vw - 32px)); max-height: calc(100vh - 32px); padding: 0; border: 0; border-radius: 28px; background: var(--bg); color: var(--label); box-shadow: var(--shadow-float); overflow: auto; }
 dialog.demo-modal::backdrop { background: rgba(0,0,0,.35); -webkit-backdrop-filter: blur(12px) saturate(140%); backdrop-filter: blur(12px) saturate(140%); }
@@ -393,6 +426,22 @@ footer { border-top: 1px solid var(--separator); padding-block: 40px; font-size:
                     <span class="btn btn-deny">Deny</span>
                     <span class="btn btn-approve" id="demo-approve">Approve</span>
                   </div>
+                </div>
+                <div class="handoff" id="demo-handoff" hidden>
+                  <div class="handoff-head">
+                    <span class="icon" aria-hidden="true">image</span>
+                    <span>exported from Figma ·</span>
+                    <span class="frame-name">Onboarding/Step-2</span>
+                  </div>
+                  <div class="handoff-file">
+                    <div class="thumb" id="demo-thumb"></div>
+                    <div class="file-meta">
+                      <div class="file-name">step-2.png</div>
+                      <div class="file-sub" id="demo-file-sub">1440×900 · 214 KB</div>
+                      <div class="progress"><i id="demo-progress"></i></div>
+                    </div>
+                  </div>
+                  <div class="handoff-status" id="demo-handoff-status"><span class="icon" aria-hidden="true">upload</span><span>ready to send</span></div>
                 </div>
               </div>
             </div>
@@ -667,6 +716,113 @@ footer { border-top: 1px solid var(--separator); padding-block: 40px; font-size:
   const toggleBtn = $("stage-toggle");
   const demoRunner = makeRunner();
   let demoState = "idle"; // idle | playing | paused | done
+  const stageEl = $("stage-shell").querySelector(".stage");
+  const handoff = $("demo-handoff");
+  const handoffThumb = $("demo-thumb");
+  const fileSub = $("demo-file-sub");
+  const progress = $("demo-progress");
+  const handoffStatus = $("demo-handoff-status");
+  const FILE_KB = 214;
+
+  /* A small original mock of the "Onboarding / Step 2" frame (matches the outline: 32/600 title, radius 14, #0071E3). */
+  const FRAME_SVG = '<svg viewBox="0 0 160 100" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
+    '<rect width="160" height="100" fill="#fbfbfd"/>' +
+    '<circle cx="12" cy="10" r="3" fill="#0071e3"/><rect x="18" y="8" width="22" height="4" rx="2" fill="#1d1d1f" opacity=".75"/>' +
+    '<rect x="116" y="8.5" width="6" height="3" rx="1.5" fill="#d2d2d7"/><rect x="124" y="8.5" width="12" height="3" rx="1.5" fill="#0071e3"/>' +
+    '<rect x="138" y="8.5" width="6" height="3" rx="1.5" fill="#d2d2d7"/><rect x="146" y="8.5" width="6" height="3" rx="1.5" fill="#d2d2d7"/>' +
+    '<rect x="12" y="29" width="64" height="7" rx="2" fill="#1d1d1f"/><rect x="12" y="39" width="46" height="7" rx="2" fill="#1d1d1f"/>' +
+    '<rect x="12" y="53" width="66" height="3" rx="1.5" fill="#86868b"/><rect x="12" y="59" width="58" height="3" rx="1.5" fill="#86868b"/>' +
+    '<rect x="12" y="65" width="42" height="3" rx="1.5" fill="#86868b"/>' +
+    '<rect x="12" y="76" width="34" height="11" rx="5.5" fill="#0071e3"/><rect x="19" y="80.5" width="20" height="2" rx="1" fill="#fff"/>' +
+    '<rect x="50.5" y="76.5" width="27" height="10" rx="5" fill="none" stroke="#d2d2d7"/>' +
+    '<rect x="90" y="21.5" width="58" height="67" rx="7" fill="#fff" stroke="#e5e5ea"/>' +
+    '<rect x="96" y="28" width="46" height="27" rx="4" fill="#e8f2fd"/><circle cx="109" cy="41.5" r="7" fill="#0071e3" opacity=".85"/>' +
+    '<rect x="120" y="37" width="16" height="3" rx="1.5" fill="#0071e3" opacity=".5"/><rect x="120" y="43" width="11" height="3" rx="1.5" fill="#0071e3" opacity=".35"/>' +
+    '<rect x="96" y="61" width="30" height="4" rx="2" fill="#1d1d1f" opacity=".8"/>' +
+    '<rect x="96" y="69" width="40" height="3" rx="1.5" fill="#86868b" opacity=".7"/><rect x="96" y="75" width="33" height="3" rx="1.5" fill="#86868b" opacity=".7"/>' +
+    '<circle cx="140" cy="81" r="3.5" fill="#28cd41"/>' +
+    '</svg>';
+
+  function thumbEl(cls) {
+    const d = document.createElement("div");
+    d.className = "thumb" + (cls ? " " + cls : "");
+    d.innerHTML = FRAME_SVG;
+    return d;
+  }
+  handoffThumb.innerHTML = FRAME_SVG;
+
+  function setHandoffStatus(icon, text) {
+    const [i, s] = handoffStatus.children;
+    i.textContent = icon;
+    s.textContent = text;
+  }
+
+  /** Feed row with a file thumbnail at the end. */
+  function feedFile(actor, text) {
+    feedItem(actor, text);
+    const li = feed.lastElementChild;
+    li.classList.add("file");
+    li.appendChild(thumbEl("mini"));
+  }
+
+  /** The received file as a card in Alex's terminal; its thumbnail waits empty until the flying copy lands. */
+  function termArtifact() {
+    const card = document.createElement("div");
+    card.className = "artifact";
+    const th = thumbEl("pending");
+    const meta = document.createElement("div");
+    meta.className = "file-meta";
+    const name = document.createElement("div");
+    name.className = "file-name";
+    name.textContent = "step-2.png";
+    const sub = document.createElement("div");
+    sub.className = "file-sub";
+    const ok = document.createElement("span");
+    ok.className = "ok";
+    ok.textContent = "✓ ";
+    sub.append(ok, "saved ./mesh-artifacts/step-2.png");
+    const size = document.createElement("div");
+    size.className = "file-sub";
+    size.textContent = `1440×900 · ${FILE_KB} KB`;
+    meta.append(name, sub, size);
+    card.append(th, meta);
+    term.querySelectorAll(".caret").forEach((c) => c.remove());
+    term.appendChild(card);
+    term.scrollTop = term.scrollHeight;
+    return { card, th };
+  }
+
+  /** Fly a copy of the thumbnail from `from` to `to` in an arc. Honors pause, replay and reduced motion. */
+  async function flyFile(runner, t, from, to, duration = 950) {
+    if (reduceMotion.matches) return;
+    const base = stageEl.getBoundingClientRect();
+    const a = from.getBoundingClientRect();
+    const b = to.getBoundingClientRect();
+    const ghost = thumbEl("file-fly");
+    ghost.style.left = a.left - base.left + "px";
+    ghost.style.top = a.top - base.top + "px";
+    ghost.style.width = a.width + "px";
+    stageEl.appendChild(ghost);
+    const dx = b.left - a.left;
+    const dy = b.top - a.top;
+    const scale = b.width / a.width;
+    const ease = (x) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
+    try {
+      let elapsed = 0;
+      let last = performance.now();
+      while (elapsed < duration) {
+        await runner.wait(t, 16);
+        const now = performance.now();
+        elapsed += Math.min(now - last, 34); // a pause doesn't make the file jump ahead
+        last = now;
+        const p = ease(Math.min(elapsed / duration, 1));
+        const lift = -Math.sin(p * Math.PI) * 46;
+        ghost.style.transform = `translate(${dx * p}px, ${dy * p + lift}px) scale(${1 + (scale - 1) * p})`;
+      }
+    } finally {
+      ghost.remove();
+    }
+  }
 
   function setToggle(state) {
     demoState = state;
@@ -706,6 +862,12 @@ footer { border-top: 1px solid var(--separator); padding-block: 40px; font-size:
     $("demo-req-cmd").textContent = "";
     $("demo-req-why").textContent = "";
     $("demo-timer").textContent = "OS dialog in 120 s";
+    handoff.hidden = true;
+    handoff.classList.remove("in", "delivered");
+    progress.style.width = "0%";
+    fileSub.textContent = `1440×900 · ${FILE_KB} KB`;
+    setHandoffStatus("upload", "ready to send");
+    stageEl.querySelectorAll(".file-fly").forEach((el) => el.remove());
   }
 
   async function typeInto(runner, t, el, text, speed = 18) {
@@ -786,19 +948,45 @@ footer { border-top: 1px solid var(--separator); padding-block: 40px; font-size:
       say("It runs on Taylor’s machine, with Taylor’s Figma token. The output streams back.");
       await L([{ t: "⏺ ", c: "ok" }, { t: "mesh · check_job", c: "you" }, { t: '(jobId: "38c1…")', c: "dim" }]);
       await W(500);
-      const stream = [
-        "  ⎿ fetching frame Onboarding/Step-2 …",
-        "     wrote step-2.png (1440×900)",
-        "     outline: Title 32/600 · Body 17/400 · gap 24 · radius 14 · accent #0071E3",
-      ];
-      for (const s of stream) { await L([{ t: s, c: "dim" }]); await W(420); }
+      await L([{ t: "  ⎿ fetching frame Onboarding/Step-2 …", c: "dim" }]);
+      await W(420);
+
+      // The export lands on Taylor's laptop: the request card gives way to the file.
+      req.classList.remove("in");
+      await W(260);
+      req.hidden = true;
+      handoff.hidden = false;
+      requestAnimationFrame(() => handoff.classList.add("in"));
+      await L([{ t: "     wrote step-2.png (1440×900)", c: "dim" }]);
+      await W(420);
+      await L([{ t: "     outline: Title 32/600 · Body 17/400 · gap 24 · radius 14 · accent #0071E3", c: "dim" }]);
+      await W(500);
+
+      say("The PNG travels back through the room. Taylor’s Figma token stays on Taylor’s laptop.");
+      setHandoffStatus("upload", "sending to alex through the room");
+      for (let pct = 0; pct <= 100; pct += 4) {
+        progress.style.width = pct + "%";
+        fileSub.textContent = `1440×900 · ${Math.round((FILE_KB * pct) / 100)} of ${FILE_KB} KB`;
+        await W(38);
+      }
+      setHandoffStatus("cloud_done", "in the room · waiting for alex");
       await L([{ t: "  ⎿ ", c: "dim" }, { t: "completed", c: "ok" }, { t: " · exitCode 0 · 4.8 s · 1 artifact", c: "dim" }]);
       feedItem("taylor", "result: exit 0 in 4787 ms");
       await W(600);
 
+      say("Alex’s agent pulls the file into the session.");
       await L([{ t: "⏺ ", c: "ok" }, { t: "mesh · fetch_artifact", c: "you" }, { t: '("step-2.png")', c: "dim" }]);
-      await W(400);
-      await L([{ t: "  ⎿ saved ./mesh-artifacts/step-2.png", c: "dim" }]);
+      await W(300);
+      const art = termArtifact();
+      requestAnimationFrame(() => art.card.classList.add("in"));
+      await W(120);
+      await flyFile(R, t, handoffThumb, art.th);
+      art.th.classList.remove("pending");
+      handoff.classList.add("delivered");
+      fileSub.textContent = `1440×900 · ${FILE_KB} KB`;
+      setHandoffStatus("check_circle", "delivered to alex");
+      feedFile("taylor → alex:", "step-2.png");
+      await W(900);
       feedItem("alex", "file: onboarding.css");
       await W(700);
 

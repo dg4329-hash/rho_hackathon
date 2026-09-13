@@ -393,7 +393,10 @@ export const OVERLAY_JS: string = String.raw`(function (root) {
       if (!leaveArmed) { leaveArmed = true; b.textContent = "confirm leave"; b.classList.add("arm"); setTimeout(function () { leaveArmed = false; b.textContent = "leave"; b.classList.remove("arm"); }, 4000); return; }
       leaveArmed = false; b.disabled = true; b.textContent = "leaving…";
       fetch("http://localhost:" + state.port + "/leave", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ reason: "left from the overlay" }) })
-        .then(function () { state.stopped = true; b.textContent = "left"; var h = $("mo-hint"); if (h) { h.hidden = false; h.textContent = "You left the room. To come back, run the join command from the room page."; } })
+        .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { return r.ok && j && j.ok; }); })
+        .then(function (ok) { var h = $("mo-hint");
+          if (!ok) { b.disabled = false; b.textContent = "leave"; if (h) { h.hidden = false; h.textContent = "This mesh daemon is too old to leave from here. Run: node ~/.mesh/mesh.mjs stop (then rerun the join command to update)."; } return; }
+          state.stopped = true; b.textContent = "left"; if (h) { h.hidden = false; h.textContent = "You left the room. To come back, run the join command from the room page."; } })
         .catch(function () { b.disabled = false; b.textContent = "leave"; });
     };
     $("mo-keygo").onclick = function () { applyKey($("mo-key").value); };

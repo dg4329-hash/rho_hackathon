@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import type { InboxMessage } from "@mesh/protocol";
 import { nativeNotify } from "./native.js";
+import { trackChild } from "./children.js";
 
 const MAX_AGE_MS = 5 * 60_000;
 const MAX_SEEN = 500;
@@ -63,6 +64,7 @@ export function runCodex(prompt: string, cwd: string): Promise<CodexWakeResult> 
       resolve({ ok: false, summary: `Could not start Codex: ${(e as Error).message}` });
       return;
     }
+    trackChild(child);
     let pending = "";
     let summary = "";
     let threadId: string | undefined;

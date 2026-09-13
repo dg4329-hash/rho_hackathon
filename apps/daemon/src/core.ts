@@ -144,6 +144,7 @@ export function createCore(opts: CoreOptions): DaemonCore & { client: RelayClien
       return true;
     }
     const answer = await askApproval({ id: req.id, from: req.from, why: req.why, command: req.command, tool: req.tool, args: req.args }, pending);
+    if (leaving) return false; // leave() already told the requester
     if (!answer.approved) {
       sendDecision(req.id, "denied", answer.reason ?? "owner declined");
       return false;
@@ -163,6 +164,7 @@ export function createCore(opts: CoreOptions): DaemonCore & { client: RelayClien
         : match.permission;
     const reason = match.kind === "offer" ? `'${match.offer.name}' is not offered (permission: never)` : "arbitrary commands are not allowed on this machine";
     if (!(await decide(req, permission, reason))) return;
+    markRunning(req.id);
 
     // Substitute the owner's real command path for a matched offer (requester only knows the basename from the offer text).
     const actual = match.kind === "offer" ? resolveOfferCommand(command, match.offer.command) : command;
@@ -175,6 +177,7 @@ export function createCore(opts: CoreOptions): DaemonCore & { client: RelayClien
       if (captured[stream].length < SCAN_CAPTURE_BYTES) captured[stream] += chunk; else capturedOverflow = true;
       client.send({ type: "output", id: req.id, stream, chunk });
     });
+    if (leaving) return; // leave() already sent this job's result
     const { artifacts, artifactErrors } = await shipOutputFiles(req.from, `${captured.stdout}\n${captured.stderr}`, capturedOverflow);
     client.send({
       type: "result", id: req.id, ...result,
@@ -253,6 +256,7 @@ export function createCore(opts: CoreOptions): DaemonCore & { client: RelayClien
       return;
     }
     if (!(await decide(req, permission, "not offered"))) return;
+    markRunning(req.id);
 
     const started = Date.now();
     if (permission !== "always") say(chalk.dim(`  calling for ${req.from}: ${tool}`));
@@ -265,6 +269,7 @@ export function createCore(opts: CoreOptions): DaemonCore & { client: RelayClien
       text = `tool call failed: ${(e as Error).message}`;
       isError = true;
     }
+    if (leaving) return; // leave() already sent this job's result
     for (const chunk of chunkText(text)) client.send({ type: "output", id: req.id, stream: isError ? "stderr" : "stdout", chunk });
     const { artifacts, artifactErrors } = await shipToolParts(tool, parts);
     client.send({
@@ -283,6 +288,12 @@ export function createCore(opts: CoreOptions): DaemonCore & { client: RelayClien
   const REQUEST_MAX_AGE_MS = 30_000;
   const seenRequests = new Set<string>();
   let leaving = false;
+  /** Requests addressed to me that are waiting for an approval ("deciding") or executing ("running"). */
+  const inflight = new Map<string, { phase: "deciding" | "running"; startedAt: number }>();
+  function markRunning(id: string): void {
+    const f = inflight.get(id);
+    if (f) { f.phase = "running"; f.startedAt = Date.now(); }
+  }
   function onRequest(req: RequestFrame): void {
     if (req.to !== me) return;
     if (req.from === me) return;
@@ -296,11 +307,13 @@ export function createCore(opts: CoreOptions): DaemonCore & { client: RelayClien
     if (client.recent().some((h) => h.frame.type === "decision" && h.frame.id === req.id)) { debug(`ignoring already-decided request ${req.id}`); return; }
     seenRequests.add(req.id);
     if (seenRequests.size > 1000) seenRequests.delete(seenRequests.values().next().value as string);
-    const run = req.command ? serveShell(req, req.command) : req.tool ? serveTool(req, req.tool) : undefined;
-    run?.catch((e) => {
+    if (!req.command && !req.tool) return;
+    inflight.set(req.id, { phase: "deciding", startedAt: Date.now() });
+    const run = req.command ? serveShell(req, req.command) : serveTool(req, req.tool!);
+    run.catch((e) => {
       debug("serve failed", e);
-      sendDecision(req.id, "denied", `daemon error: ${(e as Error).message}`);
-    });
+      if (!leaving) sendDecision(req.id, "denied", `daemon error: ${(e as Error).message}`);
+    }).finally(() => inflight.delete(req.id));
   }
 
   // ---------- messages addressed to me ----------
@@ -463,14 +476,22 @@ export function createCore(opts: CoreOptions): DaemonCore & { client: RelayClien
     leave(reason?: string, delayMs = 300) {
       if (leaving) return;
       leaving = true;
-      // Nothing parked may outlive the leave: tell each waiting requester no, before the socket closes.
-      for (const p of pending.list()) pending.decide(p.id, "denied", `${me} left the room`);
+      // Nothing may outlive the leave: every requester still waiting on me gets an answer before the socket closes.
+      // Waiting for approval -> denied; executing -> a final result (the CLI kills the process itself on stop).
+      const why = `${me} left the room`;
+      for (const [id, f] of inflight) {
+        if (f.phase === "deciding") sendDecision(id, "denied", why);
+        else client.send({ type: "result", id, exitCode: null, durationMs: Date.now() - f.startedAt, timedOut: false, tail: `${why}; the job was stopped\n` });
+      }
+      inflight.clear();
+      for (const p of pending.list()) pending.decide(p.id, "denied", why); // unpark (already answered above)
       say(chalk.yellow(`leaving room ${config.room}${reason ? ` (${reason})` : ""}`));
       client.send({ type: "event", kind: "status", summary: `left the room${reason ? `: ${reason}` : ""}` });
       setTimeout(() => opts.onLeave?.(reason), delayMs);
     },
 
     async switchRoom(room: string, relay?: string, key?: string) {
+      if (leaving) throw new Error(`leaving the room; not switching (run mesh join to come back)`);
       const link = parseRoomArg(room);
       const target = link.room.trim().toLowerCase();
       if (!/^[a-z0-9][a-z0-9-]{1,40}$/.test(target)) throw new Error(`bad room name '${room}' (letters, digits, dashes)`);
@@ -492,6 +513,11 @@ export function createCore(opts: CoreOptions): DaemonCore & { client: RelayClien
           );
         }
         throw e;
+      }
+      if (leaving) {
+        // leave() arrived while we were connecting: don't stay in the new room and don't save it as the join
+        client.shutdown();
+        throw new Error(`left the room during the switch; not joining '${target}'`);
       }
       config.room = target;
       config.relay = nextRelay;

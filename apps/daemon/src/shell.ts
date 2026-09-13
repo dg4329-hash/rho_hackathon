@@ -1,4 +1,5 @@
 /** Shell offer matching (CONTRACT §2) and streaming command execution. */
+import { trackChild } from "./children.js";
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
@@ -162,6 +163,7 @@ export function runShell(command: string, opts: RunOptions, onChunk: ChunkHandle
       ? spawn(windowsShell().cmd, [...windowsShell().args, command], { cwd: opts.cwd, env: process.env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true })
       : spawn("/bin/sh", ["-c", command], { cwd: opts.cwd, env: process.env, stdio: ["ignore", "pipe", "pipe"], detached: true });
 
+    trackChild(child, !win);
     const killTree = () => {
       if (win) {
         try { if (child.pid) spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true }); } catch { /* ignore */ }

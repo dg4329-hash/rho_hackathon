@@ -8,6 +8,7 @@
  */
 import { spawn } from "node:child_process";
 import { spawnSync } from "node:child_process";
+import { trackChild } from "./children.js";
 
 export interface DialogRequest { title: string; body: string; timeoutSeconds: number }
 
@@ -15,6 +16,7 @@ function run(cmd: string, args: string[], env: NodeJS.ProcessEnv, timeoutMs: num
   return new Promise((resolve) => {
     let child;
     try { child = spawn(cmd, args, { env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true }); } catch { return resolve(null); }
+    trackChild(child);
     let out = "";
     const t = setTimeout(() => { try { child.kill(); } catch { /* ignore */ } }, timeoutMs);
     child.stdout.on("data", (d: Buffer) => { out += d.toString(); });

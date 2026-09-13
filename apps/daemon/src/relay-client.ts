@@ -80,6 +80,8 @@ export class RelayClient extends EventEmitter<RelayClientEvents> {
   private ws: WebSocket | undefined;
   private connected = false;
   private closed = false;
+  /** shutdown() was called: this client never dials again (leave / stop), whatever connect() or switchRoom() try. */
+  private ended = false;
   private backoffMs = 1000;
   private reconnectTimer: NodeJS.Timeout | undefined;
   private lastPresence: PresenceFrame | undefined;
@@ -109,6 +111,7 @@ export class RelayClient extends EventEmitter<RelayClientEvents> {
    * so "the socket opened" is not yet "we are in the room").
    */
   connect(): Promise<void> {
+    if (this.ended) return Promise.reject(new Error("relay client was shut down (left the room)"));
     this.closed = false;
     return new Promise((resolve, reject) => {
       let settled = false;
@@ -144,7 +147,7 @@ export class RelayClient extends EventEmitter<RelayClientEvents> {
   private gen = 0;
 
   private dial(): void {
-    if (this.closed) return;
+    if (this.closed || this.ended) return;
     debug("dial", this.url);
     const ws = new WebSocket(this.url);
     const gen = ++this.gen; // events from an older socket (e.g. after switchRoom) must not reconnect or mutate state
@@ -283,6 +286,12 @@ export class RelayClient extends EventEmitter<RelayClientEvents> {
     } finally {
       this.switching = false;
     }
+  }
+
+  /** Close for good: no reconnect, and later connect() / switchRoom() calls are refused. */
+  shutdown(): void {
+    this.ended = true;
+    this.close();
   }
 
   close(): void {

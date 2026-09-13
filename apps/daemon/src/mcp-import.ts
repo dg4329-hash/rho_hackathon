@@ -7,6 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { minimatch } from "minimatch";
+import { trackMcpPid } from "./children.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -149,6 +150,11 @@ async function connect(e: ServerEntry): Promise<Client> {
   const transport = makeTransport(e);
   try {
     await withTimeout(client.connect(transport), CONNECT_TIMEOUT_MS, `connect ${e.name}`);
+    if (transport instanceof StdioClientTransport) {
+      const untrack = trackMcpPid(transport.pid);
+      const onclose = transport.onclose;
+      transport.onclose = () => { untrack(); onclose?.(); };
+    }
   } catch (err) {
     await transport.close().catch(() => {});
     throw err;

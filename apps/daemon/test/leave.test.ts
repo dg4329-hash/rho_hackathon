@@ -2,6 +2,9 @@
  * Leaving a room, end to end against the real CLI (child processes) and the fake relay:
  * leave_room (MCP), POST /leave, `mesh leave`, `mesh stop`, the plugin SessionStart hook not resurrecting a
  * left daemon (with a positive control proving it would), rejoin by room link, and switch_room.
+ * G–I: leave kills the daemon's children (shell job + a stubborn stdio MCP server), answers a pending approval
+ * ("left the room"), and a switch racing a leave does not rejoin. Those daemons get a fake osascript/zenity first
+ * on PATH (test/fixtures/leave-fake-dialog.sh) so no real OS dialog can ever appear.
  * Every child runs with a throwaway HOME / project dir and a free port; nothing touches the real ~/.mesh or :7337.
  *   pnpm -F daemon exec tsx test/leave.test.ts
  */
@@ -11,6 +14,9 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { TeamConfig } from "@mesh/protocol";
+import { createCore } from "../src/core.js";
+import { createMcpImport } from "../src/mcp-import.js";
 import { RelayClient } from "../src/relay-client.js";
 import { startFakeRelay } from "./fake-relay.js";
 
@@ -181,6 +187,59 @@ async function postJson(port: number, route: string, payload: unknown): Promise<
     return { status: 0, body: { error: (err as Error).message } };
   }
 }
+// ---------- G–I helpers: trapped env (fake dialogs + pid files), team.json, in-process requester ----------
+
+const FIXTURES = path.join(here, "fixtures");
+const FAKE_DIALOG = path.join(FIXTURES, "leave-fake-dialog.sh");
+const pidDirs: string[] = [];
+interface TrapEnv extends Env { pids: string }
+function makeTrapEnv(label: string, port: number): TrapEnv {
+  const e = makeEnv(label, port);
+  const pids = path.join(e.home, "pids");
+  const bin = path.join(e.home, "bin");
+  fs.mkdirSync(pids, { recursive: true });
+  fs.mkdirSync(bin, { recursive: true });
+  for (const name of ["osascript", "zenity"]) {
+    fs.copyFileSync(FAKE_DIALOG, path.join(bin, name));
+    fs.chmodSync(path.join(bin, name), 0o755);
+  }
+  for (const k of ["SSH_CONNECTION", "SSH_TTY", "MESH_APPROVE"]) delete e.env[k];
+  e.env.PATH = `${bin}${path.delimiter}${e.env.PATH ?? ""}`;
+  e.env.LEAVE_PIDS = pids;
+  pidDirs.push(pids);
+  return { ...e, pids };
+}
+function readPids(file: string): number[] {
+  try { return fs.readFileSync(file, "utf8").split(/\s+/).map(Number).filter((n) => n > 0); } catch { return []; }
+}
+async function waitPid(file: string, ms = 5000): Promise<number> {
+  await until(() => readPids(file).length > 0, ms);
+  return readPids(file)[0] ?? 0;
+}
+/** Kill every pid our fixtures recorded (shell job, stubborn MCP server, fake dialogs) that is still alive. */
+function killRecordedPids(): void {
+  for (const dir of pidDirs) {
+    let files: string[] = [];
+    try { files = fs.readdirSync(dir); } catch { continue; }
+    for (const f of files) for (const pid of readPids(path.join(dir, f))) if (pidAlive(pid)) { try { process.kill(pid, "SIGKILL"); } catch { /* gone */ } }
+  }
+}
+function writeTeam(e: TrapEnv, room: string, user: string, extra: Record<string, unknown>): string {
+  const file = path.join(e.project, "team.json");
+  fs.writeFileSync(file, JSON.stringify({ user, room, relay: `ws://127.0.0.1:${relayPort}`, gitOffers: false, codexWake: false, allowArbitrary: "never", timeoutSeconds: 120, ...extra }, null, 2));
+  return file;
+}
+const requesterClients: RelayClient[] = [];
+async function requester(room: string, target: string) {
+  const config = TeamConfig.parse({ user: "requester", room, relay: `ws://127.0.0.1:${relayPort}`, codexWake: false, gitOffers: false });
+  const client = new RelayClient({ relay: config.relay, room, user: config.user, offers: [] });
+  requesterClients.push(client);
+  const core = createCore({ config, cwd: os.tmpdir(), client, mcpImport: createMcpImport(), shellOffers: [], mcpOffers: [], quiet: true });
+  await client.connect();
+  check(`requester in ${room} sees ${target}`, await until(() => core.members().some((m) => m.user === target), 5000));
+  return core;
+}
+
 function runHook(e: Env, ms = 25_000): Promise<{ code: number | null; out: string }> {
   const env = { ...e.env, CLAUDE_PROJECT_DIR: e.project, MESH_BIN: `${process.execPath} ${TSX_CLI} ${CLI_TS}` };
   const child = spawn("bash", [HOOK], { cwd: e.project, env, detached: true, stdio: ["ignore", "pipe", "pipe"] });
@@ -319,9 +378,95 @@ async function main(): Promise<void> {
       check("F: POST /leave after switch → 200", l.status === 200, l);
       await assertLeft("F", e, room("f2"), "frank", relay, p);
     }
+
+    // G. children die with the daemon on leave (shell job + an MCP server that ignores SIGTERM and stdin EOF)
+    console.log("G. leave kills children");
+    {
+      const e = makeTrapEnv("g", await freePort()); envs.push(e);
+      const team = writeTeam(e, room("g"), "gina", {
+        offers: [
+          { name: "sleep", command: "sleep", description: "sleep", permission: "always" },
+          { name: "leave-sleep", command: path.join(FIXTURES, "leave-sleep.sh"), description: "records its pid, then sleeps", permission: "always" },
+        ],
+      });
+      fs.writeFileSync(path.join(e.project, ".mcp.json"), JSON.stringify({ mcpServers: { stubborn: { command: process.execPath, args: [path.join(FIXTURES, "leave-stubborn-mcp.cjs"), path.join(e.pids, "mcp.pid")] } } }));
+      const p = await startDaemon("G", e, room("g"), "gina", ["join", room("g"), "--relay", `ws://127.0.0.1:${relayPort}`, "--as", "gina", "--config", team, ...SAFE_FLAGS(e.port)]);
+      const mcpPid = await waitPid(path.join(e.pids, "mcp.pid"));
+      check("G: stubborn MCP server was spawned (pid file)", mcpPid > 0 && pidAlive(mcpPid), p.out().slice(-300));
+      const req = await requester(room("g"), "gina");
+      const r = await req.ask({ who: "gina", command: "leave-sleep.sh 300", why: "test G", waitSeconds: 1 });
+      check("G: long job is running", r.status === "running", r);
+      const jobPid = await waitPid(path.join(e.pids, "job.pid"));
+      check("G: shell job process started (pid file)", jobPid > 0 && pidAlive(jobPid));
+      const t = Date.now();
+      const l = await postJson(e.port, "/leave", { reason: "test G" });
+      check("G: POST /leave → 200", l.status === 200, l);
+      const exited = await until(() => p.exited(), 6000);
+      check("G: daemon exits within 6 s", exited, exited ? undefined : p.out().slice(-300));
+      const left = () => Math.max(200, 6000 - (Date.now() - t));
+      check("G: shell job (sleep 300) gone within 6 s", !!jobPid && (await until(() => !pidAlive(jobPid), left())));
+      check("G: stubborn MCP server gone within 6 s", !!mcpPid && (await until(() => !pidAlive(mcpPid), left())));
+      const j = await req.checkJob(r.jobId, 3);
+      check("G: requester's job ended (completed exitCode null, or denied), not running", (j.status === "completed" && j.exitCode == null) || j.status === "denied", j);
+      if (!exited) killGroup(p.child);
+    }
+
+    // H. a pending approval is answered on leave
+    console.log("H. pending approval answered on leave");
+    {
+      const e = makeTrapEnv("h", await freePort()); envs.push(e);
+      const team = writeTeam(e, room("h"), "hank", { offers: [{ name: "hello", command: "echo", description: "echo", permission: "ask" }] });
+      const p = await startDaemon("H", e, room("h"), "hank", ["join", room("h"), "--relay", `ws://127.0.0.1:${relayPort}`, "--as", "hank", "--config", team, ...SAFE_FLAGS(e.port)]);
+      const req = await requester(room("h"), "hank");
+      const r = await req.ask({ who: "hank", command: "echo hi", why: "test H", waitSeconds: 1 });
+      check("H: job waits for approval (running)", r.status === "running", r);
+      const dialogPid = await waitPid(path.join(e.pids, "dialog.pids"), 3000);
+      check("H: fake osascript dialog was invoked (and is hanging)", dialogPid > 0 && pidAlive(dialogPid), p.out().slice(-300));
+      const l = await postJson(e.port, "/leave", { reason: "test H" });
+      check("H: POST /leave → 200", l.status === 200, l);
+      const j = await req.checkJob(r.jobId, 3);
+      check("H: requester's job → denied, reason /left the room/, within 3 s", j.status === "denied" && /left the room/.test(j.reason ?? ""), j);
+      const exited = await until(() => p.exited(), 6000);
+      check("H: daemon exits within 6 s", exited, exited ? undefined : p.out().slice(-300));
+      check("H: fake osascript dialog process gone after daemon exit", !!dialogPid && (await until(() => !pidAlive(dialogPid), 3000)));
+      if (!exited) killGroup(p.child);
+    }
+
+    // I. a switch racing a leave does not resurrect the daemon
+    console.log("I. switch during leave");
+    {
+      const e = makeTrapEnv("i", await freePort()); envs.push(e);
+      const w2 = await watcher(room("i2"));
+      const p = await startDaemon("I", e, room("i1"), "ivy");
+      const leaveP = postJson(e.port, "/leave", { reason: "test I" });
+      await sleep(150);
+      const switchP = postJson(e.port, "/switch", { room: room("i2") });
+      let seen = false;
+      let exitedAt = 0;
+      let cfgAfterExit = false;
+      const stop = Date.now() + 4000;
+      while (Date.now() < stop || (exitedAt && Date.now() < exitedAt + 2000)) {
+        if (sees(w2, "ivy")) seen = true;
+        if (!exitedAt && p.exited()) exitedAt = Date.now();
+        if (Date.now() > stop + 4000) break;
+        await sleep(50);
+      }
+      if (exitedAt) cfgAfterExit = fs.existsSync(cfgPath(e));
+      const [lr, sr] = await Promise.all([leaveP, switchP]);
+      console.log(`  (leave → ${lr.status} ${JSON.stringify(lr.body)}; switch → ${sr.status} ${JSON.stringify(sr.body)})`);
+      check("I: POST /leave → 200", lr.status === 200, lr);
+      check("I: switch after leave not accepted (non-2xx, ok !== true, or connection refused)", !(sr.status >= 200 && sr.status < 300 && sr.body?.ok === true), sr);
+      check("I: daemon exits", !!exitedAt, exitedAt ? undefined : p.out().slice(-300));
+      check("I: watcher in r2 never saw ivy (4 s)", !seen);
+      check("I: config.json absent 2 s after exit", !!exitedAt && !cfgAfterExit, readJson(cfgPath(e)));
+      check("I: /health down", !(await health(e.port)));
+      if (!p.exited()) killGroup(p.child);
+    }
   } finally {
     for (const w of watchers.values()) w.close();
+    for (const c of requesterClients) c.close();
     for (const c of children) killGroup(c);
+    killRecordedPids();
     for (const e of envs) await killBackground(e);
     await relay.close();
     for (const d of tmpDirs) fs.rmSync(d, { recursive: true, force: true });

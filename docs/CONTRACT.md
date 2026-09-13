@@ -154,7 +154,7 @@ Twelve tools (names, inputs, outputs). Descriptions matter: they are the only th
 | `team_activity` | `{ sinceMinutes?: number (default 10) }` | `{ events: Array<{ ts, from, type, summary }> }` — flattened, human-readable, newest last, ≤ 100 |
 | `approve_request` | `{ id: string, decision: 'approved' \| 'denied', reason?: string }` | `{ ok, id, decision }`; error text if the id is no longer pending. Declares `_meta["anthropic/requiresUserInteraction"]`, so in Claude Code the permission prompt for this call is the owner's yes/no; never allowlisted |
 | `switch_room` | `{ room \| room link, relay? }` | `{ ok, room, relay }` — leaves the current room and joins another with the same identity/offers; also `POST /switch` and the overlay's room box |
-| `leave_room` | `{ reason? }` | `{ ok, left }` — disconnects, forgets the saved join (no auto-restart), stops the daemon; also `POST /leave` and the overlay's Leave button; rejoin with the join command |
+| `leave_room` | `{ reason? }` | `{ ok, left }` — disconnects, forgets the saved join (no auto-restart), answers every request still waiting on this machine (`decision denied` / final `result` with `exitCode: null`, reason "<user> left the room"), kills running shell jobs, open approval dialogs and imported stdio MCP servers, stops the daemon; a `switch_room` during the leave is refused; also `POST /leave` and the overlay's Leave button; rejoin with the join command |
 | `wait_for_events` | `{ timeoutSeconds?: number (default 60) }` | `{ messages: InboxMessage[], pending: PendingRequest[] }` — long-poll; returns on the next teammate message or pending request, or empty arrays at timeout. Codex/Cursor's manual watcher path. Never decides anything |
 
 Tool description text (copy into the server verbatim):

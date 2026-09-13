@@ -19,6 +19,7 @@ import { defaultHandle, installClaudeHooks, maskKey, parseRoomArg, printRegister
 import { RelayClient, RoomKeyError } from "./relay-client.js";
 import { isFixedOffer } from "./shell.js";
 import { restoreTerminal } from "./approval.js";
+import { killTrackedChildren } from "./children.js";
 import { watchLine } from "./pending.js";
 
 /** ~-relative path for banners. */
@@ -243,12 +244,14 @@ program
       stopping = true;
       console.log(chalk.dim("\nstopping…"));
       restoreTerminal();
-      // Never linger: an imported MCP server or a stuck connection must not keep a stopped daemon alive.
-      setTimeout(() => process.exit(0), STOP_GRACE_MS).unref();
-      client.close();
+      // Never linger: nothing started on the owner's behalf survives, and nothing reconnects.
+      setTimeout(() => process.exit(0), STOP_HARD_MS).unref();
+      client.shutdown();
       wake?.stop();
       gitWatch?.stop();
-      await Promise.allSettled([server.stop(), mcpImport.stop()]);
+      killTrackedChildren({ skipMcp: true }); // running shell jobs, approval dialogs, Codex runs
+      await Promise.race([Promise.allSettled([server.stop(), mcpImport.stop()]), new Promise((r) => setTimeout(r, STOP_GRACE_MS))]);
+      killTrackedChildren(); // imported stdio MCP servers that ignored stdin EOF / SIGTERM
       process.exit(0);
     };
     leaveRef.current = () => {
@@ -385,8 +388,10 @@ const meshHome = () => path.join(homedir(), ".mesh");
 const statePath = () => path.join(meshHome(), "daemon.json");
 const logPath = () => path.join(meshHome(), "daemon.log");
 const configPath = () => path.join(meshHome(), "config.json");
-/** How long stop() waits for servers / imported MCP servers to close before exiting anyway. */
-const STOP_GRACE_MS = 2000;
+/** How long stop() waits for the local server / imported MCP servers to close gracefully before killing them. */
+const STOP_GRACE_MS = 2500;
+/** Absolute cap on stop(). */
+const STOP_HARD_MS = 5000;
 /** Intentional leave / stop: remove the saved join and the background state so nothing brings the daemon back. */
 function forgetJoin(): void {
   for (const p of [configPath(), statePath()]) { try { unlinkSync(p); } catch { /* not there */ } }

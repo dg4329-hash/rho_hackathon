@@ -37,7 +37,9 @@ The daemon still has to exist on the machine: the plugin's `bin/mesh` launcher f
 `~/.mesh/mesh.mjs` (the relay's install one-liner), a repo checkout with `node_modules` (this repo when loaded
 with `--plugin-dir ./plugin`, or the marketplace's install location), or `mesh` on `PATH`. Join once with
 `mesh join <room-link> --background`; it writes `~/.mesh/config.json`, and from then on the plugin's
-SessionStart hook restarts the daemon (`--no-register`) whenever it is not running.
+SessionStart hook restarts the daemon (`--no-register`) whenever it is not running. Leaving (`leave_room`,
+the overlay's Leave, `POST /leave`, `mesh leave`) and `mesh stop` delete `~/.mesh/config.json`, so the hook
+does not bring the daemon back until you run `mesh join` again.
 
 Port: everything reads `MESH_PORT` (default 7337): `.mcp.json` uses `http://localhost:${MESH_PORT:-7337}/mcp`,
 and the monitor / SessionStart hook pass `--port`.

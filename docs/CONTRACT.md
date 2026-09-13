@@ -203,7 +203,8 @@ When the Claude Code plugin is installed it ships these same five hooks (`plugin
 mesh join <room | https://<relay>/r/<room>> [--as <user>] [--relay wss://…] [--config /abs/team.json] [--port 7337]
           [--background] [--no-register] [--cursor] [--codex] [--no-git-watch] [--no-codex-wake]
 mesh status                                     # background daemon: user@room, relay state, members, pid, log path (exit 1 if none)
-mesh stop                                       # SIGTERM the background daemon, remove ~/.mesh/daemon.json
+mesh stop                                       # SIGTERM the background daemon, remove ~/.mesh/daemon.json and ~/.mesh/config.json (nothing restarts it)
+mesh leave [--port 7337]                        # POST /leave to the running daemon (exits, drops out of presence), forget the saved join
 mesh log                                        # print ~/.mesh/daemon.log
 mesh watch [--port 7337]                        # one line per pending request / teammate message; run by the Claude Code plugin monitor
 mesh ask <who> "<command>" [--why "…"] [--room] [--as] [--relay] [--config] [--wait 120]   # human-driven request; exit = remote exit code, 2 = denied/timeout

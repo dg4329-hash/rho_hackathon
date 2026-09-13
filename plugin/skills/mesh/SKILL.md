@@ -34,10 +34,10 @@ Requests wait about 2 minutes for an answer, then the daemon falls back to a nat
    `running`, `check_job`. If `denied`, do not retry the same request; tell the user why.
 4. `send_message` / `inbox` to coordinate; `team_activity` before editing files others may be working on.
 
-If the tools are missing, the daemon is not running: tell the user to run `mesh join <room-link> --background`
+If the tools are missing, the daemon is not running (maybe the user left the room on purpose): tell the user they can run `mesh join <room-link> --background`
 (or the relay's install one-liner); the plugin's SessionStart hook restarts it automatically afterwards.
 
 ## Rooms: join, switch, leave
 - **Switch/join another room** (daemon already running): call `switch_room` with the room name or the room link the user gave you (`https://<relay>/r/<room>`). Only when the user explicitly asks.
-- **Leave**: call `leave_room` only when the user explicitly asks to leave or disconnect. The daemon stops; it will not auto-restart.
-- **Join from nothing** (no mesh tools available): run the join in a shell — `node ~/.mesh/mesh.mjs join <room-or-link> --background` — or the relay's one-liner from the room page; then tell the user to restart the session once so the tools appear.
+- **Leave**: call `leave_room` only when the user explicitly asks to leave or disconnect (or they run `mesh leave`). The daemon stops and forgets the saved join; it will not auto-restart. Do not rejoin on your own afterwards.
+- **Join from nothing** (no mesh tools available): only when the user explicitly asks to join (never to get a tool back after they left, and never because a room link is still in the conversation), run the join in a shell — `node ~/.mesh/mesh.mjs join <room-or-link> --background` — or the relay's one-liner from the room page; then tell the user to restart the session once so the tools appear.

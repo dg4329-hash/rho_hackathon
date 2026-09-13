@@ -4,3 +4,32 @@ node_modules
 .worktrees
 .local
 .git
+
+# Agent worktrees and local settings (note: does NOT match .claude-plugin, which the image needs)
+.claude
+.cursor
+.playwright-mcp
+.vscode
+.idea
+
+# Secrets and local config: never in the build context
+.env
+.env*
+**/.env
+**/.env.*
+team.json
+**/team.json
+
+# Generated at relay startup; stale copies would shadow the fresh bundle
+apps/relay/public
+*.log
+**/*.log
+.DS_Store
+**/.DS_Store
+
+# Not read by the relay or the daemon bundle
+docs
+scripts
+apps/tray
+apps/relay/test
+apps/daemon/test

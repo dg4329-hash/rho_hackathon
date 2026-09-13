@@ -1,8 +1,12 @@
+# Mirrors /railway.json. Keep the service Root Directory at the repo root: the Dockerfile COPYs
+# packages/, apps/daemon, hooks/, plugin/ and .claude-plugin/, which do not exist in an apps/relay build context.
+# Rooms, history and artifacts are in memory, so run exactly one replica. Set ROOM_SECRET in service variables.
 [build]
 builder = "DOCKERFILE"
 dockerfilePath = "apps/relay/Dockerfile"
 
 [deploy]
+numReplicas = 1
 healthcheckPath = "/health"
 healthcheckTimeout = 30
 restartPolicyType = "ON_FAILURE"

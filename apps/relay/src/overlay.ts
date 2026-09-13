@@ -203,7 +203,8 @@ export const OVERLAY_JS: string = String.raw`(function (root) {
     ":root{--fg:#1d1d1f;--fg2:rgba(29,29,31,.6);--line:rgba(0,0,0,.08);--glass:rgba(255,255,255,.55);--gborder:rgba(255,255,255,.35);--ghl:rgba(255,255,255,.4);--card:rgba(255,255,255,.5);--field:rgba(255,255,255,.55);--blue:#0a84ff;--red:rgba(255,69,58,.9);--green:#30d158;--bodybg:linear-gradient(160deg,#eef1f6,#e2e6ee);--scroll:rgba(60,60,67,.3);color-scheme:light dark}" +
     "@media(prefers-color-scheme:dark){:root{--fg:#f5f5f7;--fg2:rgba(245,245,247,.6);--line:rgba(255,255,255,.08);--glass:rgba(28,28,30,.55);--gborder:rgba(255,255,255,.12);--ghl:rgba(255,255,255,.14);--card:rgba(255,255,255,.06);--field:rgba(255,255,255,.07);--bodybg:linear-gradient(160deg,#1c1c1e,#0d0d0f);--scroll:rgba(235,235,245,.3)}}" +
     "@supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){:root{--glass:#f4f5f8;--card:#fff;--field:#fff}@media(prefers-color-scheme:dark){:root{--glass:#1e1e21;--card:#2a2a2e;--field:#2a2a2e}}}" +
-    "*{box-sizing:border-box}html,body{height:100%}" +
+    "*{box-sizing:border-box}html,body{height:100%}[hidden]{display:none!important}" + // .keybox etc. set display:flex, which beats the hidden attribute
+
     "html,body{background:transparent}body{margin:0;color:var(--fg);font:13px/1.45 -apple-system,BlinkMacSystemFont,'SF Pro Text','Segoe UI',system-ui,sans-serif;display:flex;flex-direction:column;gap:8px;padding:8px;overflow:hidden;-webkit-font-smoothing:antialiased}" +
     "body.canvas{background:var(--bodybg)}" +
     ".glass{background:var(--glass);-webkit-backdrop-filter:blur(24px) saturate(180%);backdrop-filter:blur(24px) saturate(180%);border:1px solid var(--gborder);border-radius:18px;box-shadow:inset 0 1px 0 var(--ghl),0 8px 30px rgba(0,0,0,.12)}" +
@@ -244,6 +245,7 @@ export const OVERLAY_JS: string = String.raw`(function (root) {
     ".ft .port{margin-left:auto;display:flex;align-items:center;gap:4px}" +
     // room key (docs/ROOM-KEYS.md): lock glyph when keyed, key box when the relay says 401
     ".ft .lock{font-size:10.5px;opacity:.75;line-height:1}" +
+    ".banner{margin:0 0 8px;padding:10px 12px;border-radius:10px;background:rgba(10,132,255,.14);color:var(--fg);font-weight:600}.banner.ended{background:rgba(255,69,58,.16)}" +
     ".ft .keybox{margin-top:5px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;color:var(--fg2)}" +
     ".ft .keybox input{width:132px}" +
     ".ft .keybox button{padding:3px 9px;font-size:11px}" +
@@ -352,7 +354,7 @@ export const OVERLAY_JS: string = String.raw`(function (root) {
       '<div class="hd glass"><span class="icon" id="mo-icon">m<span class="wbadge" id="mo-ibadge"></span></span><b>mesh</b><span class="room" title="' + esc(room) + '">' + esc(room) + '</span>' +
       '<label title="beep on new request / message"><input type="checkbox" id="mo-sound"> sound</label>' +
       '<button class="chev" id="mo-collapse" title="minimize to a widget (Esc)" aria-label="minimize">\u2304</button></div>' +
-      '<div class="main glass">' +
+      '<div class="main glass"><div id="mo-banner" class="banner" hidden></div>' +
       '<h2>pending <span id="mo-pcount" class="badge zero">0</span></h2><div id="mo-pending"></div>' +
       '<h2>messages</h2><div class="reply"><input class="to" id="mo-to" list="mo-members" placeholder="all" title="recipient (user or all)"><input class="tx" id="mo-text" placeholder="reply… (enter to send)" maxlength="2000"><button class="ghost" id="mo-send">send</button></div><datalist id="mo-members"></datalist><div id="mo-messages"></div>' +
       '<h2>live</h2><div id="mo-feed" class="feed"></div>' +
@@ -550,7 +552,14 @@ export const OVERLAY_JS: string = String.raw`(function (root) {
       var kb = $("mo-keybox"); if (kb) kb.hidden = !state.keyNeeded;
       if (h) {
         var hint = "";
-        if (state.endedMsg) { h.textContent = state.endedMsg; h.hidden = false; var eb = $("mo-end"); if (eb && !state.ended) eb.hidden = true; return; }
+        if (state.endedMsg) {
+          // left / ended: one clear banner on top, and hide controls that need a live daemon or room
+          h.hidden = true;
+          var bn = $("mo-banner"); if (bn) { bn.textContent = state.endedMsg; bn.className = "banner" + (state.ended ? " ended" : ""); bn.hidden = false; }
+          ["mo-end", "mo-leave", "mo-keybox", "mo-lock"].forEach(function (id) { var x = $(id); if (x) x.hidden = true; });
+          var rm = doc.querySelector(".ft .room"); if (rm) rm.hidden = true;
+          return;
+        }
         if (state.daemonOk === false) hint = "Can't reach the mesh daemon at http://localhost:" + state.port + ". Open this overlay from the same browser on the machine running mesh, check it is running (node ~/.mesh/mesh.mjs status), or fix the port →";
         else if (state.keyNeeded) hint = ""; // the key box below already says it
         else if (state.relayOk === false) hint = "Relay " + relayOrigin + " not responding; approvals still work, the live feed is paused.";
@@ -683,7 +692,7 @@ export const OVERLAY_JS: string = String.raw`(function (root) {
           if (state.stopped) break;
           state.relayOk = false;
           // 410: the owner ended this session — stop polling the relay for good (no endless loop against it).
-          if (e && e.status === 410) { finish("This session has ended." + (e.body && e.body.error ? " (" + e.body.error + ")" : ""), true); break; }
+          if (e && e.status === 410) { finish("This session has ended \u2014 the person who started it ended it for everyone. You're disconnected; start a new session from the room page.", true); break; }
           // 401: this room is keyed and we have no key (or the wrong one) — ask for the link.
           if (e && e.status === 401) state.keyNeeded = true;
         }

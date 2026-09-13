@@ -101,14 +101,44 @@ Tests: `pnpm -F daemon test`, `pnpm -F daemon exec tsx test/mcp.test.ts`, `pnpm 
 ## Hosting the relay (the public link)
 The relay serves everything: landing page, room pages, installers, the daemon bundle, the plugin, the overlay, and the file store.
 
-**Permanent (Railway, ~5 minutes):**
-1. Railway → New Project → Deploy from GitHub repo → `dg4329-hash/rho_hackathon` (root; `railway.json` points at `apps/relay/Dockerfile`).
-2. Variables → add `ROOM_SECRET` = a long random string (e.g. `openssl rand -hex 32`). Room keys are derived from it; changing it invalidates every existing room link.
-3. Settings → Networking → Generate Domain. Health check is `/health`. Done: share `https://<domain>`.
+**Permanent (Railway dashboard, no CLI, ~10 minutes):**
+1. **Create.** Railway → New Project → Deploy from GitHub repo → `dg4329-hash/rho_hackathon` (authorize the Railway GitHub app if asked). Branch `main`. Leave root directory empty and don't set a start command: `railway.json` at the repo root selects `apps/relay/Dockerfile` and the `/health` healthcheck.
+2. **Secret.** Service → Variables → New Variable `ROOM_SECRET` = output of `openssl rand -hex 32`. Put it in a password manager. **Never change or delete it**: every room key is HMAC(`ROOM_SECRET`, room), so changing it breaks every link ever shared. Don't set `MESH_REQUIRE_KEY` or `PORT` (Railway injects `PORT`). Optional: `MESH_REPO_URL`.
+3. **Domain.** Settings → Networking → Public Networking → Generate Domain. If Railway asks for a port, it's the one the relay listens on (`$PORT`). You get `https://<name>.up.railway.app`.
+4. **Wait.** Deployments → latest shows **Active** (build ~2–4 min; `/health` must pass).
+5. **Verify** (`R=https://<name>.up.railway.app`):
+   ```bash
+   curl -s $R/health                                   # {"rooms":0,"connections":0}
+   curl -sI $R/mesh.mjs | head -1                      # HTTP/2 200
+   curl -s $R/plugin.tgz | tar -tz | head              # .claude-plugin/marketplace.json, plugin/…
+   curl -s $R/install.sh | grep -m2 'wss://\|https://' # the Railway host, https/wss
+   curl -s -XPOST $R/api/rooms                         # {"room":…,"key":…,"link":…}
+   curl -s "$R/api/rooms/<room>?key=<key>"             # 200 JSON
+   curl -s "$R/api/rooms/<room>"                       # 401 room key required
+   ```
+   Then open the `link` in a browser.
+6. **Restart test.** Deployments → ⋯ → Restart. The same link still works (fixed `ROOM_SECRET`). Rooms and history live in memory: a restart/redeploy drops presence and history; daemons reconnect on their own.
+7. **Share.** Landing page → "Start a session" gives `https://<domain>/r/<room>#k=<key>`; installers served from that host bake in https/wss. Then ask Tarush to update the relay URL line in `docs/PLAN.md`.
+8. **Troubleshooting.**
+   - `/plugin.tgz` 503 → image is missing `plugin/` (fixed in the Dockerfile; redeploy from current `main`).
+   - Links stop working after a deploy → `ROOM_SECRET` changed or unset (logs show `! ROOM_SECRET not set`).
+   - 429 → per-IP rate limit (below).
+   - Daemon log repeats `relay error: user "<name>" is already connected` → two machines use the same name; re-join one with `--as <name>`.
+
+**Relay limits (public URL; all env-tunable):**
+- `POST /api/rooms`: 20 burst, then 20/min per IP → 429 + `Retry-After`.
+- WebSocket connects: 60 burst, then 120/min per IP → error frame + close 1013. `MESH_RATE_LIMIT=0` disables both.
+- Max 10 000 rooms (`MESH_MAX_ROOMS`) → 503 on create, close 1013 on connect.
+- Empty rooms (no connections) are forgotten after 2 h idle (`MESH_ROOM_IDLE_MS`). Only history is lost; the link keeps working.
+- Frames over 2 MiB close the socket (`MESH_MAX_FRAME_BYTES`).
+- Per-room history ≤ 200 frames and ≤ 4 MiB (`MESH_HISTORY_MAX_BYTES`).
+- A second daemon (with offers) under the same user name in a room is refused (close 4409), unless the existing one fails a ping within 3 s (`MESH_DUP_PROBE_MS`). `mesh ask` under your own name is unaffected.
+- One replica only (`numReplicas: 1`): rooms live in process memory.
 
 **Stop-gap (any Mac with ngrok):** `ROOM_SECRET=<something> ./scripts/tunnel-relay.sh` prints the public URL. Free ngrok shows a one-time browser interstitial; the installers and daemon send the skip header automatically. Without `ROOM_SECRET` the relay makes a random one and all room links stop working when it restarts.
 
 **Security model:** a room is reachable only with its link (`/r/<room>#k=<key>`); the key gates the WebSocket, the feed, files, and the overlay. Anyone you forward the link to is in. Approvals still gate what teammates can run. See `docs/ROOM-KEYS.md`.
+The WebSocket URL carries `?key=` in the query string, so proxy access logs (e.g. Railway HTTP logs) may record it.
 
 Vercel won't work: the relay needs a long-lived WebSocket server.
 

@@ -17,6 +17,7 @@ import {
   ApproveRequestInput, EventKind, SendFileInput, FetchArtifactInput, type Offer,
 } from "@mesh/protocol";
 import type { DaemonCore, LocalServer } from "./api.js";
+import { APPROVALS_MODES_LISTED } from "./pending.js";
 import { parseRoomArg } from "./register.js";
 import { NOT_OWNER_MESSAGE, NotOwnerError } from "./owner.js";
 import { exampleArgs, validateAgainstSchema } from "./schema.js";
@@ -202,7 +203,8 @@ export function buildMcpServer(core: DaemonCore): McpServer {
     const t = Number((raw as { timeoutSeconds?: number }).timeoutSeconds ?? 50);
     const r = await core.watchPoll(Math.min(55, Math.max(1, t)) * 1000);
     const pendingInfo = r.pending.map((p) => ({ id: p.id, from: p.from, why: p.why, command: p.command, tool: p.tool, args: p.args, note: "waiting for the user to approve in the overlay/dialog" }));
-    return ok({ messages: r.messages, pending: pendingInfo, ...(r.messages.length === 0 && pendingInfo.length === 0 ? { note: `nothing new in ${t}s; call again to keep watching` } : {}) });
+    const quiet = core.approvalsMode() === "overlay" ? " (approvals mode is overlay-only: requests and messages go to the overlay; read messages with the inbox tool)" : "";
+    return ok({ messages: r.messages, pending: pendingInfo, ...(r.messages.length === 0 && pendingInfo.length === 0 ? { note: `nothing new in ${t}s; call again to keep watching${quiet}` } : {}) });
   }));
 
   server.registerTool("inbox", {
@@ -337,7 +339,8 @@ export function buildApp(core: DaemonCore): express.Express {
   });
 
   // { room, relay?, key? } — `room` may be a room link, whose `#k=` fragment supplies relay and key.
-  app.get("/approvals", (_req: Request, res: Response) => { res.json({ mode: core.approvalsMode(), modes: ["auto", "overlay", "dialog", "tty"] }); });
+  // Where teammate approvals go (CONTRACT §2). POST saves the choice; "tty" is accepted for back-compat but not listed.
+  app.get("/approvals", (_req: Request, res: Response) => { res.json({ mode: core.approvalsMode(), modes: APPROVALS_MODES_LISTED }); });
   app.post("/approvals", (req: Request, res: Response) => {
     try { res.json({ ok: true, mode: core.setApprovalsMode(String((req.body as { mode?: unknown })?.mode ?? "")) }); }
     catch (e) { res.status(400).json({ ok: false, error: (e as Error).message }); }
@@ -412,12 +415,14 @@ export function buildApp(core: DaemonCore): express.Express {
   app.get("/pending", async (req, res) => {
     const n = Number(req.query.wait);
     const waitSeconds = Number.isFinite(n) && n > 0 ? Math.min(60, n) : 0;
+    // ?consumer=overlay: the browser overlay (never counts as the agent watcher; sees nothing in "agent" mode)
+    const consumer = req.query.consumer === "overlay" ? "overlay" : "agent";
     if (req.query.messages === "1") {
-      const since = req.query.consumer === "overlay" ? String(req.query.since ?? "") : undefined;
-      res.json(await core.watchPoll(waitSeconds * 1000, since !== undefined ? { since } : undefined));
+      const opts = consumer === "overlay" ? { consumer, since: String(req.query.since ?? "") } as const : undefined;
+      res.json(await core.watchPoll(waitSeconds * 1000, opts));
       return;
     }
-    res.json({ pending: await core.pendingApprovals(waitSeconds * 1000) });
+    res.json({ pending: await core.pendingApprovals(waitSeconds * 1000, consumer) });
   });
 
   app.post("/decide", (req, res) => {

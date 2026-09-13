@@ -8,6 +8,8 @@
  * (or something POSTs `/decide`), and the parked request resolves. If nobody answers within
  * DECISION_TIMEOUT_MS, or the watcher goes away, the caller falls back to the dialog / tty prompt.
  */
+import fs from "node:fs";
+import path from "node:path";
 import type { PendingRequest } from "@mesh/protocol";
 import type { ApprovalAnswer } from "./approval.js";
 
@@ -16,9 +18,11 @@ export type ApprovalPath = "watcher" | "dialog" | "tty";
 export interface ApprovalPathInputs {
   /** an overlay (browser panel) is long-polling; only meaningful with mode "overlay" */
   overlayAttached?: boolean;
+  /** the coding-agent watcher (`mesh watch`) is long-polling; only meaningful with mode "agent" */
+  agentAttached?: boolean;
   /** A `GET /pending` long-poll was seen within WATCHER_TTL_MS. */
   watcherAttached: boolean;
-  /** `MESH_APPROVE`: "dialog" | "tty" force that path; "watcher" forces the queue; anything else = auto. */
+  /** Owner's choice or `MESH_APPROVE`: "dialog" | "tty" force that path; "overlay" | "agent" only that watcher; "watcher" forces the queue; anything else = auto. */
   mode?: string;
   dialogAvailable: boolean;
   tty: boolean;
@@ -31,13 +35,17 @@ export function selectApprovalPath(i: ApprovalPathInputs): ApprovalPath {
   if (mode === "dialog") return i.dialogAvailable ? "dialog" : "tty";
   // "overlay": only the overlay answers; if none is open, fall straight to the OS dialog (no 120 s wait)
   if (mode === "overlay") return i.overlayAttached ? "watcher" : i.dialogAvailable ? "dialog" : "tty";
+  // "agent": only the Claude Code watcher answers (the overlay's polling does not count); none → OS dialog
+  if (mode === "agent") return i.agentAttached ? "watcher" : i.dialogAvailable ? "dialog" : "tty";
   if (mode === "watcher" || i.watcherAttached) return "watcher";
   if (i.dialogAvailable) return "dialog";
   return "tty";
 }
 
-export type ApprovalsMode = "auto" | "overlay" | "dialog" | "tty";
-export const APPROVALS_MODES: ApprovalsMode[] = ["auto", "overlay", "dialog", "tty"];
+/** "tty" is still accepted (back-compat) but not offered: APPROVALS_MODES_LISTED is what `GET /approvals` returns. */
+export type ApprovalsMode = "auto" | "overlay" | "agent" | "dialog" | "tty";
+export const APPROVALS_MODES: ApprovalsMode[] = ["auto", "overlay", "agent", "dialog", "tty"];
+export const APPROVALS_MODES_LISTED: ApprovalsMode[] = ["auto", "overlay", "agent", "dialog"];
 export type PollConsumer = "agent" | "overlay";
 
 export const WATCHER_TTL_MS = 60_000;
@@ -55,9 +63,16 @@ export class PendingApprovals {
   private readonly pollers = new Set<() => void>();
   private lastPollAt = -Infinity;
   private lastOverlayPollAt = -Infinity;
-  /** Runtime approvals mode (set from the overlay or `POST /approvals`); "auto" = env MESH_APPROVE or the default path. */
+  /** Approvals mode: set from the overlay / `POST /approvals` or loaded from approvals.json. */
   mode: ApprovalsMode = "auto";
+  /** True once the owner chose a mode (UI or saved file): it then beats `MESH_APPROVE`, even when it is "auto". */
+  chosen = false;
   constructor(private readonly now: () => number = () => Date.now()) {}
+
+  setMode(mode: ApprovalsMode): void {
+    this.mode = mode;
+    this.chosen = true;
+  }
 
   /** Any watcher (agent or overlay) polled recently. */
   watcherAttached(): boolean {
@@ -66,9 +81,23 @@ export class PendingApprovals {
   overlayAttached(): boolean {
     return this.now() - this.lastOverlayPollAt < WATCHER_TTL_MS;
   }
-  /** What a given consumer is allowed to see. In "overlay" mode the coding-agent watcher is never asked. */
+  agentAttached(): boolean {
+    return this.now() - this.lastPollAt < WATCHER_TTL_MS;
+  }
+  /** Is someone allowed to answer under the current mode still polling? ("overlay" / "agent" count only that consumer.) */
+  answererAttached(): boolean {
+    if (this.mode === "overlay") return this.overlayAttached();
+    if (this.mode === "agent") return this.agentAttached();
+    return this.watcherAttached();
+  }
+  /** Does the coding-agent watcher get message / file lines? Not in "overlay" mode: the CLI stays quiet. */
+  agentNotified(): boolean {
+    return this.mode !== "overlay";
+  }
+  /** What a given consumer is allowed to see. "overlay" mode hides requests from the agent watcher, "agent" mode from the overlay. */
   visibleTo(consumer: PollConsumer): PendingRequest[] {
     if (this.mode === "overlay" && consumer === "agent") return [];
+    if (this.mode === "agent" && consumer === "overlay") return [];
     if (this.mode === "dialog" || this.mode === "tty") return [];
     return this.list();
   }
@@ -119,7 +148,7 @@ export class PendingApprovals {
         resolve(undefined);
       };
       const timeout = setTimeout(giveUp, timeoutMs);
-      const watcherCheck = setInterval(() => { if (!this.watcherAttached()) giveUp(); }, WATCHER_CHECK_MS);
+      const watcherCheck = setInterval(() => { if (!this.answererAttached()) giveUp(); }, WATCHER_CHECK_MS);
       this.entries.set(req.id, { req: full, resolve, timers: [timeout, watcherCheck] });
       for (const wake of [...this.pollers]) wake();
     });
@@ -134,6 +163,22 @@ export class PendingApprovals {
     e.resolve(decision === "approved" ? { approved: true } : { approved: false, reason: reason?.trim() || "owner declined" });
     return true;
   }
+}
+
+/** Where the owner's approvals choice is saved (the CLI passes this to createCore; tests pass a temp path or nothing). */
+export const approvalsFile = (home: string) => path.join(home, ".mesh", "approvals.json");
+
+/** The saved approvals mode, or undefined when there is no (valid) file. */
+export function loadApprovalsMode(file: string): ApprovalsMode | undefined {
+  try {
+    const m = String((JSON.parse(fs.readFileSync(file, "utf8")) as { mode?: unknown }).mode ?? "").trim().toLowerCase();
+    return (APPROVALS_MODES as string[]).includes(m) ? (m as ApprovalsMode) : undefined;
+  } catch { return undefined; }
+}
+
+export function saveApprovalsMode(file: string, mode: ApprovalsMode): void {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify({ mode, updatedAt: new Date().toISOString() }, null, 2) + "\n");
 }
 
 /** The one line `mesh watch` prints per pending request; imperative on purpose (the model must act on it). */

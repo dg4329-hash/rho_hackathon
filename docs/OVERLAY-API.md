@@ -7,8 +7,10 @@ TWO things: the relay (room feed, who's here) and the owner's LOCAL daemon (pend
 ## Local daemon HTTP (http://localhost:<port>, default 7337) — CORS allowed for the relay's origin only
 | method | path | body / query | returns |
 |---|---|---|---|
-| GET | `/health` | | `{ user, room, relay, members }` |
-| GET | `/pending?wait=25&messages=1&consumer=overlay&since=<ISO>` | long-poll ≤ 25 s; returns early on a new request or message | `{ pending: PendingRequest[], messages: InboxMessage[] }` — `consumer=overlay` + `since` returns messages newer than `since` WITHOUT marking them read (the Claude Code watcher uses the default consumer, which marks read) |
+| GET | `/health` | | `{ approvals, user, room, relay, members, owner }` (`approvals` = effective approvals mode) |
+| GET | `/pending?wait=25&messages=1&consumer=overlay&since=<ISO>` | long-poll ≤ 25 s; returns early on a new request or message | `{ pending: PendingRequest[], messages: InboxMessage[] }` — `consumer=overlay` + `since` returns messages newer than `since` WITHOUT marking them read (the Claude Code watcher uses the default consumer, which marks read). Always send `consumer=overlay`: it is what keeps the overlay from counting as the Claude Code watcher. In `agent` mode `pending` is always `[]` |
+| GET | `/approvals` | | `{ mode, modes: ['auto','overlay','agent','dialog'] }` — `mode` may also be `tty` (legacy / `MESH_APPROVE`); show it as `dialog` |
+| POST | `/approvals` | `{ mode: 'auto'\|'overlay'\|'agent'\|'dialog' }` (`tty` accepted) | `{ ok: true, mode }` or 400 `{ ok: false, error }`; saved, survives a daemon restart |
 | POST | `/decide` | `{ id, decision: 'approved'\|'denied', reason? }` | `{ ok, id, decision }` or 404 |
 | POST | `/message` | `{ to: user\|'all', text }` | `{ ok: true }` |
 | GET | `/inbox?unread=0` | | `{ messages: InboxMessage[] }` (history for first paint) |
@@ -18,6 +20,18 @@ InboxMessage: `{ id, ts, from, to, text, read }`.
 
 While any client long-polls `/pending`, the daemon treats it as an attached watcher and routes approvals to the
 pending queue (no modal OS dialog). If nobody answers within 120 s the daemon falls back to the OS dialog.
+
+Approvals mode (the owner's "where do requests go" setting; CONTRACT §2):
+| mode | label | overlay gets | Claude Code monitor gets | nobody attached (60 s) |
+|---|---|---|---|---|
+| `auto` | Both | requests + messages | requests + messages | OS dialog |
+| `overlay` | Overlay only | requests + messages | nothing (messages stay unread for `inbox`) | OS dialog at once |
+| `agent` | Claude Code only | messages only (`pending: []`) | requests + messages | OS dialog at once (overlay polls don't count) |
+| `dialog` | OS dialog | messages only | messages only | OS dialog |
+
+Detect the mode from `GET /approvals` (or `/health`.approvals) on load and after each POST; in `agent` / `dialog` the
+overlay can say "requests go to Claude Code / the OS dialog" instead of an empty requests list. Precedence: saved choice
+> `MESH_APPROVE` > `auto`.
 
 ## Relay (same origin as the overlay page)
 | GET | `/api/rooms/<room>?since=<n>` | `{ members, watchers, events, next }` (poll every 2 s) |

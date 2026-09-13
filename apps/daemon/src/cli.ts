@@ -21,7 +21,7 @@ import { endRoomOnRelay, maskOwner, ownerFromLink } from "./owner.js";
 import { isFixedOffer } from "./shell.js";
 import { restoreTerminal } from "./approval.js";
 import { killTrackedChildren } from "./children.js";
-import { watchLine } from "./pending.js";
+import { approvalsFile, watchLine } from "./pending.js";
 
 /** ~-relative path for banners. */
 function shorten(p: string): string {
@@ -190,6 +190,7 @@ program
       onLeave: () => { if (leaveRef.current) leaveRef.current(); else leaveRequested = true; },
       onSwitch: (room, relay, key) => { try { writeJoinConfig({ room, relay, user: config.user, port, cwd, updatedAt: new Date().toISOString(), ...(key ? { key } : {}) }); } catch { /* best effort */ } try { const st = loadState(); if (st) writeState({ ...st, room, relay, key, owner: undefined }); } catch { /* ignore */ } }, config, cwd, client, mcpImport, shellOffers, mcpOffers: imported.offers,
       onIncomingMessage: (message) => { wake?.enqueue(message); },
+      approvalsFile: approvalsFile(homedir()),
     });
     client.on("open", () => console.log(chalk.green(`● connected to ${config.relay} room=${config.room} as ${config.user}`) + (config.key ? chalk.dim(`  ${maskKey(config.key)}`) : "") + (config.owner ? chalk.dim(`  owner ${maskOwner(config.owner)} (mesh end ends it for everyone)`) : "")));
     // The relay refused our room key: nothing this daemon can do without the room link, so stop (CONTRACT / ROOM-KEYS).

@@ -24,7 +24,7 @@ import type { ActivityEntry, AskInput, DaemonCore, FetchedArtifact, Job, McpCont
 import { askApproval } from "./approval.js";
 import { artifactMeta, downloadArtifact, extFor, formatSize, mimeFor, scanOutputForFiles, uploadBytes, uploadFile } from "./artifacts.js";
 import { nativeNotify } from "./native.js";
-import { APPROVALS_MODES, PendingApprovals, type ApprovalsMode } from "./pending.js";
+import { APPROVALS_MODES, PendingApprovals, loadApprovalsMode, saveApprovalsMode, type ApprovalsMode, type PollConsumer } from "./pending.js";
 import { Jobs, toJobResult } from "./jobs.js";
 import { resolvePermission } from "./permissions.js";
 import { parseRoomArg } from "./register.js";
@@ -49,6 +49,8 @@ export interface CoreOptions {
   quiet?: boolean;
   /** Optional local agent wake handler; receives messages after inbox deduplication. */
   onIncomingMessage?: (message: InboxMessage) => void;
+  /** Where the owner's approvals mode is loaded from and saved to (the CLI: ~/.mesh/approvals.json). Omitted = not persisted. */
+  approvalsFile?: string;
 }
 
 const ACTIVITY_LIMIT = 100;
@@ -67,6 +69,8 @@ export function createCore(opts: CoreOptions): DaemonCore & { client: RelayClien
   const me = config.user;
   const jobs = new Jobs();
   const pending = new PendingApprovals();
+  const savedMode = opts.approvalsFile ? loadApprovalsMode(opts.approvalsFile) : undefined;
+  if (savedMode) pending.setMode(savedMode);
   const say = (line: string) => {
     if (!opts.quiet) console.log(line);
   };
@@ -346,7 +350,8 @@ export function createCore(opts: CoreOptions): DaemonCore & { client: RelayClien
       say(`${chalk.cyan("✉")} ${chalk.magenta(frame.from)}${to === "all" ? chalk.dim(" (to all)") : ""}: ${text.length > 300 ? text.slice(0, 299) + "…" : text}`);
     }
     // OS notification only when nothing better is attached: an overlay or the Claude Code watcher already shows it live.
-    if (!opts.quiet && !pending.watcherAttached() && Math.abs(Date.now() - Date.parse(frame.ts)) < 5 * 60_000) { debug("notify", frame.from); nativeNotify(artifact ? `mesh: file from ${frame.from}` : `mesh: message from ${frame.from}`, text); }
+    const shownLive = pending.agentNotified() ? pending.watcherAttached() : pending.overlayAttached();
+    if (!opts.quiet && !shownLive && Math.abs(Date.now() - Date.parse(frame.ts)) < 5 * 60_000) { debug("notify", frame.from); nativeNotify(artifact ? `mesh: file from ${frame.from}` : `mesh: message from ${frame.from}`, text); }
     try { opts.onIncomingMessage?.(message); } catch (e) { console.warn(`mesh: incoming-message handler failed: ${(e as Error).message}`); }
   }
 
@@ -553,11 +558,19 @@ export function createCore(opts: CoreOptions): DaemonCore & { client: RelayClien
       }
     },
 
-    approvalsMode() { return pending.mode; },
+    approvalsMode() {
+      // the owner's choice, else a valid MESH_APPROVE, else auto (same precedence as askApproval)
+      const env = (process.env.MESH_APPROVE ?? "").trim().toLowerCase();
+      return pending.chosen ? pending.mode : (APPROVALS_MODES as string[]).includes(env) ? env : "auto";
+    },
     setApprovalsMode(mode: string) {
       const m = mode.trim().toLowerCase();
       if (!(APPROVALS_MODES as string[]).includes(m)) throw new Error(`approvals mode must be one of ${APPROVALS_MODES.join(", ")}`);
-      pending.mode = m as ApprovalsMode;
+      pending.setMode(m as ApprovalsMode);
+      if (opts.approvalsFile) {
+        try { saveApprovalsMode(opts.approvalsFile, pending.mode); } catch (e) { console.warn(`mesh: could not save approvals mode: ${(e as Error).message}`); }
+      }
+      pending.wakeAll(); // long-polls re-evaluate what they may see under the new mode
       say(chalk.dim(`approvals: ${m}`));
       return pending.mode;
     },
@@ -566,18 +579,20 @@ export function createCore(opts: CoreOptions): DaemonCore & { client: RelayClien
       return client.status();
     },
 
-    pendingApprovals(waitMs: number) {
-      return pending.poll(waitMs);
+    pendingApprovals(waitMs: number, consumer: PollConsumer = "agent") {
+      return pending.poll(waitMs, consumer);
     },
 
-    async watchPoll(waitMs: number, opts?: { since?: string }) {
-      if (opts?.since !== undefined) {
+    async watchPoll(waitMs: number, opts?: { since?: string; consumer?: PollConsumer }) {
+      if (opts?.consumer === "overlay" || opts?.since !== undefined) {
         // overlay-style consumer: cursor by timestamp, never marks read (the agent watcher may still want them)
         const newer = () => core.inbox({ unreadOnly: false, sinceMinutes: 120 }).filter((m) => m.ts > (opts.since ?? ""));
         if (newer().length > 0) return { pending: await pending.poll(0, "overlay"), messages: newer() };
         const list = await pending.poll(waitMs, "overlay");
         return { pending: list, messages: newer() };
       }
+      // "overlay" mode: the agent watcher gets no message / file lines (they stay unread for the inbox tool and the overlay)
+      if (!pending.agentNotified()) return { pending: await pending.poll(waitMs), messages: [] };
       const unreadNow = () => core.inbox({ unreadOnly: false, sinceMinutes: 120 }).filter((m) => !m.read);
       if (unreadNow().length > 0) {
         return { pending: await pending.poll(0), messages: core.inbox({ unreadOnly: true, sinceMinutes: 120 }) };

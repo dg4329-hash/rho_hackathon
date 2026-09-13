@@ -10,7 +10,7 @@ import { TeamConfig, type Offer } from "@mesh/protocol";
 import { createCore } from "../src/core.js";
 import { createLocalServer } from "../src/local-server.js";
 import { createMcpImport } from "../src/mcp-import.js";
-import { PendingApprovals, selectApprovalPath, watchLine } from "../src/pending.js";
+import { PendingApprovals, approvalsFile, loadApprovalsMode, saveApprovalsMode, selectApprovalPath, watchLine } from "../src/pending.js";
 import { APPROVE_REQUEST_TOOLS, meshPluginInstalled, registerApproveAskRule, removeLegacyClaudeHooks } from "../src/register.js";
 import { RelayClient } from "../src/relay-client.js";
 import { resolvePermission } from "../src/permissions.js";
@@ -42,6 +42,54 @@ function testSelectApprovalPath(): void {
   check("MESH_APPROVE=dialog without a dialog → tty", selectApprovalPath({ ...base, mode: "dialog", dialogAvailable: false }) === "tty");
   check("MESH_APPROVE=watcher forces the queue", selectApprovalPath({ ...base, mode: "watcher" }) === "watcher");
   check("unknown mode = auto", selectApprovalPath({ ...base, mode: "bogus", watcherAttached: true }) === "watcher");
+  check("overlay mode, overlay attached → watcher", selectApprovalPath({ ...base, mode: "overlay", overlayAttached: true }) === "watcher");
+  check("overlay mode, only the agent attached → dialog", selectApprovalPath({ ...base, mode: "overlay", watcherAttached: true, agentAttached: true }) === "dialog");
+  check("agent mode, agent attached → watcher", selectApprovalPath({ ...base, mode: "agent", watcherAttached: true, agentAttached: true }) === "watcher");
+  check("agent mode, only the overlay attached → dialog", selectApprovalPath({ ...base, mode: "agent", watcherAttached: true, overlayAttached: true }) === "dialog");
+  check("agent mode, nobody, no dialog → tty", selectApprovalPath({ ...base, mode: "agent", dialogAvailable: false }) === "tty");
+}
+
+async function testModesUnit(): Promise<void> {
+  console.log("PendingApprovals modes");
+  let now = 5_000_000;
+  const q = new PendingApprovals(() => now);
+  check("not chosen initially", !q.chosen && q.mode === "auto");
+  await q.poll(0, "overlay");
+  check("overlay poll marks the overlay, not the agent", q.overlayAttached() && !q.agentAttached() && q.watcherAttached());
+  q.setMode("agent");
+  check("setMode marks the choice", q.chosen && q.mode === "agent");
+  check("agent mode: an overlay poll is not an answerer", !q.answererAttached());
+  await q.poll(0, "agent");
+  check("agent mode: agent poll is an answerer", q.answererAttached());
+  const parked = q.ask({ id: "m1", from: "x", why: "y", command: "z" }, 10_000);
+  check("agent mode: agent sees the request", q.visibleTo("agent").length === 1);
+  check("agent mode: overlay sees nothing", q.visibleTo("overlay").length === 0 && (await q.poll(0, "overlay")).length === 0);
+  check("agent mode: agent is notified of messages", q.agentNotified());
+  q.setMode("overlay");
+  check("overlay mode: agent sees nothing, overlay sees it", q.visibleTo("agent").length === 0 && q.visibleTo("overlay").length === 1);
+  check("overlay mode: agent gets no message lines", !q.agentNotified());
+  now += 61_000;
+  await q.poll(0, "agent");
+  check("overlay mode: an agent poll alone is not an answerer", !q.answererAttached());
+  q.setMode("dialog");
+  check("dialog mode: nobody sees parked requests", q.visibleTo("agent").length === 0 && q.visibleTo("overlay").length === 0);
+  q.decide("m1", "denied");
+  await parked;
+
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "mesh-approvals-"));
+  try {
+    const file = approvalsFile(tmp);
+    check("approvalsFile lives under <home>/.mesh", file === path.join(tmp, ".mesh", "approvals.json"));
+    check("no file → undefined", loadApprovalsMode(file) === undefined);
+    saveApprovalsMode(file, "agent");
+    check("save → load round-trips", loadApprovalsMode(file) === "agent");
+    fs.writeFileSync(file, JSON.stringify({ mode: "bogus" }));
+    check("invalid saved mode → undefined", loadApprovalsMode(file) === undefined);
+    fs.writeFileSync(file, "not json");
+    check("garbage file → undefined", loadApprovalsMode(file) === undefined);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
 }
 
 async function testQueue(): Promise<void> {
@@ -139,6 +187,104 @@ async function testEndToEnd(): Promise<void> {
   await relay.close();
 }
 
+async function testModesEndToEnd(): Promise<void> {
+  console.log("daemon: approvals modes over HTTP (agent / overlay routing, message suppression, persistence)");
+  process.env.MESH_APPROVE = "tty"; // fallbacks are an instant "no tty" deny, never a dialog
+  const relay = await startFakeRelay(0);
+  const relayUrl = `ws://127.0.0.1:${relay.port}`;
+  const room = `modes-${Date.now()}`;
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "mesh-modes-"));
+  const file = approvalsFile(tmp);
+  const configA = TeamConfig.parse({
+    user: "a", room, relay: relayUrl, timeoutSeconds: 5, allowArbitrary: "never",
+    offers: [{ name: "date", command: "date", description: "the time", permission: "ask" }],
+  });
+  const configB = TeamConfig.parse({ user: "b", room, relay: relayUrl });
+  const clientA = new RelayClient({ relay: relayUrl, room, user: "a", offers: shellOffers(configA) });
+  const clientB = new RelayClient({ relay: relayUrl, room, user: "b", offers: [] });
+  const a = createCore({ config: configA, cwd: process.cwd(), client: clientA, mcpImport: createMcpImport(), shellOffers: shellOffers(configA), mcpOffers: [], quiet: true, approvalsFile: file });
+  const b = createCore({ config: configB, cwd: process.cwd(), client: clientB, mcpImport: createMcpImport(), shellOffers: [], mcpOffers: [], quiet: true });
+  const server = createLocalServer();
+  const port = await freePort();
+  await server.start(a, port);
+  await Promise.all([clientA.connect(), clientB.connect()]);
+  for (let i = 0; i < 50 && !b.members().some((m) => m.user === "a"); i++) await sleep(20);
+  const base = `http://localhost:${port}`;
+  type Poll = { pending: Array<{ id: string }>; messages?: Array<{ text: string }> };
+  const get = (p: string) => fetch(base + p).then((r) => r.json() as Promise<Poll>);
+  const setMode = (mode: string) => fetch(`${base}/approvals`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode }) });
+  const decide = (id: string) => fetch(`${base}/decide`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id, decision: "approved" }) });
+
+  try {
+    const g0 = await (await fetch(`${base}/approvals`)).json() as { mode: string; modes: string[] };
+    check("GET /approvals: MESH_APPROVE shows through until the owner chooses", g0.mode === "tty", g0);
+    check("GET /approvals lists auto, overlay, agent, dialog (no tty)", JSON.stringify(g0.modes) === JSON.stringify(["auto", "overlay", "agent", "dialog"]), g0);
+    check("POST bogus → 400", (await setMode("bogus")).status === 400);
+    const s1 = await (await setMode("agent")).json() as { ok: boolean; mode: string };
+    check("POST agent → { ok, mode }", s1.ok === true && s1.mode === "agent", s1);
+    check("mode saved to the approvals file", loadApprovalsMode(file) === "agent");
+    check("/health reports the mode", (await (await fetch(`${base}/health`)).json() as { approvals: string }).approvals === "agent");
+
+    // agent mode, only the overlay polling: the overlay does not count as a watcher → straight to the fallback
+    const ov1 = get("/pending?wait=5&messages=1&consumer=overlay");
+    await sleep(50);
+    const r1 = await b.ask({ who: "a", command: "date", why: "overlay only", waitSeconds: 10 });
+    check("agent mode + only an overlay → fallback (no parking)", r1.status === "denied" && /no tty/.test(r1.reason ?? ""), r1);
+
+    // agent mode, both polling: the agent poll gets the request, the overlay gets []
+    const ag2 = get("/pending?wait=5&messages=1");
+    await sleep(50);
+    const r2p = b.ask({ who: "a", command: "date", why: "agent mode", waitSeconds: 10 });
+    const seen2 = await ag2;
+    check("agent mode: agent watcher sees the request", seen2.pending.length === 1, seen2);
+    check("agent mode: overlay poll returns pending: []", (await ov1).pending.length === 0 && (await get("/pending?consumer=overlay")).pending.length === 0);
+    check("agent mode: plain /pending (agent consumer) still sees it", (await get("/pending")).pending.length === 1);
+    await decide(seen2.pending[0]!.id);
+    check("agent mode: /decide completes the job", (await r2p).status === "completed");
+
+    // overlay mode: the overlay parks and answers; the agent watcher sees no requests and no message lines
+    await setMode("overlay");
+    const ov3 = get("/pending?wait=5&messages=1&consumer=overlay&since=9999");
+    await sleep(50);
+    const r3p = b.ask({ who: "a", command: "date", why: "overlay mode", waitSeconds: 10 });
+    const seen3 = await ov3;
+    check("overlay mode: overlay sees the request", seen3.pending.length === 1, seen3);
+    check("overlay mode: agent /pending sees nothing", (await get("/pending")).pending.length === 0);
+    await decide(seen3.pending[0]!.id);
+    check("overlay mode: /decide completes the job", (await r3p).status === "completed");
+
+    b.sendMessage("a", "hello from b");
+    for (let i = 0; i < 50 && !a.inbox({ unreadOnly: false, sinceMinutes: 5 }).some((m) => m.text === "hello from b"); i++) await sleep(20);
+    const ag4 = await get("/pending?wait=1&messages=1");
+    check("overlay mode: agent watcher gets no message lines", (ag4.messages ?? []).length === 0, ag4);
+    check("overlay mode: the message stays unread for the inbox tool", a.inbox({ unreadOnly: false, sinceMinutes: 5 }).some((m) => m.text === "hello from b" && !m.read));
+    check("overlay mode: the overlay still gets the message", ((await get("/pending?messages=1&consumer=overlay")).messages ?? []).some((m) => m.text === "hello from b"));
+    await setMode("auto");
+    check("auto mode: the agent watcher gets the message again", ((await get("/pending?messages=1")).messages ?? []).some((m) => m.text === "hello from b"));
+
+    const s5 = await (await setMode("tty")).json() as { ok: boolean; mode: string };
+    check("POST tty still accepted (back-compat)", s5.ok === true && s5.mode === "tty", s5);
+
+    // persistence: a restarted daemon (new core, same file) comes back in the saved mode, even over MESH_APPROVE
+    await setMode("agent");
+    process.env.MESH_APPROVE = "dialog";
+    const clientC = new RelayClient({ relay: relayUrl, room, user: "c", offers: [] });
+    const c = createCore({ config: TeamConfig.parse({ user: "c", room, relay: relayUrl }), cwd: process.cwd(), client: clientC, mcpImport: createMcpImport(), shellOffers: [], mcpOffers: [], quiet: true, approvalsFile: file });
+    check("restart restores the saved mode over MESH_APPROVE", c.approvalsMode() === "agent", c.approvalsMode());
+    const d = createCore({ config: TeamConfig.parse({ user: "d", room, relay: relayUrl }), cwd: process.cwd(), client: new RelayClient({ relay: relayUrl, room, user: "d", offers: [] }), mcpImport: createMcpImport(), shellOffers: [], mcpOffers: [], quiet: true });
+    check("no saved choice → MESH_APPROVE", d.approvalsMode() === "dialog", d.approvalsMode());
+    process.env.MESH_APPROVE = "bogus";
+    check("no saved choice, invalid MESH_APPROVE → auto", d.approvalsMode() === "auto", d.approvalsMode());
+  } finally {
+    process.env.MESH_APPROVE = "tty";
+    clientA.close();
+    clientB.close();
+    await server.stop();
+    await relay.close();
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
 function testAskRule(): void {
   console.log("registerApproveAskRule");
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "mesh-askrule-"));
@@ -202,6 +348,8 @@ try {
   testSelectApprovalPath();
   await testQueue();
   await testEndToEnd();
+  await testModesUnit();
+  await testModesEndToEnd();
   testAskRule();
   testLegacyCleanup();
 } catch (e) {

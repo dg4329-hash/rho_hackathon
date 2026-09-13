@@ -64,8 +64,13 @@ export interface DaemonCore {
   /** Messages addressed to me or 'all'. unreadOnly marks returned messages read. */
   inbox(opts: { unreadOnly: boolean; sinceMinutes: number }): InboxMessage[];
   relayStatus(): "connected" | "disconnected";
-  /** Where approvals go: auto (agent watcher + overlay, else dialog), overlay (overlay only, dialog fallback), dialog, tty. */
+  /**
+   * Where approvals go: auto (agent watcher + overlay, else dialog), overlay (overlay only, dialog fallback; the agent
+   * watcher also gets no message lines), agent (Claude Code watcher only, dialog fallback), dialog, tty (back-compat).
+   * Effective value: the owner's choice (saved) > MESH_APPROVE > auto.
+   */
   approvalsMode(): string;
+  /** Validates, applies, and saves (when the core has an approvalsFile). Throws on an unknown mode. */
   setApprovalsMode(mode: string): string;
   /** Leave the room: disconnect, forget the saved join so nothing auto-restarts, and exit the daemon (after `delayMs`). */
   leave(reason?: string, delayMs?: number): void;
@@ -86,10 +91,10 @@ export interface DaemonCore {
    * Incoming requests waiting for the owner's decision (the in-tool approval path). Long-polls up to
    * waitMs when empty. Calling it marks a watcher as attached, which routes new approvals here.
    */
-  pendingApprovals(waitMs: number): Promise<PendingRequest[]>;
-  /** For `mesh watch`: pending approvals plus unread messages (marked read once handed to the watcher). */
-  /** opts.since (ISO): return messages newer than it WITHOUT marking read (overlay); otherwise unread messages are returned and marked read (agent watcher). */
-  watchPoll(waitMs: number, opts?: { since?: string }): Promise<{ pending: PendingRequest[]; messages: InboxMessage[] }>;
+  pendingApprovals(waitMs: number, consumer?: "agent" | "overlay"): Promise<PendingRequest[]>;
+  /** For `mesh watch`: pending approvals plus unread messages (marked read once handed to the watcher; none in "overlay" mode). */
+  /** consumer "overlay" (or opts.since, ISO): messages newer than since WITHOUT marking read; otherwise unread messages are returned and marked read (agent watcher). */
+  watchPoll(waitMs: number, opts?: { since?: string; consumer?: "agent" | "overlay" }): Promise<{ pending: PendingRequest[]; messages: InboxMessage[] }>;
   /** Answer a pending request. False when the id is not (or no longer) pending. */
   decide(id: string, decision: "approved" | "denied", reason?: string): boolean;
   /**

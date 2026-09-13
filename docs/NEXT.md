@@ -3,6 +3,8 @@
 
 ## Where we are
 
+**End session (new):** the person who started a room (holds the owner link `#k=…&o=…`) can end it for everyone from the room page, the overlay, `end_session`, or `mesh end`: every daemon answers in-flight requests, forgets its saved join and exits; the link stops working (relay tombstone, 24 h, forgotten on relay restart). Suites: relay `end.test.ts`, daemon `end.test.ts`, e2e check 8. Railway cost: enable Serverless so an idle relay sleeps (README "Railway cost").
+
 Cross-laptop is proven over the public relay (ngrok on Dev's Mac): Mac↔Mac and Mac↔Windows. **Windows is no longer an unknown**: the PowerShell one-liner, the Windows approval dialog and the message-box notification are verified on Tarush's real box. A fresh laptop joins with one command (or a downloaded `mesh-join-<room>.cmd` / `.command`), no clone, no `team.json`: handle from git, MCP servers imported at `ask`, daemon in the background; re-running the installer updates and stops + restarts a running daemon. Claude Code users get the **plugin auto-installed** from `<relay>/plugin.tgz` during `mesh join` (MCP server + hooks + in-session watcher, no extra commands); the watcher forwards teammate messages live. Codex (codex-cli 0.154) and Cursor are registered by `mesh join`. Chained commands (`echo hi; rm …`) never inherit an offer's `always` (found live on Tarush's machine, fixed). Dev's Mac offers Playwright (24 tools) + filesystem (14) through MCP import. Room page is written for beginners (pick a name → paste one command → restart once → "check it worked"). Suites: relay 28/28, daemon 20 + 30 + pending checks, typecheck green.
 
 **Shipping tonight** (being built now; documented as the default experience, not yet verified cross-laptop):

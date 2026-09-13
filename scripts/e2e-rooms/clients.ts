@@ -83,11 +83,11 @@ export async function httpGet(url: string, timeoutMs = 10_000, headers: Record<s
   });
 }
 
-export async function httpPost(url: string, body?: unknown, timeoutMs = 10_000): Promise<HttpResult> {
+export async function httpPost(url: string, body?: unknown, timeoutMs = 10_000, headers: Record<string, string> = {}): Promise<HttpResult> {
   return withTimeout(timeoutMs, `POST ${url}`, async (signal) => {
     const res = await fetch(url, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...headers },
       body: JSON.stringify(body ?? {}),
       signal,
     });
@@ -97,7 +97,7 @@ export async function httpPost(url: string, body?: unknown, timeoutMs = 10_000):
 
 export const daemonUrl = (port: number, path: string): string => `http://127.0.0.1:${port}${path}`;
 
-export async function daemonHealth(port: number): Promise<{ user: string; room: string; relay: string; members: number; approvals?: string } | undefined> {
+export async function daemonHealth(port: number): Promise<{ user: string; room: string; relay: string; members: number; approvals?: string; owner?: boolean } | undefined> {
   try {
     const r = await httpGet(daemonUrl(port, "/health"), 3_000);
     if (r.status !== 200 || typeof r.body !== "object" || r.body === null) return undefined;
@@ -112,12 +112,19 @@ export function httpBase(relayUrl: string): string {
   return u.origin;
 }
 
-export async function createRoom(base: string): Promise<{ room: string; key: string; link: string }> {
+export interface CreatedRoom { room: string; key: string; link: string; ownerToken?: string; ownerLink?: string }
+
+export async function createRoom(base: string): Promise<CreatedRoom> {
   const r = await httpPost(`${base}/api/rooms`);
   if (r.status < 200 || r.status >= 300 || typeof r.body !== "object" || !r.body?.room) {
     throw new Error(`createRoom ${base}: HTTP ${r.status} ${typeof r.body === "string" ? r.body.slice(0, 300) : JSON.stringify(r.body)}`);
   }
-  return { room: r.body.room, key: r.body.key, link: r.body.link };
+  return { room: r.body.room, key: r.body.key, link: r.body.link, ownerToken: r.body.ownerToken, ownerLink: r.body.ownerLink };
+}
+
+/** POST /api/rooms/:room/end (owner-only end session). `owner` goes in the x-mesh-owner header when given. */
+export async function endRoom(base: string, room: string, key: string, owner?: string, body: Record<string, unknown> = {}): Promise<HttpResult> {
+  return httpPost(`${base}/api/rooms/${encodeURIComponent(room)}/end?key=${encodeURIComponent(key)}`, body, 10_000, owner ? { "x-mesh-owner": owner } : {});
 }
 
 export async function getRoom(base: string, room: string, key?: string): Promise<HttpResult> {

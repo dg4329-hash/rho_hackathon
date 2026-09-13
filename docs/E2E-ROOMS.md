@@ -16,9 +16,9 @@ Against a deployed relay (e.g. Railway):
 pnpm e2e:rooms --relay https://<app>.up.railway.app
 ```
 - Pass the http(s) base URL. The daemons get `wss://` from the room link.
-- Check 8 (relay restart) is SKIPPED for a remote relay.
-- It creates only 2 rooms via `POST /api/rooms`, so it barely touches room-creation rate limits.
-- Daemon names are unique per run: `e2e-a-<rand>`, `e2e-b-<rand>`, `e2e-c-<rand>`.
+- Check 9 (relay restart) is SKIPPED for a remote relay.
+- It creates only 4 rooms via `POST /api/rooms`, so it barely touches room-creation rate limits.
+- Daemon names are unique per run: `e2e-a-<rand>` through `e2e-g-<rand>`.
 
 Flags:
 | flag | effect |
@@ -32,7 +32,7 @@ Exit code: `0` = everything PASS (SKIP is fine), `1` = any FAIL. On FAIL it prin
 
 ## Isolation
 
-- 3 real daemons (`apps/daemon/src/cli.ts join`). Each gets its own temp `HOME`, its own temp cwd (not a git repo),
+- 6 real daemons (`apps/daemon/src/cli.ts join`). Each gets its own temp `HOME`, its own temp cwd (not a git repo),
   and its own free local port.
 - Flags: `--no-register --no-git-offers --no-git-watch --no-codex-wake`.
 - `SSH_CONNECTION` is set, so no native OS approval dialog ever pops. `MESH_APPROVE=watcher`, so `ask` requests go to the pending queue.
@@ -53,9 +53,10 @@ The output is a PASS/FAIL/SKIP table with timings.
 | 5 | switch_room | b switches to R2 by its link: gone from R1, visible with c in R2 |
 | 6 | leave_room | c calls `leave_room`: gone from R2 presence, its process exits, still gone after ~10 s |
 | 7 | rejoin | c joins R2 again with the link: visible again |
-| 8a | relay restart, same secret (local only) | daemons reconnect on their own, presence comes back, old links still work, a message goes through |
-| 8b | relay restart, new secret (local only) | the old link is rejected (401, join exits 2); daemons still holding the old key stop with exit 2, as designed |
-| 9 | cleanup | every spawned process is killed and temp dirs are removed, also on failure or Ctrl-C |
+| 8 | owner ends the session | fresh room R3: d joins with the owner link (`#k=…&o=…`, `/health` owner true), e and f with the plain link. Non-owner `end_session` is a tool error and `POST /api/rooms/R3/end` without / with a wrong owner token is 403. d's `end_session` makes all three daemons exit within 10 s (e and f exit 0, saved join forgotten); `GET /api/rooms/R3` is 410; a fresh join with the link exits; a second end returns `alreadyEnded`; `POST /api/rooms` still works |
+| 9a | relay restart, same secret (local only) | daemons reconnect on their own, presence comes back, old links still work, a message goes through |
+| 9b | relay restart, new secret (local only) | the old link is rejected (401, join exits 2); daemons still holding the old key stop with exit 2, as designed |
+| 10 | cleanup | every spawned process is killed and temp dirs are removed, also on failure or Ctrl-C |
 
 ## Railway checklist
 

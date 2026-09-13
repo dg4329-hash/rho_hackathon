@@ -135,6 +135,20 @@ The relay serves everything: landing page, room pages, installers, the daemon bu
 - A second daemon (with offers) under the same user name in a room is refused (close 4409), unless the existing one fails a ping within 3 s (`MESH_DUP_PROBE_MS`). `mesh ask` under your own name is unaffected.
 - One replica only (`numReplicas: 1`): rooms live in process memory.
 
+**Railway cost (let the relay sleep when nobody is using it):**
+1. **Serverless.** Service → Settings → Deploy → Serverless → turn on "Enable Serverless", then redeploy (Deployments → ⋯ → Redeploy). It only applies to new containers.
+2. **Replica limits.** Service → Settings → Deploy → Replica Limits → e.g. 0.5 vCPU / 512 MB. Railway bills what you use, not the limit, so this is a ceiling against runaway usage (the file store caps at 200 MB). Too low and the relay crashes.
+3. **Usage limit.** On the workspace Usage page, set a soft limit (email alert) and optionally a hard limit (min $10; it takes the service offline when hit).
+
+How it behaves:
+- A service sleeps 5–10 minutes after it stops sending outbound traffic. While asleep it costs no CPU or RAM (all memory is freed, so rooms and history are gone; links keep working because keys are derived from `ROOM_SECRET`).
+- Any open socket keeps it awake: the relay pings every connected daemon every 25 s. A room page or overlay left open polls every 2 s, which also keeps it awake. With zero sockets and no page polling, the relay sends nothing (its timers don't touch the network).
+- So it sleeps once everyone leaves or the host ends the session (`end_session`, `mesh end`, or the room page button): that closes every socket, and daemons don't reconnect. Close room tabs and the overlay too.
+- It wakes on the next inbound request: someone opening the web page, running the installer, or a daemon joining. The first request after sleep can be slow or return 502 (cold start: the container boots and runs `tsx`). Retry after a few seconds; daemons retry on their own.
+- The `/health` healthcheck in `railway.json` runs only during a deploy, so it doesn't keep the relay awake. Keep it.
+
+Docs: [Serverless](https://docs.railway.com/reference/app-sleeping), [Cost control](https://docs.railway.com/pricing/cost-control), [Healthchecks](https://docs.railway.com/reference/healthchecks).
+
 **Stop-gap (any Mac with ngrok):** `ROOM_SECRET=<something> ./scripts/tunnel-relay.sh` prints the public URL. Free ngrok shows a one-time browser interstitial; the installers and daemon send the skip header automatically. Without `ROOM_SECRET` the relay makes a random one and all room links stop working when it restarts.
 
 **Security model:** a room is reachable only with its link (`/r/<room>#k=<key>`); the key gates the WebSocket, the feed, files, and the overlay. Anyone you forward the link to is in. Approvals still gate what teammates can run. See `docs/ROOM-KEYS.md`.

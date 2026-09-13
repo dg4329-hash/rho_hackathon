@@ -1,7 +1,7 @@
 #!/usr/bin/env tsx
 /**
  * End-to-end rooms test: multi-room, room keys, join / switch / leave / rejoin, messaging, approvals,
- * relay restart. Three real daemons (isolated temp HOMEs, free ports, no agent registration) against a relay.
+ * owner ends the session, relay restart. Three real daemons (isolated temp HOMEs, free ports, no agent registration) against a relay.
  *
  *   pnpm e2e:rooms                                   # spawns its own relay on a free port (random ROOM_SECRET)
  *   pnpm e2e:rooms --relay https://<app>.up.railway.app   # a deployed relay (restart check skipped)
@@ -11,14 +11,15 @@
  * Exit 0 when nothing FAILed. See docs/E2E-ROOMS.md.
  */
 import fs from "node:fs";
+import path from "node:path";
 import { randomBytes } from "node:crypto";
 import {
   cleanupAll, installSignalCleanup, runJoinOnce, sleep, startDaemon, startLocalRelay, waitFor,
   type DaemonHandle, type LocalRelay, type Proc,
 } from "./e2e-rooms/harness.js";
 import {
-  createRoom, daemonHealth, daemonUrl, getRoom, httpBase, httpGet, linkWithKey, mcpCall, roomMembers,
-  type ToolResult,
+  createRoom, daemonHealth, daemonUrl, endRoom, getRoom, httpBase, httpGet, linkWithKey, mcpCall, roomMembers,
+  type CreatedRoom, type ToolResult,
 } from "./e2e-rooms/clients.js";
 
 // ---------- args ----------
@@ -107,6 +108,9 @@ const rand = randomBytes(3).toString("hex");
 const A = `e2e-a-${rand}`;
 const B = `e2e-b-${rand}`;
 const C = `e2e-c-${rand}`;
+const D = `e2e-d-${rand}`; // check 8: starts the session (owner link)
+const E = `e2e-e-${rand}`; // check 8: plain link
+const F = `e2e-f-${rand}`; // check 8: plain link
 
 const ok = (r: ToolResult, what: string): ToolResult => { expect(!r.isError, `${what} → tool error: ${short(r.text)}`); return r; };
 function track(d: DaemonHandle): DaemonHandle { procs.set(d.name, d.proc); return d; }
@@ -130,7 +134,7 @@ const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catc
 // ---------- main ----------
 async function main(): Promise<void> {
   installSignalCleanup();
-  const watchdog = setTimeout(() => { console.error("\nwatchdog: e2e run exceeded 6 minutes"); printTable(); void cleanupAll().then(() => process.exit(1)); }, 6 * 60_000);
+  const watchdog = setTimeout(() => { console.error("\nwatchdog: e2e run exceeded 8 minutes"); printTable(); void cleanupAll().then(() => process.exit(1)); }, 8 * 60_000);
   watchdog.unref();
 
   console.log(`mesh e2e rooms — ${REMOTE ? `remote relay ${REMOTE}` : "local relay"}; daemons ${A}, ${B}, ${C}\n`);
@@ -141,6 +145,7 @@ async function main(): Promise<void> {
   let a: DaemonHandle | undefined;
   let b: DaemonHandle | undefined;
   let c: DaemonHandle | undefined;
+  const ended: DaemonHandle[] = []; // check 8's daemons (d owner, e, f)
   const need = <T,>(v: T | undefined, what: string): T => { expect(v !== undefined, `prerequisite missing: ${what}`); return v as T; };
 
   // 1. health + rooms
@@ -297,9 +302,86 @@ async function main(): Promise<void> {
     return `R2=[${here.seen.join(", ")}]`;
   });
 
-  // 8. relay restart
-  const skip8 = REMOTE ? "remote relay: cannot restart" : undefined;
-  await check("8a", "relay restart, same ROOM_SECRET: reconnect", async () => {
+  // 8. owner ends the session (END-SESSION spec / docs/CONTRACT.md). Uses its own room R3 and daemons d/e/f,
+  // so checks 1–7 and 9 are unaffected; its daemons have all exited before the relay restart.
+  await check("8", "owner end_session: everyone exits, link 410, rejoin refused", async () => {
+    const r3: CreatedRoom = await createRoom(base);
+    const OWNER_RE = /^[a-z2-7]{16}$/;
+    expect(r3.ownerToken && OWNER_RE.test(r3.ownerToken), `POST /api/rooms returned no valid ownerToken (room ${r3.room})`);
+    expect(r3.ownerLink && r3.ownerLink.endsWith(`#k=${r3.key}&o=${r3.ownerToken}`), `ownerLink is not <link>&o=<token>: ${r3.ownerLink}`);
+    expect(!/[#&]o=/.test(r3.link), `shareable link leaks the owner token: ${r3.link}`);
+    const owner = r3.ownerToken as string;
+    const g0 = await getRoom(base, r3.room, r3.key);
+    expect(g0.status === 200 && !JSON.stringify(g0.body).includes(owner), `GET /api/rooms/R3 → ${g0.status}; must be 200 and never include the owner token`);
+
+    // d starts the session with the owner link; e and f join with the plain link.
+    const started = await Promise.allSettled([
+      startDaemon({ name: D, joinArg: r3.ownerLink as string }),
+      startDaemon({ name: E, joinArg: r3.link }),
+      startDaemon({ name: F, joinArg: r3.link }),
+    ]);
+    for (const s of started) if (s.status === "fulfilled") ended.push(track(s.value));
+    for (const [n, s] of [[D, started[0]], [E, started[1]], [F, started[2]]] as const) expect(s.status === "fulfilled", `${n} did not come up: ${short(String((s as PromiseRejectedResult).reason?.message ?? ""), 400)}`);
+    const [dd, de, df] = ended as [DaemonHandle, DaemonHandle, DaemonHandle];
+    const w = await waitMembers(base, r3.room, r3.key, (m) => [D, E, F].every((u) => m.includes(u)), 15_000);
+    expect(w.ok, `R3 presence lacks d/e/f: [${w.seen.join(", ")}]`);
+    const hd = await daemonHealth(dd.port);
+    const he = await daemonHealth(de.port);
+    expect(hd?.owner === true, `d (owner link) /health owner should be true: ${JSON.stringify(hd)}`);
+    expect(he?.owner === false, `e (plain link) /health owner should be false: ${JSON.stringify(he)}`);
+
+    // Non-owners are refused (REST and MCP) and nothing ends.
+    const noOwner = await endRoom(base, r3.room, r3.key);
+    expect(noOwner.status === 403, `POST /end without an owner token → ${noOwner.status} ${short(JSON.stringify(noOwner.body))}`);
+    const wrongOwner = await endRoom(base, r3.room, r3.key, "aaaaaaaaaaaaaaaa");
+    expect(wrongOwner.status === 403, `POST /end with a wrong owner token → ${wrongOwner.status}`);
+    const wrongKey = await endRoom(base, r3.room, "aaaaaaaaaaaaaaaa", owner);
+    expect(wrongKey.status === 401, `POST /end with a wrong room key → ${wrongKey.status}`);
+    const refused = await mcpCall(de.port, "end_session", { reason: "e2e non-owner" }, 15_000);
+    expect(refused.isError && /only the person who started/i.test(refused.text), `e (non-owner) end_session should be a tool error, got: ${short(refused.text, 300)}`);
+    await sleep(1000);
+    const upNote = () => [dd, de, df].map((d) => `${d.name.split("-")[1]}:${d.proc.exited() ? d.proc.exitCode() : "running"}`).join(" ");
+    expect([dd, de, df].every((d) => !d.proc.exited()), `a daemon exited after the refused ends: ${upNote()}`);
+    const still = await members(base, r3.room, r3.key);
+    expect([D, E, F].every((u) => still.includes(u)), `R3 presence changed after the refused ends: [${still.join(", ")}]`);
+
+    // The owner ends it.
+    const t0 = Date.now();
+    let res: ToolResult;
+    try { res = await mcpCall(dd.port, "end_session", { reason: "e2e end" }, 15_000); } catch (e) { /* the daemon may exit mid-response */ res = { isError: false, text: `(no response: ${(e as Error).message})` }; }
+    expect(!res.isError, `d end_session → ${short(res.text, 300)}`);
+    if (res.json) expect(res.json.ended === r3.room, `end_session result should name the room: ${short(res.text)}`);
+    const [eOut, fOut, dOut] = await Promise.all([de, df, dd].map((d) => d.proc.waitExit(10_000)));
+    const exitMs = Date.now() - t0;
+    expect(eOut && fOut, `teammates still running 10 s after end_session: ${upNote()}`);
+    expect(dOut, `the owner's daemon still running 10 s after end_session: ${upNote()}`);
+    for (const d of [dd, de, df]) expect(!(await daemonHealth(d.port)), `something still answers /health on ${d.name}'s port ${d.port}`);
+    for (const d of [de, df]) expect(d.proc.exitCode() === 0, `${d.name} should exit 0 via the leave path: ${upNote()}`);
+    expect(/ended the session/i.test(de.proc.logs()), `e never printed "… ended the session"; log tail: ${short(de.proc.logs().slice(-400), 300)}`);
+    for (const d of [dd, de, df]) {
+      expect(!fs.existsSync(path.join(d.sandbox.home, ".mesh", "config.json")), `${d.name} still has a saved join (~/.mesh/config.json) after the end`);
+    }
+
+    // The link is dead: 410 on GET (key still checked first), a fresh join exits instead of staying up, ending twice is fine.
+    const g = await getRoom(base, r3.room, r3.key);
+    expect(g.status === 410, `GET /api/rooms/R3 after the end → ${g.status} ${short(JSON.stringify(g.body))}`);
+    const gBad = await getRoom(base, r3.room, "aaaaaaaaaaaaaaaa");
+    expect(gBad.status === 401, `GET /api/rooms/R3 after the end with a wrong key → ${gBad.status} (key check must come first)`);
+    const again = await runJoinOnce({ name: `e2e-g-${rand}`, joinArg: r3.link, timeoutMs: 15_000 });
+    expect(!again.timedOut, `join with the ended link was still running after 15 s: ${short(again.output, 300)}`);
+    expect(/ended/i.test(again.output), `join with the ended link: no readable "ended" message (exit ${again.exitCode}): ${short(again.output, 300)}`);
+    const twice = await endRoom(base, r3.room, r3.key, owner);
+    expect(twice.status === 200 && twice.body?.alreadyEnded === true, `second end → ${twice.status} ${short(JSON.stringify(twice.body))}`);
+
+    // Starting a new session still works and never hands out the ended name.
+    const r4 = await createRoom(base);
+    expect(r4.room && r4.room !== r3.room && r4.ownerToken, `POST /api/rooms after an end: room ${r4.room}, ownerToken ${r4.ownerToken ? "yes" : "no"}`);
+    return `all exited in ${(exitMs / 1000).toFixed(1)} s (${upNote()}); GET 410; rejoin exit ${again.exitCode}; new room ok`;
+  });
+
+  // 9. relay restart
+  const skip9 = REMOTE ? "remote relay: cannot restart" : undefined;
+  await check("9a", "relay restart, same ROOM_SECRET: reconnect", async () => {
     const r = need(relay, "local relay"); const r1 = need(R1, "R1"); const r2 = need(R2, "R2");
     const da = need(a, "daemon a"); const dbb = need(b, "daemon b"); const dc = need(c, "daemon c");
     const t0 = Date.now();
@@ -323,9 +405,9 @@ async function main(): Promise<void> {
     }, 10_000, 300);
     expect(got, "message c→b lost after restart");
     return `reconnected in ${(reconnectMs / 1000).toFixed(1)} s; old links valid`;
-  }, skip8);
+  }, skip9);
 
-  await check("8b", "relay restart, new ROOM_SECRET: old link rejected", async () => {
+  await check("9b", "relay restart, new ROOM_SECRET: old link rejected", async () => {
     const r = need(relay, "local relay"); const r1 = need(R1, "R1");
     await r.restart({ secret: randomBytes(16).toString("hex") });
     procs.set("relay", r.proc);
@@ -336,12 +418,12 @@ async function main(): Promise<void> {
     // Daemons holding the old key get 4401 on reconnect and stop (exit 2) by design.
     const stopped = await Promise.all([a, b, c].filter((d): d is DaemonHandle => !!d).map(async (d) => (await d.proc.waitExit(20_000)) ? `${d.name.split("-")[1]}:${d.proc.exitCode()}` : `${d.name.split("-")[1]}:running`));
     return `401 + exit 2; old-key daemons → ${stopped.join(" ")}`;
-  }, skip8);
+  }, skip9);
 
-  // 9. cleanup
-  await check("9", "cleanup: processes killed, temp dirs removed", async () => {
+  // 10. cleanup
+  await check("10", "cleanup: processes killed, temp dirs removed", async () => {
     const all = [...procs.values()];
-    const dirs = [a, b, c].filter((d): d is DaemonHandle => !!d).map((d) => d.sandbox.dir);
+    const dirs = [a, b, c, ...ended].filter((d): d is DaemonHandle => !!d).map((d) => d.sandbox.dir);
     await cleanupAll();
     await sleep(300);
     const live = all.filter((p) => alive(p.pid));

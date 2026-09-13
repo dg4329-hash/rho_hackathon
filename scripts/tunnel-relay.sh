@@ -16,6 +16,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PORT="${PORT:-8090}"
 NGROK_API="${NGROK_API:-http://127.0.0.1:4040}"
 LOG_DIR="${LOG_DIR:-$ROOT/.local}"
+mkdir -p "$LOG_DIR"
 # Room keys derive from ROOM_SECRET. Persist a generated one under .local/ (gitignored) so room links
 # on this machine survive relay restarts; set ROOM_SECRET in the environment to override.
 if [[ -z "${ROOM_SECRET:-}" ]]; then
@@ -26,7 +27,6 @@ if [[ -z "${ROOM_SECRET:-}" ]]; then
   export ROOM_SECRET="$(cat "$LOG_DIR/room-secret")"
   echo "room secret: using $LOG_DIR/room-secret (links stay valid across restarts)"
 fi
-mkdir -p "$LOG_DIR"
 
 if ! command -v ngrok >/dev/null 2>&1; then
   echo "ngrok is not installed. brew install ngrok, then: ngrok config add-authtoken <token>" >&2

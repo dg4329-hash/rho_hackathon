@@ -49,7 +49,7 @@ export function userCwd(): string {
   return process.env.INIT_CWD || process.cwd();
 }
 
-export function loadConfig(flag?: string, overrides: Partial<Record<"user" | "room" | "relay", string>> = {}): LoadedConfig {
+export function loadConfig(flag?: string, overrides: Partial<Record<"user" | "room" | "relay" | "key", string>> = {}): LoadedConfig {
   const file = findConfigPath(flag);
   if (!file || !existsSync(file)) {
     throw new Error(
@@ -84,6 +84,6 @@ export function loadConfig(flag?: string, overrides: Partial<Record<"user" | "ro
 /**
  * Build a config without a file (used by `mesh ask` when no team.json exists but all flags are given).
  */
-export function configFromFlags(user: string, room: string, relay: string): TeamConfig {
-  return TeamConfig.parse({ user, room, relay });
+export function configFromFlags(user: string, room: string, relay: string, key?: string): TeamConfig {
+  return TeamConfig.parse({ user, room, relay, ...(key ? { key } : {}) });
 }

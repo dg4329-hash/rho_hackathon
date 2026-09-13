@@ -13,15 +13,43 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import chalk from "chalk";
 
-export interface RoomTarget { room: string; relay?: string }
+export interface RoomTarget { room: string; relay?: string; key?: string }
 
-/** `otter-5434` | `https://host/r/otter-5434` | `wss://host/otter-5434` → { room, relay } */
+function keyFrom(qs: string): string | undefined {
+  if (!qs) return undefined;
+  const p = new URLSearchParams(qs.replace(/^[?#]/, ""));
+  const v = (p.get("k") ?? p.get("key") ?? "").trim();
+  return v || undefined;
+}
+
+/**
+ * The room key out of a room link: `#k=<key>` (the canonical form, docs/ROOM-KEYS.md), or `?k=` / `?…&key=`
+ * for links that came through something that ate the fragment. Fragment wins.
+ */
+export function keyFromLink(link: string): string | undefined {
+  const raw = link.trim();
+  const hash = raw.indexOf("#");
+  const fragment = hash >= 0 ? raw.slice(hash + 1) : "";
+  const beforeHash = hash >= 0 ? raw.slice(0, hash) : raw;
+  const q = beforeHash.indexOf("?");
+  return keyFrom(fragment) ?? keyFrom(q >= 0 ? beforeHash.slice(q + 1) : "");
+}
+
+/** Never print a room key: `k…<last4>`. */
+export function maskKey(key: string | undefined): string {
+  return key ? `k…${key.slice(-4)}` : "";
+}
+
+/** `otter-5434` | `https://host/r/otter-5434#k=<key>` | `wss://host/otter-5434?key=<key>` → { room, relay, key } */
 export function parseRoomArg(arg: string): RoomTarget {
-  const m = arg.match(/^(https?|wss?):\/\/([^/]+)\/(?:r\/)?([a-z0-9][a-z0-9-]{1,40})\/?$/i);
-  if (!m) return { room: arg };
+  const raw = arg.trim();
+  const m = raw.match(/^(https?|wss?):\/\/([^/?#]+)\/(?:r\/)?([a-z0-9][a-z0-9-]{1,40})\/?(?:[?#].*)?$/i);
+  if (!m) return { room: raw };
   const [, scheme, host, room] = m;
-  const ws = scheme === "https" || scheme === "wss" ? "wss" : "ws";
-  return { room: room!, relay: `${ws}://${host}` };
+  const lower = scheme!.toLowerCase();
+  const ws = lower === "https" || lower === "wss" ? "wss" : "ws";
+  const key = keyFromLink(raw);
+  return { room: room!, relay: `${ws}://${host}`, ...(key ? { key } : {}) };
 }
 
 /** git user.name → OS username, lowercased, [a-z0-9_-] only, ≤ 32 chars. */

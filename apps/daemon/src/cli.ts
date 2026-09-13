@@ -14,8 +14,8 @@ import { createLocalServer } from "./local-server.js";
 import { createMcpImport } from "./mcp-import.js";
 import { claudeHooksInstalled, findGitRoot, startGitWatch } from "./gitwatch.js";
 import { resolveNotes, resolvePermission } from "./permissions.js";
-import { defaultHandle, installClaudeHooks, parseRoomArg, printRegister, registerApproveAskRule, registerClaudeCode, registerClaudePlugin, registerCodex, registerCursor, type RegisterResult } from "./register.js";
-import { RelayClient } from "./relay-client.js";
+import { defaultHandle, installClaudeHooks, maskKey, parseRoomArg, printRegister, registerApproveAskRule, registerClaudeCode, registerClaudePlugin, registerCodex, registerCursor, type RegisterResult } from "./register.js";
+import { RelayClient, RoomKeyError } from "./relay-client.js";
 import { isFixedOffer } from "./shell.js";
 import { restoreTerminal } from "./approval.js";
 import { watchLine } from "./pending.js";
@@ -68,10 +68,10 @@ function shellOffersFrom(config: TeamConfig): Offer[] {
   }));
 }
 
-type CommonFlags = { as?: string; relay?: string; config?: string; room?: string };
+type CommonFlags = { as?: string; relay?: string; config?: string; room?: string; key?: string };
 
-function loadWithFlags(room: string | undefined, flags: CommonFlags): { config: TeamConfig; cwd: string; source: string } {
-  const overrides = { user: flags.as, room, relay: flags.relay };
+function loadWithFlags(room: string | undefined, flags: CommonFlags, key?: string): { config: TeamConfig; cwd: string; source: string } {
+  const overrides = { user: flags.as, room, relay: flags.relay, key };
   try {
     const loaded = loadConfig(flags.config, overrides);
     return { config: loaded.config, cwd: loaded.cwd, source: loaded.path };
@@ -79,9 +79,9 @@ function loadWithFlags(room: string | undefined, flags: CommonFlags): { config: 
     // No file: synthesize a config from flags/defaults (zero-config join; `mesh ask` from a scratch dir).
     const relay = flags.relay ?? process.env.MESH_RELAY;
     if (!flags.config && room && relay) {
-      return { config: configFromFlags(flags.as ?? defaultHandle(), room, relay), cwd: userCwd(), source: "defaults (no team.json)" };
+      return { config: configFromFlags(flags.as ?? defaultHandle(), room, relay, key), cwd: userCwd(), source: "defaults (no team.json)" };
     }
-    return fail((e as Error).message + (relay ? "" : "\n  hint: pass the room link (https://<relay>/r/<room>) or --relay wss://<host>"));
+    return fail((e as Error).message + (relay ? "" : "\n  hint: pass the room link (https://<relay>/r/<room>#k=<key>) or --relay wss://<host>"));
   }
 }
 
@@ -92,6 +92,7 @@ program
   .argument("<room>", "room name, or a room link like https://<relay>/r/<room>")
   .option("--as <user>", "your handle (default: git user.name)")
   .option("--relay <url>", "relay websocket url (derived from a room link)")
+  .option("--key <key>", "room key (a room link's #k=<key> carries it; also team.json \"key\" or MESH_KEY)")
   .option("--config <path>", "path to team.json")
   .option("--port <n>", "local MCP/HTTP port", String(DEFAULT_PORT))
   .option("--no-register", "don't touch Claude Code / Cursor / Codex config or hooks")
@@ -104,10 +105,13 @@ program
     const target = parseRoomArg(roomArg);
     const room = target.room;
     if (target.relay && !flags.relay) flags.relay = target.relay;
-    const { config, cwd, source } = loadWithFlags(room, flags);
+    // Room key (docs/ROOM-KEYS.md), in priority order: --key, the link's #k=, team.json "key", MESH_KEY, the last join.
+    const explicitKey = flags.key?.trim() || target.key;
+    const { config, cwd, source } = loadWithFlags(room, flags, explicitKey);
+    config.key = config.key || process.env.MESH_KEY?.trim() || rememberedKey(config.room, config.relay);
     const port = Number(flags.port) || DEFAULT_PORT;
     // Remember how we joined so the Claude Code plugin's SessionStart hook can bring the daemon back later.
-    try { writeJoinConfig({ room: config.room, relay: config.relay, user: config.user, port, cwd, updatedAt: new Date().toISOString() }); } catch { /* best effort */ }
+    try { writeJoinConfig({ room: config.room, relay: config.relay, user: config.user, port, cwd, updatedAt: new Date().toISOString(), ...(config.key ? { key: config.key } : {}) }); } catch { /* best effort */ }
 
     if (flags.background) {
       const running = await readState(port);
@@ -123,10 +127,10 @@ program
         cwd: userCwd(), env: { ...process.env, INIT_CWD: userCwd(), MESH_BACKGROUND: "1" }, detached: true, stdio: ["ignore", log, log], windowsHide: true,
       });
       child.unref();
-      writeState({ pid: child.pid ?? 0, port, room: config.room, relay: config.relay, user: config.user, cwd, startedAt: new Date().toISOString() });
+      writeState({ pid: child.pid ?? 0, port, room: config.room, relay: config.relay, user: config.user, cwd, startedAt: new Date().toISOString(), ...(config.key ? { key: config.key } : {}) });
       // wait briefly for /health so the user gets a definite answer
       const alive = () => { try { return child.pid ? process.kill(child.pid, 0) : false; } catch { return false; } };
-      const okHealth = await waitHealth(port, 15_000);
+      const okHealth = await waitHealth(port, 15_000, alive);
       const h = okHealth ? await health(port) : undefined;
       const ok = okHealth && alive() && h?.user === config.user && h?.room === config.room;
       if (okHealth && !ok) console.log(chalk.red(`port ${port} is served by a different daemon (${String(h?.user)}@${String(h?.room)}) or ours exited; see ${logPath()}`));
@@ -136,7 +140,10 @@ program
         const tail = readFileSync(logPath(), "utf8").slice(logSizeBefore).split("\n").filter((l) => /registered|already registered|restart your agent/.test(l)).slice(-8);
         for (const l of tail) console.log(l);
       } else {
-        if (!okHealth) console.log(chalk.red(`mesh did not come up within 15 s; see ${logPath()}`));
+        if (!okHealth) console.log(chalk.red(`mesh did not come up${alive() ? " within 15 s" : ""}; see ${logPath()}`));
+        // Surface why: the background daemon only ever says it in the log (e.g. a missing room key).
+        const last = lastErrorLine(logSizeBefore);
+        if (last) console.log(chalk.red(`  ${last}`));
         try { unlinkSync(statePath()); } catch { /* ignore */ }
         process.exitCode = 1;
       }
@@ -164,12 +171,18 @@ program
       user: config.user,
       role: "daemon",
       offers: [...shellOffers, ...imported.offers],
+      ...(config.key ? { key: config.key } : {}),
     });
     const leaveRef: { current?: () => void } = {};
     const core = createCore({
       onLeave: () => leaveRef.current?.(),
-      onSwitch: (room, relay) => { try { writeJoinConfig({ room, relay, user: config.user, port, cwd, updatedAt: new Date().toISOString() }); } catch { /* best effort */ } try { const st = loadState(); if (st) writeState({ ...st, room, relay }); } catch { /* ignore */ } }, config, cwd, client, mcpImport, shellOffers, mcpOffers: imported.offers });
-    client.on("open", () => console.log(chalk.green(`● connected to ${config.relay} room=${config.room} as ${config.user}`)));
+      onSwitch: (room, relay, key) => { try { writeJoinConfig({ room, relay, user: config.user, port, cwd, updatedAt: new Date().toISOString(), ...(key ? { key } : {}) }); } catch { /* best effort */ } try { const st = loadState(); if (st) writeState({ ...st, room, relay, key }); } catch { /* ignore */ } }, config, cwd, client, mcpImport, shellOffers, mcpOffers: imported.offers });
+    client.on("open", () => console.log(chalk.green(`● connected to ${config.relay} room=${config.room} as ${config.user}`) + (config.key ? chalk.dim(`  ${maskKey(config.key)}`) : "")));
+    // The relay refused our room key: nothing this daemon can do without the room link, so stop (CONTRACT / ROOM-KEYS).
+    client.on("keyError", () => {
+      if (client.switching) return; // a failed switch_room: the tool reports it and we stay in the old room
+      setTimeout(() => process.exit(2), 50); // let the message flush
+    });
     client.on("close", () => console.log(chalk.yellow("○ relay disconnected; reconnecting…")));
     client.on("presence", (p) => {
       const others = p.members.filter((m) => m.user !== config.user).map((m) => `${m.user}(${m.role})`);
@@ -244,14 +257,18 @@ program
   .argument("<who>")
   .argument("<command>")
   .option("--why <text>", "why you need it", "manual request via mesh ask")
-  .option("--room <room>")
+  .option("--room <room>", "room name or room link (a link's #k=<key> carries the room key)")
   .option("--as <user>")
   .option("--relay <url>")
+  .option("--key <key>", "room key")
   .option("--config <path>")
   .option("--wait <seconds>", "how long to wait for completion", "120")
   .action(async (who: string, command: string, flags: CommonFlags & { why: string; wait: string }) => {
-    const { config, cwd } = loadWithFlags(flags.room, flags);
-    const client = new RelayClient({ relay: config.relay, room: config.room, user: config.user, role: "daemon", offers: [] });
+    const target = flags.room ? parseRoomArg(flags.room) : undefined;
+    if (target?.relay && !flags.relay) flags.relay = target.relay;
+    const { config, cwd } = loadWithFlags(target?.room, flags, flags.key?.trim() || target?.key);
+    config.key = config.key || process.env.MESH_KEY?.trim() || rememberedKey(config.room, config.relay);
+    const client = new RelayClient({ relay: config.relay, room: config.room, user: config.user, role: "daemon", offers: [], ...(config.key ? { key: config.key } : {}) });
     const mcpImport = createMcpImport();
     const core = createCore({ config, cwd, client, mcpImport, shellOffers: [], mcpOffers: [], quiet: true });
 
@@ -264,7 +281,13 @@ program
     });
 
     const timer = setTimeout(() => fail(`could not reach relay ${config.relay}`, 2), 10_000);
-    await client.connect();
+    try {
+      await client.connect();
+    } catch (e) {
+      clearTimeout(timer);
+      if (e instanceof RoomKeyError) process.exit(2); // the client already printed what to do
+      throw e;
+    }
     clearTimeout(timer);
     console.error(chalk.dim(`→ ${who}: ${command}`));
 
@@ -345,9 +368,9 @@ program
   });
 
 // ---------- background state ----------
-interface DaemonState { pid: number; port: number; room: string; relay: string; user: string; cwd: string; startedAt: string }
+interface DaemonState { pid: number; port: number; room: string; relay: string; user: string; cwd: string; startedAt: string; key?: string }
 /** ~/.mesh/config.json: how the last `mesh join` was invoked (the plugin's SessionStart hook restarts the daemon from it). */
-interface JoinConfig { room: string; relay: string; user: string; port: number; cwd: string; updatedAt: string }
+interface JoinConfig { room: string; relay: string; user: string; port: number; cwd: string; updatedAt: string; key?: string }
 const meshHome = () => path.join(homedir(), ".mesh");
 const statePath = () => path.join(meshHome(), "daemon.json");
 const logPath = () => path.join(meshHome(), "daemon.log");
@@ -355,12 +378,33 @@ const configPath = () => path.join(meshHome(), "config.json");
 function writeJoinConfig(cfg: JoinConfig): void { mkdirSync(meshHome(), { recursive: true }); writeFileSync(configPath(), JSON.stringify(cfg, null, 2) + "\n"); }
 function writeState(st: DaemonState): void { mkdirSync(meshHome(), { recursive: true }); writeFileSync(statePath(), JSON.stringify(st, null, 2)); }
 function loadState(): DaemonState | undefined { try { return JSON.parse(readFileSync(statePath(), "utf8")) as DaemonState; } catch { return undefined; } }
+function loadJoinConfig(): JoinConfig | undefined { try { return JSON.parse(readFileSync(configPath(), "utf8")) as JoinConfig; } catch { return undefined; } }
+/** The room key remembered from the last join — only for that same room on that same relay. */
+function rememberedKey(room: string, relay: string): string | undefined {
+  const c = loadJoinConfig();
+  if (!c?.key || c.room !== room) return undefined;
+  const norm = (u: string) => u.replace(/\/+$/, "");
+  if (c.relay && norm(c.relay) !== norm(relay)) return undefined;
+  return c.key;
+}
+/** Last error-looking line the background daemon logged since `from` (ANSI stripped), for `--background` failures. */
+function lastErrorLine(from: number): string | undefined {
+  let tail = "";
+  try { tail = readFileSync(logPath(), "utf8").slice(from); } catch { return undefined; }
+  // eslint-disable-next-line no-control-regex
+  const lines = tail.replace(/\u001b\[[0-9;]*m/g, "").split("\n").map((l) => l.trim()).filter(Boolean);
+  return [...lines].reverse().find((l) => /room link|room key|error|failed|refused|EADDRINUSE|not found/i.test(l));
+}
 async function health(port: number): Promise<Record<string, unknown> | undefined> {
   try { const r = await fetch(`http://localhost:${port}/health`, { signal: AbortSignal.timeout(1500) }); return r.ok ? (await r.json()) as Record<string, unknown> : undefined; } catch { return undefined; }
 }
-async function waitHealth(port: number, ms: number): Promise<boolean> {
+async function waitHealth(port: number, ms: number, alive?: () => boolean): Promise<boolean> {
   const until = Date.now() + ms;
-  while (Date.now() < until) { if (await health(port)) return true; await new Promise((r) => setTimeout(r, 400)); }
+  while (Date.now() < until) {
+    if (await health(port)) return true;
+    if (alive && !alive()) return false; // the child already exited (bad room key, port clash, …)
+    await new Promise((r) => setTimeout(r, 400));
+  }
   return false;
 }
 /** State file + a live /health on that port → running. Stale file → cleaned up. */

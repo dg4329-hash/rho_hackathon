@@ -17,6 +17,7 @@ import {
   ApproveRequestInput, EventKind, SendFileInput, FetchArtifactInput, type Offer,
 } from "@mesh/protocol";
 import type { DaemonCore, LocalServer } from "./api.js";
+import { parseRoomArg } from "./register.js";
 import { exampleArgs, validateAgainstSchema } from "./schema.js";
 
 const SUMMARY_CHARS = 120;
@@ -160,15 +161,18 @@ export function buildMcpServer(core: DaemonCore): McpServer {
   }));
 
   server.registerTool("switch_room", {
-    description: "Join a different mesh room (leaves the current one). Accepts a room name or a room link like https://<relay>/r/<room>. Only call this when the user explicitly asks to join or switch rooms. Teammates, offers, and identity carry over; pending jobs in the old room are abandoned.",
-    inputSchema: { room: z.string().min(1).describe("room name or room link"), relay: z.string().optional().describe("ws(s):// relay url; only needed when the room is on another relay") },
+    description: "Join a different mesh room (leaves the current one). Accepts a room name or a room link like https://<relay>/r/<room>#k=<key>. Pass the whole link when the user gives you one: keyed rooms need the key from its fragment. Only call this when the user explicitly asks to join or switch rooms. Teammates, offers, and identity carry over; pending jobs in the old room are abandoned.",
+    inputSchema: {
+      room: z.string().min(1).describe("room name or room link (a link's #k=<key> supplies the room key)"),
+      relay: z.string().optional().describe("ws(s):// relay url; only needed when the room is on another relay"),
+      key: z.string().optional().describe("room key, if the user gave it separately from the link"),
+    },
   }, guard(async (raw) => {
-    const input = raw as { room: string; relay?: string };
-    let room = input.room.trim();
-    let relay = input.relay;
-    const m = room.match(/^(https?|wss?):\/\/([^/]+)\/(?:r\/)?([a-z0-9][a-z0-9-]{1,40})\/?$/i);
-    if (m) { room = m[3]!; relay = relay ?? `${m[1] === "https" || m[1] === "wss" ? "wss" : "ws"}://${m[2]}`; }
-    return ok({ ok: true, ...(await core.switchRoom(room, relay)), note: "teammates in the new room appear in list_teammates within a few seconds" });
+    const input = raw as { room: string; relay?: string; key?: string };
+    const target = parseRoomArg(input.room);
+    const relay = input.relay ?? target.relay;
+    const key = input.key?.trim() || target.key;
+    return ok({ ok: true, ...(await core.switchRoom(target.room, relay, key)), note: "teammates in the new room appear in list_teammates within a few seconds" });
   }));
 
   server.registerTool("leave_room", {
@@ -321,11 +325,13 @@ export function buildApp(core: DaemonCore): express.Express {
     res.json({ ok: true });
   });
 
+  // { room, relay?, key? } — `room` may be a room link, whose `#k=` fragment supplies relay and key.
   app.post("/switch", async (req: Request, res: Response) => {
-    const b = (req.body ?? {}) as { room?: unknown; relay?: unknown };
-    const room = typeof b.room === "string" ? b.room : "";
-    const relay = typeof b.relay === "string" && /^wss?:\/\//.test(b.relay) ? b.relay : undefined;
-    try { res.json({ ok: true, ...(await core.switchRoom(room, relay)) }); }
+    const b = (req.body ?? {}) as { room?: unknown; relay?: unknown; key?: unknown };
+    const target = parseRoomArg(typeof b.room === "string" ? b.room : "");
+    const relay = typeof b.relay === "string" && /^wss?:\/\//.test(b.relay) ? b.relay : target.relay;
+    const key = (typeof b.key === "string" && b.key.trim()) || target.key || undefined;
+    try { res.json({ ok: true, ...(await core.switchRoom(target.room, relay, key)) }); }
     catch (e) { res.status(400).json({ ok: false, error: (e as Error).message }); }
   });
 

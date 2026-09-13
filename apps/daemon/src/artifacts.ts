@@ -12,6 +12,11 @@ const FETCH_TIMEOUT_MS = 60_000;
 /** ngrok's browser interstitial is HTML, not our bytes; this header opts out (harmless elsewhere). */
 const NGROK_HEADER = { "ngrok-skip-browser-warning": "1" } as const;
 
+/** Room key header for the relay's file routes (docs/ROOM-KEYS.md). Absent when the room has no key. */
+export function keyHeader(key?: string): Record<string, string> {
+  return key ? { "x-mesh-key": key } : {};
+}
+
 const MIME_BY_EXT: Record<string, string> = {
   png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", svg: "image/svg+xml",
   bmp: "image/bmp", ico: "image/x-icon", tif: "image/tiff", tiff: "image/tiff", avif: "image/avif",
@@ -51,7 +56,7 @@ export function formatSize(bytes: number): string {
 
 /** Upload bytes as one artifact. Throws with a readable message on any failure (caller decides how to report). */
 export async function uploadBytes(
-  relayWsUrl: string, room: string, from: string, name: string, bytes: Uint8Array, mime?: string,
+  relayWsUrl: string, room: string, from: string, name: string, bytes: Uint8Array, mime?: string, key?: string,
 ): Promise<Artifact> {
   if (bytes.byteLength > MAX_UPLOAD_BYTES) {
     throw new Error(`${name} is ${formatSize(bytes.byteLength)}; the relay accepts at most ${formatSize(MAX_UPLOAD_BYTES)} per file`);
@@ -68,6 +73,7 @@ export async function uploadBytes(
         "x-mesh-name": safeName,
         "x-mesh-mime": mime ?? mimeFor(safeName),
         "x-mesh-from": from,
+        ...keyHeader(key),
         ...NGROK_HEADER,
       },
       body: new Blob([bytes as BlobPart]),
@@ -96,7 +102,7 @@ export async function uploadBytes(
 }
 
 /** Upload a file from disk. Size-checked before reading so a 2 GB file never lands in memory. */
-export async function uploadFile(relayWsUrl: string, room: string, from: string, filePath: string, mime?: string): Promise<Artifact> {
+export async function uploadFile(relayWsUrl: string, room: string, from: string, filePath: string, mime?: string, key?: string): Promise<Artifact> {
   let st: fs.Stats;
   try {
     st = fs.statSync(filePath);
@@ -108,18 +114,19 @@ export async function uploadFile(relayWsUrl: string, room: string, from: string,
     throw new Error(`${path.basename(filePath)} is ${formatSize(st.size)}; the relay accepts at most ${formatSize(MAX_UPLOAD_BYTES)} per file`);
   }
   const bytes = fs.readFileSync(filePath);
-  return uploadBytes(relayWsUrl, room, from, path.basename(filePath), bytes, mime ?? mimeFor(filePath));
+  return uploadBytes(relayWsUrl, room, from, path.basename(filePath), bytes, mime ?? mimeFor(filePath), key);
 }
 
 /** Download an artifact to destPath (parent dirs created). Returns the byte count and the served content-type. */
-export async function downloadArtifact(url: string, destPath: string): Promise<{ size: number; mime: string }> {
+export async function downloadArtifact(url: string, destPath: string, key?: string): Promise<{ size: number; mime: string }> {
   let res: Response;
   try {
-    res = await fetch(url, { headers: NGROK_HEADER, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+    res = await fetch(url, { headers: { ...keyHeader(key), ...NGROK_HEADER }, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
   } catch (e) {
     throw new Error(`download of ${url} failed: ${(e as Error).message}`);
   }
   if (!res.ok) {
+    if (res.status === 401 || res.status === 403) throw new Error(`download of ${url} refused (HTTP ${res.status}): this room needs its key — rejoin with the room link (https://<relay>/r/<room>#k=<key>)`);
     throw new Error(res.status === 404 ? `artifact is gone (404): the relay keeps files for about an hour` : `download of ${url} failed: HTTP ${res.status}`);
   }
   const bytes = Buffer.from(await res.arrayBuffer());
@@ -130,9 +137,9 @@ export async function downloadArtifact(url: string, destPath: string): Promise<{
 }
 
 /** `GET /api/files/<room>/<id>/meta` → who uploaded it (undefined when the relay doesn't know or doesn't serve meta). */
-export async function artifactMeta(url: string): Promise<{ from?: string; name?: string; mime?: string; size?: number } | undefined> {
+export async function artifactMeta(url: string, key?: string): Promise<{ from?: string; name?: string; mime?: string; size?: number } | undefined> {
   try {
-    const res = await fetch(url.replace(/\/+$/, "") + "/meta", { headers: NGROK_HEADER, signal: AbortSignal.timeout(5_000) });
+    const res = await fetch(url.replace(/\/+$/, "") + "/meta", { headers: { ...keyHeader(key), ...NGROK_HEADER }, signal: AbortSignal.timeout(5_000) });
     if (!res.ok) return undefined;
     const j = (await res.json()) as Record<string, unknown>;
     return {

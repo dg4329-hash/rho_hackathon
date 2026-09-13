@@ -27,14 +27,15 @@ import { nativeNotify } from "./native.js";
 import { PendingApprovals } from "./pending.js";
 import { Jobs, toJobResult } from "./jobs.js";
 import { resolvePermission } from "./permissions.js";
-import { RelayClient, debug } from "./relay-client.js";
+import { parseRoomArg } from "./register.js";
+import { RelayClient, debug, RoomKeyError } from "./relay-client.js";
 import { CHUNK_CHARS, isCompound, matchShellOffer, resolveOfferCommand, runShell } from "./shell.js";
 
 export interface CoreOptions {
   /** Called by leave(): the CLI stops everything and exits. */
   onLeave?: (reason?: string) => void;
-  /** Called after a successful switchRoom so the CLI can persist the new join target. */
-  onSwitch?: (room: string, relay: string) => void;
+  /** Called after a successful switchRoom so the CLI can persist the new join target (and its room key). */
+  onSwitch?: (room: string, relay: string, key?: string) => void;
   config: TeamConfig;
   cwd: string;
   client: RelayClient;
@@ -78,7 +79,7 @@ export function createCore(opts: CoreOptions): DaemonCore & { client: RelayClien
     return undefined;
   }
   async function upload(name: string, bytes: Uint8Array, mime?: string): Promise<Artifact> {
-    return uploadBytes(config.relay, config.room, me, name, bytes, mime);
+    return uploadBytes(config.relay, config.room, me, name, bytes, mime, config.key);
   }
 
   // ---------- frames for jobs we own ----------
@@ -193,7 +194,7 @@ export function createCore(opts: CoreOptions): DaemonCore & { client: RelayClien
     if (overflow) artifactErrors.push(`output exceeded ${formatSize(SCAN_CAPTURE_BYTES)}; MESH_FILE lines after that were not scanned`);
     for (const file of scanOutputForFiles(output, cwd)) {
       try {
-        const a = await uploadFile(config.relay, config.room, me, file);
+        const a = await uploadFile(config.relay, config.room, me, file, undefined, config.key);
         artifacts.push(a);
         remember(a, me);
       } catch (e) {
@@ -459,16 +460,33 @@ export function createCore(opts: CoreOptions): DaemonCore & { client: RelayClien
       setTimeout(() => opts.onLeave?.(reason), delayMs);
     },
 
-    async switchRoom(room: string, relay?: string) {
-      const target = room.trim().toLowerCase();
+    async switchRoom(room: string, relay?: string, key?: string) {
+      const link = parseRoomArg(room);
+      const target = link.room.trim().toLowerCase();
       if (!/^[a-z0-9][a-z0-9-]{1,40}$/.test(target)) throw new Error(`bad room name '${room}' (letters, digits, dashes)`);
-      say(chalk.yellow(`switching room ${config.room} → ${target}${relay ? ` via ${relay}` : ""}`));
+      const nextRelay = relay ?? link.relay ?? config.relay;
+      const sameRelay = nextRelay.replace(/\/+$/, "") === config.relay.replace(/\/+$/, "");
+      // A key carries over only within the same relay; across relays it is meaningless (docs/ROOM-KEYS.md).
+      const nextKey = key ?? link.key ?? (sameRelay ? config.key : undefined);
+      say(chalk.yellow(`switching room ${config.room} → ${target}${sameRelay ? "" : ` via ${nextRelay}`}`));
       client.send({ type: "event", kind: "status", summary: `left the room (switched to ${target})` });
       await new Promise((r) => setTimeout(r, 150));
-      await client.switchRoom(target, relay);
+      try {
+        await client.switchRoom(target, sameRelay ? undefined : nextRelay, nextKey ?? null);
+      } catch (e) {
+        if (e instanceof RoomKeyError) {
+          // client.switchRoom already reconnected us to the room we were in.
+          throw new Error(
+            `'${target}' needs its own room key (relay said: ${e.relayMessage}). Ask for the room link ` +
+            `(https://<relay>/r/${target}#k=<key>) and pass it as \`room\`. Still in '${config.room}'.`,
+          );
+        }
+        throw e;
+      }
       config.room = target;
-      if (relay) config.relay = relay;
-      opts.onSwitch?.(target, config.relay);
+      config.relay = nextRelay;
+      config.key = nextKey;
+      opts.onSwitch?.(target, config.relay, nextKey);
       return { room: target, relay: config.relay };
     },
 
@@ -509,7 +527,7 @@ export function createCore(opts: CoreOptions): DaemonCore & { client: RelayClien
       if (!roots.some(under)) throw new Error(`${filePath} is outside the project (${cwd}) and ~/.mesh; send_file only ships files from those.`);
       const st = fs.statSync(real);
       if (!st.isFile()) throw new Error(`${filePath} is not a regular file`);
-      const artifact = await uploadFile(config.relay, config.room, me, real);
+      const artifact = await uploadFile(config.relay, config.room, me, real, undefined, config.key);
       remember(artifact, me);
       const trimmed = note?.trim() || undefined;
       client.send({
@@ -536,7 +554,7 @@ export function createCore(opts: CoreOptions): DaemonCore & { client: RelayClien
       let from = known?.from;
       let name = known?.artifact.name;
       if (!from || !name) {
-        const meta = await artifactMeta(url);
+        const meta = await artifactMeta(url, config.key);
         from ??= meta?.from ?? "unknown";
         name ??= meta?.name ?? decodeURIComponent(path.basename(new URL(url).pathname)) ?? "artifact";
       }
@@ -544,7 +562,7 @@ export function createCore(opts: CoreOptions): DaemonCore & { client: RelayClien
       const root = path.resolve(cwd, "mesh-artifacts");
       const dest = path.resolve(root, clean(from), input.saveAs?.trim() ? input.saveAs.trim() : clean(name));
       if (!dest.startsWith(root + path.sep)) throw new Error(`saveAs '${input.saveAs}' would write outside mesh-artifacts/; artifacts stay under ${root}`);
-      const { size, mime: servedMime } = await downloadArtifact(url, dest);
+      const { size, mime: servedMime } = await downloadArtifact(url, dest, config.key);
       const mime = known?.artifact.mime ?? (servedMime !== "application/octet-stream" ? servedMime : mimeFor(dest));
       say(chalk.dim(`  📥 fetched ${path.relative(cwd, dest)} (${formatSize(size)}) from ${from}`));
       return { path: dest, name: path.basename(dest), mime, size, from };

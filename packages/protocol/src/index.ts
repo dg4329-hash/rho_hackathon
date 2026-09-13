@@ -115,6 +115,7 @@ export const TeamConfig = z.object({
   user: z.string().regex(/^[a-z0-9_-]{1,32}$/),
   room: z.string().min(1),
   relay: z.string().url(),
+  key: z.string().optional(),                      // room key (docs/ROOM-KEYS.md); also from --key / a room link / MESH_KEY
   cwd: z.string().optional(),
   timeoutSeconds: z.number().int().positive().default(120),
   allowArbitrary: z.enum(["ask", "never"]).default("ask"),

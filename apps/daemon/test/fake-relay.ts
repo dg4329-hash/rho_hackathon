@@ -5,7 +5,7 @@
  * Plus the two artifact routes of docs/FILES-API.md, in memory: POST /api/files/<room>, GET /api/files/<room>/<id>[/meta].
  */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { WebSocketServer, WebSocket } from "ws";
 import { HISTORY_LIMIT, type Offer, type Role } from "@mesh/protocol";
 
@@ -25,7 +25,54 @@ interface Room {
 interface StoredFile { id: string; name: string; mime: string; size: number; from: string; ts: string; bytes: Buffer }
 const FILE_LIMIT = 25 * 1024 * 1024;
 
-export function startFakeRelay(port: number): Promise<{ close(): Promise<void>; port: number }> {
+const B32 = "abcdefghijklmnopqrstuvwxyz234567"; // RFC 4648, lowercase
+
+/** docs/ROOM-KEYS.md: `base32lower(HMAC-SHA256(ROOM_SECRET, room))[:16]`. Must match the relay's. */
+export function roomKey(secret: string, room: string): string {
+  const mac = createHmac("sha256", secret).update(room).digest();
+  let bits = 0;
+  let value = 0;
+  let out = "";
+  for (const byte of mac) {
+    value = (value << 8) | byte;
+    bits += 8;
+    while (bits >= 5) {
+      out += B32[(value >>> (bits - 5)) & 31];
+      bits -= 5;
+    }
+    if (out.length >= 16) break;
+  }
+  return out.slice(0, 16);
+}
+
+function sameKey(a: string, b: string): boolean {
+  const x = Buffer.from(a);
+  const y = Buffer.from(b);
+  return x.length === y.length && timingSafeEqual(x, y);
+}
+
+export interface FakeRelayOptions {
+  /** Enforce room keys exactly as docs/ROOM-KEYS.md describes (default: off). */
+  requireKey?: boolean;
+  /** ROOM_SECRET the keys are derived from. */
+  secret?: string;
+}
+
+export interface FakeRelay {
+  close(): Promise<void>;
+  port: number;
+  /** WebSocket connection attempts seen (to prove a rejected client does not reconnect). */
+  wsAttempts(): number;
+  /** `x-mesh-key` / `?key=` seen on the file routes, oldest first (`null` = none sent). */
+  fileKeys(): Array<string | null>;
+}
+
+export function startFakeRelay(port: number, options: FakeRelayOptions = {}): Promise<FakeRelay> {
+  const requireKey = options.requireKey === true;
+  const secret = options.secret ?? "test-secret";
+  const expected = (room: string) => roomKey(secret, room);
+  let wsAttempts = 0;
+  const fileKeys: Array<string | null> = [];
   const rooms = new Map<string, Room>();
   const files = new Map<string, Map<string, StoredFile>>(); // room → id → file
   const http = createServer((req, res) => handleFiles(req, res));
@@ -37,6 +84,12 @@ export function startFakeRelay(port: number): Promise<{ close(): Promise<void>; 
     if (!m) { res.writeHead(404).end("not found"); return; }
     const roomName = decodeURIComponent(m[1]!);
     const id = m[2] ? decodeURIComponent(m[2]) : undefined;
+    const sent = (req.headers["x-mesh-key"] ? String(req.headers["x-mesh-key"]) : url.searchParams.get("key")) ?? null;
+    fileKeys.push(sent);
+    if (requireKey) {
+      if (!sent) { res.writeHead(401, { "content-type": "application/json" }).end(JSON.stringify({ error: "room key required" })); return; }
+      if (!sameKey(sent, expected(roomName))) { res.writeHead(401, { "content-type": "application/json" }).end(JSON.stringify({ error: "wrong room key" })); return; }
+    }
     if (req.method === "POST" && !id) {
       const chunks: Buffer[] = [];
       let total = 0;
@@ -96,6 +149,7 @@ export function startFakeRelay(port: number): Promise<{ close(): Promise<void>; 
   };
 
   wss.on("connection", (ws, req) => {
+    wsAttempts++;
     const url = new URL(req.url ?? "/", "http://x");
     const roomName = url.searchParams.get("room");
     const user = url.searchParams.get("user");
@@ -104,6 +158,15 @@ export function startFakeRelay(port: number): Promise<{ close(): Promise<void>; 
       ws.send(JSON.stringify({ type: "error", message: "room, user and role=daemon|feed are required" }));
       ws.close();
       return;
+    }
+    if (requireKey) {
+      const sent = url.searchParams.get("key");
+      const message = !sent ? "room key required" : !sameKey(sent, expected(roomName)) ? "wrong room key" : undefined;
+      if (message) {
+        ws.send(JSON.stringify({ type: "error", message }));
+        ws.close(4401, message);
+        return;
+      }
     }
     const r = room(roomName);
     const conn: Conn = { ws, user, role, offers: [], helloed: false };
@@ -143,6 +206,8 @@ export function startFakeRelay(port: number): Promise<{ close(): Promise<void>; 
       const bound = typeof addr === "object" && addr ? addr.port : port;
       resolve({
         port: bound,
+        wsAttempts: () => wsAttempts,
+        fileKeys: () => fileKeys.slice(),
         close: () =>
           new Promise<void>((res) => {
             for (const c of wss.clients) c.terminate();
@@ -157,5 +222,7 @@ export function startFakeRelay(port: number): Promise<{ close(): Promise<void>; 
 const invokedDirectly = process.argv[1] && /fake-relay\.[cm]?[jt]s$/.test(process.argv[1]);
 if (invokedDirectly) {
   const port = Number(process.argv[2]) || 8080;
-  startFakeRelay(port).then(({ port: p }) => console.log(`fake relay listening on ws://localhost:${p}`));
+  const secret = process.env.ROOM_SECRET;
+  startFakeRelay(port, secret ? { requireKey: true, secret } : {}).then(({ port: p }) =>
+    console.log(`fake relay listening on ws://localhost:${p}${secret ? " (room keys enforced)" : ""}`));
 }

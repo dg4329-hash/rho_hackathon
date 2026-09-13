@@ -66,8 +66,12 @@ export interface DaemonCore {
   relayStatus(): "connected" | "disconnected";
   /** Leave the room: disconnect, forget the saved join so nothing auto-restarts, and exit the daemon (after `delayMs`). */
   leave(reason?: string, delayMs?: number): void;
-  /** Switch to another room (same identity/offers). Returns the new room name. */
-  switchRoom(room: string, relay?: string): Promise<{ room: string; relay: string }>;
+  /**
+   * Switch to another room (same identity/offers). `room` may be a room link (a `#k=` fragment supplies
+   * relay and key). The current key carries over only on the same relay when no new key is given; if the
+   * new room refuses it we stay in the old room and throw a readable error. Returns the new room name.
+   */
+  switchRoom(room: string, relay?: string, key?: string): Promise<{ room: string; relay: string }>;
   /**
    * Incoming requests waiting for the owner's decision (the in-tool approval path). Long-polls up to
    * waitMs when empty. Calling it marks a watcher as attached, which routes new approvals here.

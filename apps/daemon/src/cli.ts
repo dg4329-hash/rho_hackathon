@@ -12,9 +12,11 @@ import { configFromFlags, loadConfig, userCwd } from "./config.js";
 import { createCore } from "./core.js";
 import { createLocalServer } from "./local-server.js";
 import { createMcpImport } from "./mcp-import.js";
+import { claudeHooksInstalled, findGitRoot, startGitWatch } from "./gitwatch.js";
 import { resolveNotes, resolvePermission } from "./permissions.js";
 import { defaultHandle, installClaudeHooks, parseRoomArg, printRegister, registerApproveAskRule, registerClaudeCode, registerClaudePlugin, registerCodex, registerCursor, type RegisterResult } from "./register.js";
 import { RelayClient } from "./relay-client.js";
+import { isFixedOffer } from "./shell.js";
 import { restoreTerminal } from "./approval.js";
 import { watchLine } from "./pending.js";
 
@@ -39,6 +41,7 @@ function shellOffersFrom(config: TeamConfig): Offer[] {
     description: o.description,
     permission: resolvePermission(o.name, config, o.permission),
     notes: o.notes ?? resolveNotes(o.name, config),
+    ...(isFixedOffer(o) ? { fixed: true } : {}),
   }));
 }
 
@@ -72,7 +75,8 @@ program
   .option("--cursor", "force Cursor registration even if no .cursor dir is present")
   .option("--codex", "force Codex registration even if codex isn't installed")
   .option("--background", "run detached in the background (approvals via native OS dialogs); see `mesh status` / `mesh stop`")
-  .action(async (roomArg: string, flags: CommonFlags & { port: string; register: boolean; cursor?: boolean; codex?: boolean; background?: boolean }) => {
+  .option("--no-git-watch", "don't emit file_touched events from git status (on by default inside a git repo)")
+  .action(async (roomArg: string, flags: CommonFlags & { port: string; register: boolean; cursor?: boolean; codex?: boolean; background?: boolean; gitWatch?: boolean }) => {
     const target = parseRoomArg(roomArg);
     const room = target.room;
     if (target.relay && !flags.relay) flags.relay = target.relay;
@@ -165,6 +169,19 @@ program
         `mcp=http://localhost:${port}/mcp\n  cwd=${shorten(cwd)}  config=${shorten(source)}`,
     );
 
+    // Universal file_touched events for agents that have no hooks (Codex, Cursor, a human in vim).
+    let gitWatch: { stop(): void } | undefined;
+    if (flags.gitWatch !== false) {
+      const root = findGitRoot(cwd);
+      const log = (l: string) => console.log(chalk.dim(l));
+      if (root && !claudeHooksInstalled(cwd, root)) {
+        gitWatch = startGitWatch({ cwd, root, emit: (p) => core.postEvent("file_touched", p, { source: "git" }), log });
+        log(`git watch: on (${root})`);
+      } else if (root) {
+        log("git watch: off (Claude Code hooks emit file events)");
+      }
+    }
+
     let stopping = false;
     const stop = async () => {
       if (stopping) return;
@@ -172,6 +189,7 @@ program
       console.log(chalk.dim("\nstopping…"));
       restoreTerminal();
       client.close();
+      gitWatch?.stop();
       await Promise.allSettled([server.stop(), mcpImport.stop()]);
       process.exit(0);
     };

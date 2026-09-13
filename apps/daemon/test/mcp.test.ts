@@ -79,7 +79,7 @@ async function testLocalServer() {
     await client.connect(new StreamableHTTPClientTransport(new URL(`http://localhost:${port}/mcp`)));
 
     const { tools } = await client.listTools();
-    check(tools.length === 12, "listTools returns 12 tools", tools.map((t) => t.name));
+    check(tools.length === 13, "listTools returns 13 tools", tools.map((t) => t.name));
     check(tools.some((t) => t.name === "send_file") && tools.some((t) => t.name === "fetch_artifact"), "send_file + fetch_artifact registered");
     check(tools.every((t) => (t.description ?? "").length > 0), "every tool has a description");
     const approve = tools.find((t) => t.name === "approve_request");

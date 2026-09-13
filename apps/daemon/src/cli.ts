@@ -159,7 +159,9 @@ program
       role: "daemon",
       offers: [...shellOffers, ...imported.offers],
     });
-    const core = createCore({ config, cwd, client, mcpImport, shellOffers, mcpOffers: imported.offers });
+    const leaveRef: { current?: () => void } = {};
+    const core = createCore({
+      onLeave: () => leaveRef.current?.(), config, cwd, client, mcpImport, shellOffers, mcpOffers: imported.offers });
     client.on("open", () => console.log(chalk.green(`● connected to ${config.relay} room=${config.room} as ${config.user}`)));
     client.on("close", () => console.log(chalk.yellow("○ relay disconnected; reconnecting…")));
     client.on("presence", (p) => {
@@ -217,6 +219,12 @@ program
       gitWatch?.stop();
       await Promise.allSettled([server.stop(), mcpImport.stop()]);
       process.exit(0);
+    };
+    leaveRef.current = () => {
+      // intentional leave: forget the saved join so the plugin's SessionStart hook and `mesh status` don't bring it back
+      try { unlinkSync(configPath()); } catch { /* ignore */ }
+      try { unlinkSync(statePath()); } catch { /* ignore */ }
+      void stop();
     };
     process.on("SIGINT", stop);
     process.on("SIGTERM", stop);

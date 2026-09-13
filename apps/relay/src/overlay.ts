@@ -291,11 +291,20 @@ export const OVERLAY_JS: string = String.raw`(function (root) {
       '<h2>live</h2><div id="mo-feed" class="feed"></div>' +
       '</div>' +
       '<div class="ft glass"><div class="st"><span id="mo-daemon"><span class="dot"></span>daemon</span><span id="mo-relay"><span class="dot"></span>relay</span>' +
-      '<span class="port">port <input id="mo-port" type="number" min="1" max="65535" value="' + port + '"></span></div><div id="mo-hint" class="hint" hidden></div></div>' +
+      '<span class="port">port <input id="mo-port" type="number" min="1" max="65535" value="' + port + '"></span><button class="ghost leave" id="mo-leave" title="disconnect this machine from the room">leave</button></div><div id="mo-hint" class="hint" hidden></div></div>' +
       '<div class="widget glass" id="mo-widget" role="button" tabindex="0" title="mesh — click to expand"><span class="glyph">m</span><span class="wbadge" id="mo-wbadge"></span></div>';
     var $ = function (id) { return doc.getElementById(id); };
     $("mo-sound").checked = state.sound;
     $("mo-sound").onchange = function () { state.sound = !!this.checked; ls.set("mesh.overlay.sound", state.sound ? "1" : "0"); if (state.sound) beep(); };
+    var leaveArmed = false;
+    $("mo-leave").onclick = function () {
+      var b = this;
+      if (!leaveArmed) { leaveArmed = true; b.textContent = "confirm leave"; b.classList.add("arm"); setTimeout(function () { leaveArmed = false; b.textContent = "leave"; b.classList.remove("arm"); }, 4000); return; }
+      leaveArmed = false; b.disabled = true; b.textContent = "leaving…";
+      fetch("http://localhost:" + state.port + "/leave", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ reason: "left from the overlay" }) })
+        .then(function () { state.stopped = true; b.textContent = "left"; var h = $("mo-hint"); if (h) { h.hidden = false; h.textContent = "You left the room. To come back, run the join command from the room page."; } })
+        .catch(function () { b.disabled = false; b.textContent = "leave"; });
+    };
     $("mo-port").onchange = function () { var p = Number(this.value); if (Number.isInteger(p) && p > 0 && p < 65536) setPort(p); else this.value = state.port; };
     $("mo-send").onclick = send;
     $("mo-collapse").onclick = function () { setCollapsed(true); };

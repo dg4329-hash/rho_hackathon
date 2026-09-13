@@ -142,6 +142,7 @@ Ten tools (names, inputs, outputs). Descriptions matter: they are the only thing
 | `inbox` | `{ unreadOnly?: true, sinceMinutes?: 120 }` | `{ messages: [{ id, ts, from, to, text, read }] }` — marks returned messages read when unreadOnly |
 | `team_activity` | `{ sinceMinutes?: number (default 10) }` | `{ events: Array<{ ts, from, type, summary }> }` — flattened, human-readable, newest last, ≤ 100 |
 | `approve_request` | `{ id: string, decision: 'approved' \| 'denied', reason?: string }` | `{ ok, id, decision }`; error text if the id is no longer pending. Declares `_meta["anthropic/requiresUserInteraction"]`, so in Claude Code the permission prompt for this call is the owner's yes/no; never allowlisted |
+| `leave_room` | `{ reason? }` | `{ ok, left }` — disconnects, forgets the saved join (no auto-restart), stops the daemon; also `POST /leave` and the overlay's Leave button; rejoin with the join command |
 | `wait_for_events` | `{ timeoutSeconds?: number (default 60) }` | `{ messages: InboxMessage[], pending: PendingRequest[] }` — long-poll; returns on the next teammate message or pending request, or empty arrays at timeout. Codex/Cursor's substitute for push (shipping tonight). Never decides anything |
 
 Tool description text (copy into the server verbatim):

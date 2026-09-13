@@ -408,122 +408,266 @@ function page(opts: { repoUrl: string; room?: string }): string {
   /* Apple-style tokens, light + dark. Legacy names (--fg, --dim, --acc, --warn, --err, --link, --line) stay: the script uses some inline. */
   :root{--bg:#fff;--grouped:#f5f5f7;--surface:#fff;--surface-2:#fbfbfd;--label:#1d1d1f;--label-2:#6e6e73;--label-3:#86868b;
     --sep:rgba(0,0,0,.08);--sep-2:rgba(0,0,0,.14);--fill:rgba(0,0,0,.04);--fill-2:rgba(0,0,0,.07);
-    --accent:#0071e3;--accent-text:#0066cc;--green:#1f9d3a;--amber:#b25f00;--red:#d70015;--glass:rgba(255,255,255,.72);
+    --accent:#0071e3;--accent-text:#0066cc;--green:#1f9d3a;--green-dot:#28cd41;--amber:#b25f00;--red:#d70015;--glass:rgba(255,255,255,.72);
     --shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px -8px rgba(0,0,0,.08);
-    --term:#0b0b0d;--term-text:#e4e4e7;--term-dim:#8a8a93;
+    --term:#0b0b0d;--term-bar:#1a1a1d;--term-text:#e4e4e7;--term-dim:#8a8a93;--term-line:rgba(255,255,255,.07);--term-edge:transparent;
+    --r-lg:20px;--r-md:14px;--r-sm:10px;
     --fg:var(--label);--dim:var(--label-2);--acc:var(--green);--warn:var(--amber);--err:var(--red);--link:var(--accent-text);--line:var(--sep-2);
     --font:-apple-system,BlinkMacSystemFont,"SF Pro Text","SF Pro Display",Inter,"Helvetica Neue","Segoe UI",system-ui,sans-serif;
     --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace}
-  @media (prefers-color-scheme:dark){:root{--bg:#000;--grouped:#0d0d0f;--surface:#161618;--surface-2:#1c1c1e;--label:#f5f5f7;--label-2:#a1a1a6;--label-3:#8e8e93;
-    --sep:rgba(255,255,255,.1);--sep-2:rgba(255,255,255,.18);--fill:rgba(255,255,255,.06);--fill-2:rgba(255,255,255,.1);
-    --accent:#0a84ff;--accent-text:#409cff;--green:#30d158;--amber:#ffb340;--red:#ff6961;--glass:rgba(22,22,24,.72);
-    --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px -8px rgba(0,0,0,.6)}}
-  *{box-sizing:border-box}[hidden]{display:none!important}
-  body{margin:0;background:var(--grouped);color:var(--label);font:15px/1.55 var(--font);letter-spacing:-.01em;-webkit-font-smoothing:antialiased}
+  @media (prefers-color-scheme:dark){:root{--bg:#000;--grouped:#000;--surface:#161618;--surface-2:#1c1c1e;--label:#f5f5f7;--label-2:#a1a1a6;--label-3:#8e8e93;
+    --sep:rgba(255,255,255,.1);--sep-2:rgba(255,255,255,.18);--fill:rgba(255,255,255,.06);--fill-2:rgba(255,255,255,.11);
+    --accent:#0a84ff;--accent-text:#409cff;--green:#30d158;--green-dot:#30d158;--amber:#ffb340;--red:#ff6961;--glass:rgba(22,22,24,.72);
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px -8px rgba(0,0,0,.6);--term:#0a0a0c;--term-bar:#141417;--term-edge:rgba(255,255,255,.08)}}
+  *,*::before,*::after{box-sizing:border-box}[hidden]{display:none!important}
+  html{-webkit-text-size-adjust:100%}
+  body{margin:0;min-height:100vh;background:var(--grouped);color:var(--label);font:15px/1.5 var(--font);letter-spacing:-.01em;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
+  h1,h2,p,ol,ul{margin:0}ol,ul{padding:0;list-style:none}
   :focus-visible{outline:3px solid color-mix(in srgb,var(--accent) 55%,transparent);outline-offset:2px;border-radius:8px}
   a{color:var(--link);text-decoration:none}a:hover{text-decoration:underline}
-  code{font:.92em var(--mono);padding:1px 5px;border-radius:6px;background:var(--fill)}
-  /* functional layer: the only glass */
+  code{font:.9em/1.4 var(--mono);padding:1px 5px;border-radius:6px;background:var(--fill);overflow-wrap:anywhere}
+  q{font-style:normal;color:var(--label)}q::before,q::after{content:none}
+  .muted,.dim{color:var(--label-2)}.small{font-size:13px}
+  .err{color:var(--red);font-size:13px;margin-top:8px}.err:empty{display:none}
+
+  /* nav: the only glass */
   .nav{position:sticky;top:0;z-index:10;background:var(--glass);-webkit-backdrop-filter:saturate(180%) blur(20px);backdrop-filter:saturate(180%) blur(20px);border-bottom:1px solid var(--sep)}
   @media (prefers-reduced-transparency:reduce){.nav{background:var(--bg);-webkit-backdrop-filter:none;backdrop-filter:none}}
-  .nav-inner{max-width:880px;margin:0 auto;padding:0 20px;height:52px;display:flex;align-items:center;gap:10px}
+  .nav-inner{max-width:1080px;margin:0 auto;padding:0 24px;height:52px;display:flex;align-items:center;gap:10px}
   .brand{display:flex;align-items:center;gap:10px;color:var(--label);font-weight:600;font-size:19px;letter-spacing:-.02em}.brand:hover{text-decoration:none}
   .brand-mark{width:26px;height:26px;border-radius:7px;display:grid;place-items:center;background:var(--label);color:var(--bg)}.brand-mark svg{width:16px;height:16px}
-  .badge{font-size:12px;font-weight:500;color:var(--label-2);padding:2px 9px;border-radius:999px;background:var(--fill);border:1px solid var(--sep);font-family:var(--mono);letter-spacing:0}
-  main{max-width:880px;margin:0 auto;padding:8px 20px 96px}
-  @media (max-width:480px){main,.nav-inner{padding-left:16px;padding-right:16px}}
-  .hero{text-align:center;padding:64px 0 40px}
-  .hero.compact{text-align:left;padding:36px 0 12px}
-  .eyebrow{font-size:14px;font-weight:600;color:var(--accent-text);margin:0 0 10px}
-  h1{margin:0;font-size:clamp(38px,6vw,60px);line-height:1.05;font-weight:700;letter-spacing:-.035em}
-  .hero.compact h1{font-size:clamp(28px,4.4vw,40px)}
-  .tag{font-size:clamp(17px,2vw,21px);line-height:1.45;color:var(--label-2);margin:16px auto 0;max-width:600px;letter-spacing:-.015em}
-  .hero.compact .tag{margin-left:0;font-size:17px}
-  /* content cards: opaque, no glass */
-  .card{background:var(--surface);border:1px solid var(--sep);border-radius:22px;box-shadow:var(--shadow);padding:24px 26px;margin:16px 0}
-  @media (max-width:480px){.card{padding:20px 18px;border-radius:18px}}
-  .card h2{font-size:19px;font-weight:600;margin:0 0 12px;color:var(--label);letter-spacing:-.02em}
-  .card h2::first-letter{text-transform:uppercase}
-  .card p{margin:10px 0}
-  .room-head,.section-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-  .room-head h2,.section-head h2{margin:0}
-  .section-head{justify-content:space-between}
-  .room-note,.section-note{color:var(--label-2);font-size:13px}
-  .room-note{margin-bottom:0!important}
-  .step-card h2{display:flex;align-items:center;gap:10px;margin-bottom:14px}
-  .step-num{display:inline-grid;place-items:center;flex:0 0 auto;width:28px;height:28px;border-radius:50%;background:var(--label);color:var(--bg);font:600 13px/1 var(--font);letter-spacing:0}
-  .step-lede{color:var(--label-2);font-size:14px;margin-top:-4px!important}
-  .field-row{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
-  .field-row label{font-weight:600}.field-row input{width:260px}
-  .field-help{margin:8px 0 0!important;color:var(--label-2);font-size:13px}
-  .platform-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
-  .platform-help{margin:12px 0 8px!important}
-  .success-note{margin:12px 0 0!important;font-size:13px}
-  .success-note code{white-space:nowrap}
-  .check-note{margin:14px 0;padding:12px 14px;border:1px solid var(--sep);border-radius:12px;background:var(--surface-2);font-size:14px}
-  .check-note p{margin:3px 0 0}
-  .use-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
-  .use-item{padding:14px;border:1px solid var(--sep);border-radius:14px;background:var(--surface-2)}
-  .use-item b{display:block;margin-bottom:5px;font-size:14px}
-  .use-item p{margin:0;color:var(--label-2);font-size:13px}
-  @media(max-width:680px){.use-grid{grid-template-columns:1fr}.section-head{align-items:flex-start}.field-row input{width:min(100%,320px)}}
-  button,.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:44px;background:var(--accent);color:#fff;border:0;border-radius:999px;padding:0 22px;font:500 15px/1 var(--font);letter-spacing:-.01em;cursor:pointer;transition:background-color .15s,transform .15s}
+  .badge{font:500 12px/1.6 var(--mono);color:var(--label-2);padding:1px 9px;border-radius:999px;background:var(--fill);border:1px solid var(--sep);letter-spacing:0;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .status{margin-left:auto;display:inline-flex;align-items:center;gap:7px;font-size:13px;color:var(--label-2);white-space:nowrap}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--label-3);flex:none}
+  .dot.live{background:var(--green-dot);box-shadow:0 0 0 3px color-mix(in srgb,var(--green-dot) 22%,transparent)}
+  .dot.warn{background:var(--amber)}
+
+  main{max-width:1080px;margin:0 auto;padding:0 24px 96px}
+  @media (max-width:520px){main,.nav-inner{padding-left:16px;padding-right:16px}}
+
+  /* page heads */
+  .head{padding:44px 0 28px}
+  .head.center{text-align:center;padding:84px 0 44px}
+  .eyebrow{font-size:14px;font-weight:600;color:var(--accent-text);margin-bottom:10px}
+  h1{font-size:clamp(30px,4.4vw,42px);line-height:1.08;font-weight:700;letter-spacing:-.032em;text-wrap:balance}
+  .head.center h1{font-size:clamp(38px,6.6vw,64px);line-height:1.04;letter-spacing:-.04em}
+  .lede{margin-top:12px;font-size:17px;line-height:1.45;color:var(--label-2);max-width:600px;text-wrap:pretty}
+  .head.center .lede{margin:16px auto 0;font-size:clamp(17px,2vw,21px)}
+  @media (max-width:520px){.head{padding:28px 0 20px}.head.center{padding:48px 0 32px}}
+
+  /* surfaces */
+  .card{background:var(--surface);border:1px solid var(--sep);border-radius:var(--r-lg);box-shadow:var(--shadow)}
+  .pad{padding:22px 24px}
+  @media (max-width:520px){.pad{padding:18px}.card{border-radius:18px}}
+  h2{font-size:17px;font-weight:600;line-height:1.3;letter-spacing:-.02em}
+  .card-head{display:flex;align-items:baseline;justify-content:space-between;gap:4px 12px;flex-wrap:wrap;margin-bottom:14px}
+  .pill:empty{display:none}
+  .pill{display:inline-block;padding:1px 9px;border-radius:999px;background:var(--fill);color:var(--label-2);font:500 12px/1.6 var(--font);letter-spacing:0;white-space:nowrap}
+
+  /* controls */
+  button,.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:44px;background:var(--accent);color:#fff;border:1px solid transparent;border-radius:999px;padding:0 20px;font:500 15px/1.2 var(--font);letter-spacing:-.01em;cursor:pointer;text-align:center;transition:background-color .15s,transform .15s,color .15s}
   button:hover,.btn:hover{background:color-mix(in srgb,var(--accent) 88%,#000);text-decoration:none}
-  button:active{transform:scale(.98)}@media (prefers-reduced-motion:reduce){button:active{transform:none}}
-  button.ghost{min-height:32px;background:var(--fill);color:var(--accent-text);border:1px solid var(--sep);padding:0 14px;font-size:13px}
-  button.ghost:hover{background:var(--fill-2)}
-  button.ghost.danger{color:var(--red);border-color:color-mix(in srgb,var(--red) 35%,transparent)}
-  button:disabled{opacity:.55;cursor:default}
-  input{min-height:44px;background:var(--surface);color:var(--label);border:1px solid var(--sep-2);border-radius:12px;padding:10px 14px;font:15px var(--font);width:220px;max-width:100%}
-  input::placeholder{color:var(--label-3)}input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 25%,transparent)}
-  label{font-size:14px;font-weight:500;display:inline-flex;align-items:center;gap:10px;flex-wrap:wrap}
-  pre{background:var(--term);color:var(--term-text);border-radius:14px;padding:14px 96px 14px 18px;overflow-x:auto;font:13px/1.6 var(--mono);position:relative;margin:10px 0;white-space:pre-wrap;word-break:break-all}
-  pre .copy{position:absolute;top:9px;right:9px;background:rgba(255,255,255,.1);color:#fff;border-color:rgba(255,255,255,.16)}
-  pre .copy:hover{background:rgba(255,255,255,.18)}
-  .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
-  .members{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
-  #members>.dim{grid-column:1/-1}
-  .m{background:var(--surface-2);border:1px solid var(--sep);border-radius:14px;padding:14px 16px}.m b{font-size:16px;font-weight:600}
-  .m .on{color:var(--green);font-size:13px}.m .off{color:var(--label-3)}
-  .offer{display:inline-block;margin:6px 6px 0 0;padding:2px 9px;border-radius:999px;font:12px/1.5 var(--mono);color:var(--label-2);background:var(--fill)}
+  button:active{transform:scale(.98)}
+  button:disabled{opacity:.55;cursor:default;transform:none}
+  button.ghost,.btn.ghost{min-height:36px;background:var(--fill);color:var(--label);border-color:var(--sep);padding:0 14px;font-size:14px}
+  button.ghost:hover,.btn.ghost:hover{background:var(--fill-2)}
+  button.danger{color:var(--red);background:transparent;border-color:color-mix(in srgb,var(--red) 30%,transparent)}
+  button.danger:hover{background:color-mix(in srgb,var(--red) 8%,transparent)}
+  button.danger.armed{background:var(--red);color:#fff;border-color:var(--red)}
+  input{min-height:44px;width:100%;min-width:0;background:var(--surface);color:var(--label);border:1px solid var(--sep-2);border-radius:12px;padding:10px 14px;font:15px var(--font);letter-spacing:-.01em}
+  input::placeholder{color:var(--label-3)}
+  input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 25%,transparent)}
+  .field{display:flex;gap:8px;flex-wrap:wrap}.field input{flex:1 1 200px}.field button{min-height:44px;flex:none}
+  details>summary{list-style:none;display:inline-flex;align-items:center;gap:8px;min-height:32px;cursor:pointer;color:var(--accent-text);font-size:14px;font-weight:500;border-radius:8px}
+  details>summary::-webkit-details-marker{display:none}
+  details>summary::before{content:"";width:6px;height:6px;margin:0 2px;border-right:1.6px solid currentColor;border-bottom:1.6px solid currentColor;transform:rotate(-45deg);transition:transform .15s}
+  details[open]>summary::before{transform:rotate(45deg);margin-top:-3px}
+  details[open]>summary{margin-bottom:8px}
+  @media (prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;animation:none!important}}
+
+  /* code snippets (manual setup) */
+  .snippet{display:flex;align-items:flex-start;gap:12px;background:var(--term);color:var(--term-text);border:1px solid var(--term-edge);border-radius:12px;padding:10px 10px 10px 16px;margin:8px 0 14px}
+  .snippet code{flex:1;min-width:0;padding:6px 0;background:none;color:inherit;font:12.5px/1.6 var(--mono);white-space:pre-wrap;word-break:break-all}
+  .copy{flex:none;white-space:nowrap}
+  .snippet .copy,.term .copy{background:rgba(255,255,255,.1);color:#fff;border-color:rgba(255,255,255,.14)}
+  .snippet .copy:hover,.term .copy:hover{background:rgba(255,255,255,.18)}
+
+  /* ---------- front door ---------- */
+  .door{display:grid;grid-template-columns:1fr 1fr;max-width:880px;margin:0 auto}
+  .door>div{padding:28px 30px}
+  .door>div+div{border-left:1px solid var(--sep)}
+  .door p.muted{margin:6px 0 18px}
+  .door #start{min-height:48px;padding:0 26px;font-size:16px}
+  .door details{margin-top:4px}
+  .door details .field{margin-top:4px}.door details input{flex-basis:120px}
+  @media (max-width:720px){.door{grid-template-columns:1fr}.door>div{padding:22px 20px}.door>div+div{border-left:0;border-top:1px solid var(--sep)}}
+  .how{max-width:880px;margin:56px auto 0}
+  .how>h2{font-size:13px;font-weight:600;color:var(--label-2);letter-spacing:0;margin:0 0 14px 2px}
+  .how ol{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;counter-reset:how}
+  .how li{counter-increment:how;padding:18px;border-radius:var(--r-md);background:var(--surface);border:1px solid var(--sep)}
+  .how li::before{content:counter(how);display:grid;place-items:center;width:24px;height:24px;margin-bottom:12px;border-radius:50%;background:var(--fill-2);color:var(--label);font:600 12px/1 var(--font)}
+  .how li b{display:block;font-size:15px;font-weight:600;margin-bottom:4px;letter-spacing:-.015em}
+  .how li span{display:block;font-size:13px;line-height:1.45;color:var(--label-2)}
+  .how .foot{margin-top:18px;text-align:center;font-size:13px;color:var(--label-2)}
+  @media (max-width:820px){.how ol{grid-template-columns:1fr 1fr}}
+  @media (max-width:480px){.how{margin-top:36px}.how ol{grid-template-columns:1fr}.how li{display:grid;grid-template-columns:24px 1fr;column-gap:14px;padding:14px 16px}.how li::before{grid-row:span 2;margin:0}}
+
+  /* ---------- room ---------- */
+  .room{display:grid;grid-template-columns:minmax(0,1fr) 340px;grid-template-areas:"steps side" "feed side";gap:20px;align-items:start}
+  .steps-card{grid-area:steps}.activity{grid-area:feed}
+  .side{grid-area:side;display:flex;flex-direction:column;gap:20px}
+  @media (max-width:900px){.room{grid-template-columns:minmax(0,1fr);grid-template-areas:none;gap:16px}.side{display:contents}.steps-card,.activity{grid-area:auto}
+    .invite{order:1}.steps-card{order:2}.people{order:3}.activity{order:4}}
+
+  /* invite */
+  .linkbox{padding:10px 12px;border-radius:12px;background:var(--fill);border:1px solid var(--sep);font:12.5px/1.5 var(--mono);color:var(--label);word-break:break-all;user-select:all}
+  .invite-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+  .invite-actions .copy{min-height:36px;padding:0 16px;font-size:14px}
+  .invite .note{margin-top:12px}
+  .owner{margin-top:14px;padding-top:14px;border-top:1px solid var(--sep)}
+  .owner p{margin-top:8px}
+  .owner .err{min-height:0}
+
+  /* steps */
+  .step{position:relative;display:grid;grid-template-columns:28px minmax(0,1fr);column-gap:16px;padding:20px 24px}
+  .step+.step{border-top:1px solid var(--sep)}
+  .step-num{position:relative;z-index:1;display:grid;place-items:center;width:28px;height:28px;border-radius:50%;font:600 13px/1 var(--font);letter-spacing:0;background:var(--surface);color:var(--label-2);box-shadow:inset 0 0 0 1.5px var(--sep-2);transition:background-color .2s,color .2s}
+  .step-num svg{display:none;width:14px;height:14px}
+  .step[data-state="current"] .step-num{background:var(--label);color:var(--bg);box-shadow:none}
+  .step[data-state="done"] .step-num{background:var(--green);color:#fff;box-shadow:none}
+  .step[data-state="done"] .step-num span{display:none}.step[data-state="done"] .step-num svg{display:block}
+  h2.step-title{font-size:17px}
+  button.step-toggle{all:unset;box-sizing:border-box;display:flex;align-items:center;gap:10px;width:100%;min-height:28px;cursor:pointer;color:var(--label);font:600 17px/1.3 var(--font);letter-spacing:-.02em;border-radius:8px}
+  button.step-toggle:focus-visible{outline:3px solid color-mix(in srgb,var(--accent) 55%,transparent);outline-offset:4px}
+  .step-sum{font:400 14px/1.3 var(--font);color:var(--label-2);letter-spacing:-.01em;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .step-sum:empty{display:none}
+  .chev{margin-left:auto;flex:none;width:8px;height:8px;border-right:1.6px solid var(--label-3);border-bottom:1.6px solid var(--label-3);transform:rotate(45deg) translate(-2px,-2px);transition:transform .15s}
+  button.step-toggle[aria-expanded="false"] .chev{transform:rotate(-45deg)}
+  .step-body{grid-column:2;padding-top:10px}
+  .step-body>p{margin-bottom:12px}.step-body>p:last-child{margin-bottom:0}
+  .step-body .field-help{margin-top:8px}
+  .step-body .field input{max-width:320px}
+  .more{display:flex;flex-direction:column;align-items:flex-start;gap:2px;margin-top:10px}
+  .more details{width:100%}.more details p{margin:0 0 8px}
+  @media (max-width:520px){.step{padding:18px;column-gap:12px}.step-body{grid-column:1/-1}}
+
+  /* install terminal: the hero of step 2 */
+  .term{background:var(--term);color:var(--term-text);border:1px solid var(--term-edge);border-radius:var(--r-md);overflow:hidden;box-shadow:0 12px 32px -18px rgba(0,0,0,.5)}
+  .term-bar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;padding:8px 8px 8px 10px;background:var(--term-bar);border-bottom:1px solid var(--term-line)}
+  .tabs{display:inline-flex;padding:2px;border-radius:9px;background:rgba(255,255,255,.07)}
+  .tabs button{white-space:nowrap;min-height:30px;padding:0 12px;border:0;border-radius:7px;background:transparent;color:var(--term-dim);font-size:13px}
+  .tabs button:hover{background:rgba(255,255,255,.06);color:var(--term-text)}
+  .tabs button.on{background:rgba(255,255,255,.16);color:#fff}
+  .term-code{display:flex;gap:10px;margin:0;padding:16px 18px 18px;font:13.5px/1.65 var(--mono)}
+  .term-code .prompt{flex:none;color:var(--term-dim);user-select:none}
+  .term-code code{flex:1;min-width:0;padding:0;background:none;color:inherit;font:inherit;white-space:pre-wrap;word-break:break-all}
+  .step-hint{margin-top:10px}
+  .ok-note{display:flex;gap:10px;align-items:flex-start;margin-top:12px;padding:10px 12px;border-radius:12px;background:color-mix(in srgb,var(--green) 9%,transparent);font-size:13px;color:var(--label)}
+  .ok-note::before{content:"";flex:none;width:8px;height:8px;margin-top:6px;border-radius:50%;background:var(--green-dot)}
+  .ok-note code{white-space:nowrap;background:color-mix(in srgb,var(--green) 12%,transparent)}
+  .tip{margin:0 0 6px;padding:12px 14px;border-radius:12px;background:var(--fill);font-size:14px}
+  .tip b{display:block;font-size:13px;margin-bottom:2px}
+  .examples li{display:grid;grid-template-columns:150px minmax(0,1fr);gap:4px 16px;padding:10px 0;font-size:14px}
+  .examples li+li{border-top:1px solid var(--sep)}
+  .examples li:first-child{padding-top:2px}.examples li:last-child{padding-bottom:0}
+  .examples b{font-weight:600}.examples span{color:var(--label-2)}
+  @media (max-width:600px){.examples li{grid-template-columns:1fr}}
+
+  /* teammates */
+  .members{display:flex;flex-direction:column}
+  .m{display:grid;grid-template-columns:36px minmax(0,1fr);column-gap:12px;padding:10px 0;align-items:start}
+  .m+.m{border-top:1px solid var(--sep)}
+  .m:first-child{padding-top:0}
+  .avatar{position:relative;display:grid;place-items:center;width:36px;height:36px;border-radius:50%;background:var(--fill-2);color:var(--label);font:600 14px/1 var(--font);text-transform:uppercase;letter-spacing:0}
+  .avatar i{position:absolute;right:-1px;bottom:-1px;width:11px;height:11px;border-radius:50%;background:var(--label-3);border:2px solid var(--surface)}
+  .m.on .avatar i{background:var(--green-dot)}
+  .m.off .avatar,.m.off .m-name{opacity:.6}
+  .m-top{display:flex;align-items:center;gap:8px;min-height:36px;flex-wrap:wrap}
+  .m-name{font-size:15px;font-weight:600;min-width:0;overflow-wrap:anywhere}
+  .you{font:500 11px/1.6 var(--font);padding:0 7px;border-radius:999px;background:color-mix(in srgb,var(--accent) 12%,transparent);color:var(--accent-text)}
+  .m-state{margin-left:auto;font-size:12px;color:var(--label-3);white-space:nowrap}
+  .m.on .m-state{color:var(--green)}
+  .m-tools{grid-column:2;margin-top:-4px;font-size:13px}
+  .m-tools details>summary{font-size:13px;min-height:26px}
+  .offers{display:flex;flex-wrap:wrap;gap:5px}
+  .offer{display:inline-block;max-width:100%;padding:2px 9px;border-radius:999px;font:12px/1.5 var(--mono);color:var(--label-2);background:var(--fill);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .offer.always{color:var(--green);background:color-mix(in srgb,var(--green) 12%,transparent)}
   .offer.ask{color:var(--amber);background:color-mix(in srgb,var(--amber) 12%,transparent)}
   .offer.never{color:var(--red);background:color-mix(in srgb,var(--red) 12%,transparent)}
+  .legend{display:flex;flex-wrap:wrap;gap:4px 12px;margin-top:12px;font-size:12px;color:var(--label-2)}
+  .legend span{display:inline-flex;align-items:center;gap:5px}.legend i{width:7px;height:7px;border-radius:50%}
+  .empty{padding:18px 16px;border-radius:12px;background:var(--fill);text-align:center}
+  .empty b{display:block;font-size:14px;margin-bottom:2px}
+  .empty span{display:block;font-size:13px;color:var(--label-2);text-wrap:pretty}
+  .popout{display:flex;align-items:center;justify-content:space-between;gap:10px 14px;flex-wrap:wrap;margin-top:16px;padding-top:16px;border-top:1px solid var(--sep)}
+  .popout div{flex:1 1 170px}.popout b{display:block;font-size:14px;font-weight:600}.popout p{font-size:13px;color:var(--label-2)}
+
   /* live feed: a terminal in both themes, so its colors are fixed */
-  .feed{background:var(--term);color:var(--term-text);border-radius:14px;padding:12px 16px;font:12.5px/1.6 var(--mono);max-height:420px;overflow:auto}
-  .feed>span.dim{color:var(--term-dim)}
-  .feed div{white-space:pre-wrap;border-bottom:1px solid rgba(255,255,255,.06);padding:4px 0}.feed div:last-child{border-bottom:0}
-  .feed .t{color:var(--term-dim)}.feed .u{color:#7cc4ff}.feed .req{color:#fbbf24}.feed .ok{color:#4ade80}.feed .no{color:#fb7185}.feed .out{color:var(--term-dim);padding-left:26px}
+  .feed{background:var(--term);color:var(--term-text);border:1px solid var(--term-edge);border-radius:var(--r-md);padding:8px 16px;font:12.5px/1.6 var(--mono);min-height:132px;max-height:440px;overflow:auto;overscroll-behavior:contain}
+  .feed-empty{display:grid;place-items:center;min-height:114px;text-align:center;color:var(--term-dim);font:13px/1.5 var(--font);text-wrap:balance}
+  .ev{display:grid;grid-template-columns:64px 88px minmax(0,1fr);column-gap:12px;padding:6px 0;border-top:1px solid var(--term-line)}
+  .ev:first-child{border-top:0}
+  .ev .b{min-width:0;white-space:pre-wrap;overflow-wrap:anywhere}
+  .ev.out{border-top:0;padding-top:0}.ev.out .b{grid-column:3}
+  .feed .t{color:var(--term-dim)}.feed .u{color:#7cc4ff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .feed .req{color:#fbbf24}.feed .ok{color:#4ade80}.feed .no{color:#fb7185}.feed .out{color:var(--term-dim)}.feed .k{color:var(--term-dim)}
+  .feed .why{display:block;color:var(--term-dim)}
   .feed .chip{border-color:rgba(255,255,255,.16);background:rgba(255,255,255,.08);color:#7cc4ff}.feed .chip .sz{color:var(--term-dim)}
-  .dim{color:var(--label-2)}.small{font-size:13px}
-  ul.small{padding-left:20px}ul.small li{margin:8px 0}
-  ol.steps{padding-left:22px;margin:4px 0}ol.steps li{margin:14px 0;color:var(--label-2)}ol.steps li>b{display:block;margin-bottom:2px;color:var(--label);font-weight:600}
-  .pill:empty{display:none}
-  .pill{display:inline-block;padding:2px 10px;border-radius:999px;background:var(--fill);border:1px solid var(--sep);color:var(--label-2);font:500 12px/1.6 var(--mono)}
-  .tabs{display:inline-flex;gap:0;padding:2px;border-radius:9px;background:var(--fill-2);margin:0 0 4px}
-  .tabs button.ghost{min-height:28px;border:0;border-radius:7px;background:transparent;color:var(--label);padding:0 12px}
-  .tabs button.ghost.on{background:var(--surface);box-shadow:0 1px 3px rgba(0,0,0,.12),0 0 0 .5px rgba(0,0,0,.04)}
-  details{margin:12px 0 0}summary{cursor:pointer;color:var(--accent-text);font-size:13px}details[open] summary{margin-bottom:6px}
-  .chip{display:inline-block;margin:2px 4px 0 0;padding:1px 9px;border-radius:999px;border:1px solid var(--sep-2);background:var(--fill);color:var(--link);font:12px/1.5 var(--font);text-decoration:none;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle}
-  .chip:hover{border-color:var(--link)}.chip .sz{color:var(--label-2)}.chips{display:block;margin-top:2px}
+  @media (max-width:560px){.ev{grid-template-columns:auto minmax(0,1fr)}.ev .b,.ev.out .b{grid-column:1/-1}}
+  .chip{display:inline-block;margin:4px 4px 0 0;padding:1px 9px;border-radius:999px;border:1px solid var(--sep-2);background:var(--fill);color:var(--link);font:12px/1.5 var(--font);text-decoration:none;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle}
+  .chip:hover{border-color:var(--link);text-decoration:none}.chip .sz{color:var(--label-2)}.chips{display:block}
+
+  /* single-message states: ended, needs a link */
+  .notice{max-width:520px;margin:72px auto 0;padding:32px;text-align:center}
+  .notice .glyph{display:grid;place-items:center;width:48px;height:48px;margin:0 auto 16px;border-radius:50%;background:var(--fill-2);color:var(--label-2)}
+  .notice .glyph svg{width:22px;height:22px}
+  .notice h1{font-size:26px;letter-spacing:-.025em}
+  .notice p{margin-top:8px;color:var(--label-2);text-wrap:pretty}
+  .notice .field{margin-top:20px;text-align:left}
+  .notice .actions{margin-top:22px}
+  .notice .err{margin-top:10px}
+  .notice .hint{margin-top:10px;font-size:13px;color:var(--label-2)}
+  @media (max-width:520px){.notice{margin-top:32px;padding:24px 18px}.notice .field{flex-direction:column}.notice .field input{flex-basis:auto}}
 </style></head><body>
 <header class="nav"><div class="nav-inner">
   <a class="brand" href="/" aria-label="mesh home"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="3.5" cy="4" r="2"/><circle cx="12.5" cy="4" r="2"/><circle cx="8" cy="12.5" r="2"/><path d="M5.5 4h5M4.6 5.8l2.3 5M11.4 5.8l-2.3 5"/></svg></span>mesh</a>
-  ${opts.room ? '<span class="badge">' + opts.room + '</span>' : '<span class="badge">preview</span>'}
+  ${opts.room ? '<span class="badge">' + opts.room + '</span>' : ''}
+  <span class="status" id="status" role="status" hidden><span class="dot" id="status-dot"></span><span id="status-text"></span></span>
 </div></header>
-<main>
-${opts.room
-  ? '<section class="hero compact"><p class="eyebrow">Room</p><h1>Get your agent in the room.</h1><p class="tag">Four quick steps. Then your agent can borrow teammates’ tools, with their OK.</p></section>'
-  : '<section class="hero"><p class="eyebrow">Think Google Meet, for Claude Code, Codex and Cursor</p><h1>A meeting room<br>for your coding agents.</h1><p class="tag">Everyone’s agents join one room and borrow each other’s tools, with a click to approve. Credentials never move.</p></section>'}
-<div id="app"></div>
+<main id="app"><noscript><section class="notice card"><h1>mesh needs JavaScript</h1><p>Turn on JavaScript to start or join a room.</p></section></noscript></main>
 <script>
 const ROOM = ${room};
 const REPO = ${JSON.stringify(opts.repoUrl)};
 const RELAY = (location.protocol === "https:" ? "wss://" : "ws://") + location.host;
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
-function copyBtn(txt){ return '<button class="ghost copy" onclick="navigator.clipboard.writeText(' + JSON.stringify(txt).replace(/"/g,"&quot;") + ');this.textContent=\\'Copied\\';setTimeout(()=>this.textContent=\\'Copy\\',1200)">Copy</button>'; }
-function pre(txt){ return '<pre>' + copyBtn(txt) + esc(txt) + '</pre>'; }
+const ICON = {
+  check: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7"/></svg>',
+  stop: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="9"/><rect x="9" y="9" width="6" height="6" rx="1" fill="currentColor" stroke="none"/></svg>',
+  link: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M10 14a4.5 4.5 0 006.4 0l3-3a4.5 4.5 0 00-6.4-6.4l-1 1"/><path d="M14 10a4.5 4.5 0 00-6.4 0l-3 3a4.5 4.5 0 006.4 6.4l1-1"/></svg>',
+};
+// Copy buttons carry their text in data-copy; one delegated handler copies (clipboard API, execCommand fallback on plain http).
+function copyBtn(txt, label, cls){ label = label || "Copy"; return '<button type="button" class="' + (cls || "ghost") + ' copy" data-copy="' + esc(txt) + '" data-label="' + esc(label) + '">' + esc(label) + '</button>'; }
+function pre(txt){ return '<div class="snippet"><code>' + esc(txt) + '</code>' + copyBtn(txt) + '</div>'; }
+document.addEventListener("click", (e) => {
+  const b = e.target && e.target.closest ? e.target.closest("[data-copy]") : null;
+  if (!b) return;
+  const txt = b.getAttribute("data-copy") || "", label = b.getAttribute("data-label") || "Copy";
+  const done = (ok) => { b.textContent = ok ? "Copied" : "Copy failed"; clearTimeout(b._t); b._t = setTimeout(() => { b.textContent = label; }, 1400); };
+  const fallback = () => {
+    const ta = document.createElement("textarea"); ta.value = txt; ta.setAttribute("readonly", ""); ta.style.position = "fixed"; ta.style.opacity = "0";
+    document.body.appendChild(ta); ta.select(); let ok = false; try { ok = document.execCommand("copy"); } catch (err) {} ta.remove(); done(ok);
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(() => done(true), fallback); else fallback();
+});
+function setStatus(state, text){
+  const s = $("#status"); if (!s) return;
+  s.hidden = false; $("#status-text").textContent = text;
+  $("#status-dot").className = "dot" + (state === "live" ? " live" : state === "warn" ? " warn" : "");
+}
+function notice(icon, title, body, extra){
+  return '<section class="notice card"><div class="glyph">' + icon + '</div><h1>' + title + '</h1>' + body + (extra || "") + '</section>';
+}
 
 // ---- room key (docs/ROOM-KEYS.md): it lives in the URL fragment, never in a request line ----
 const KEY_RE = /^[a-z2-7]{16}$/;
@@ -572,32 +716,46 @@ if (ROOM && /(^|[#&;])o=/.test(location.hash)) {
 const OWNER = ROOM ? (HASH_OWNER || lsGet("mesh.owner." + ROOM)) : "";
 
 if (!ROOM) {
+  // ---------- front door ----------
   $("#app").innerHTML = \`
-    <div class="card"><h2>start here</h2>
-      <p><b>mesh lets your AI coding assistant use tools your teammates have and you don't.</b> Their Figma, their database, their deploy access. It runs on their laptop, they click Approve, you get the result. Nobody shares a password or a key.</p>
-      <div class="row"><button id="start">Start a session</button><span class="dim small">creates a room and gives you a link to send to your teammates</span></div>
-    </div>
-    <div class="card"><h2>join a room</h2>
-      <p class="small">Someone sent you a link? Paste it here.</p>
-      <div class="row"><input id="jlink" placeholder="https://…/r/room#k=…" style="width:380px" autocomplete="off"><button class="ghost" id="jgo">Open</button></div>
-      <p class="small dim" id="jerr" style="min-height:18px"></p>
-      <details><summary>I only have the room name and key</summary>
-        <div class="row" style="margin-top:8px"><input id="jroom" placeholder="room" maxlength="42" autocomplete="off"><input id="jkey" placeholder="key" maxlength="32" autocomplete="off"><button class="ghost" id="jgo2">Open</button></div>
-      </details>
-    </div>
-    <div class="card"><h2>what happens, in plain words</h2>
-      <ol class="steps">
-        <li><b>You make a room and send the link.</b> Anyone with the link can join. The link is the only password, so only send it to your team.</li>
-        <li><b>Each person pastes one command</b> in their terminal (or double-clicks a downloaded file). That's the whole install. It takes about 20 seconds and needs only Node.js.</li>
-        <li><b>Each person restarts their coding assistant once</b> (Claude Code, Codex, or Cursor). It now knows about the team.</li>
-        <li><b>Work like normal.</b> When your assistant needs something a teammate has, it asks them. A small window pops up on their screen: Approve or Deny. If they approve, the result comes back to your assistant. Everyone can watch it happen on the room page.</li>
+    <section class="head center"><p class="eyebrow">For Claude Code, Codex and Cursor</p>
+      <h1>A meeting room<br>for your coding agents.</h1>
+      <p class="lede">Everyone’s assistant joins one room and borrows each other’s tools, with a click to approve. Passwords and keys never move.</p></section>
+    <section class="door card">
+      <div><h2>Start a session</h2>
+        <p class="muted">Creates a room and gives you a link to send your team.</p>
+        <button id="start" type="button">Start a session</button>
+        <p class="err" id="serr" role="alert"></p></div>
+      <div><h2>Join a room</h2>
+        <p class="muted">Someone sent you a link? Paste it here.</p>
+        <div class="field"><input id="jlink" aria-label="Room link" placeholder="https://…/r/room#k=…" autocomplete="off" spellcheck="false"><button class="ghost" id="jgo" type="button">Open</button></div>
+        <p class="err" id="jerr" role="alert"></p>
+        <details><summary>I only have the room name and key</summary>
+          <div class="field"><input id="jroom" aria-label="Room name" placeholder="room" maxlength="42" autocomplete="off" spellcheck="false"><input id="jkey" aria-label="Room key" placeholder="key" maxlength="32" autocomplete="off" spellcheck="false"><button class="ghost" id="jgo2" type="button">Open</button></div>
+        </details></div>
+    </section>
+    <section class="how" aria-labelledby="how-title"><h2 id="how-title">What happens</h2>
+      <ol>
+        <li><b>Start a room, send the link</b><span>The link is the only password, so send it only to your team.</span></li>
+        <li><b>Everyone runs one command</b><span>Paste it in a terminal. About 20 seconds, needs only Node.js.</span></li>
+        <li><b>Everyone restarts their assistant</b><span>Claude Code, Codex, or Cursor. Now it knows who’s in the room.</span></li>
+        <li><b>Ask for what you need</b><span>A teammate clicks Approve, it runs on their computer, and the result comes back to you.</span></li>
       </ol>
-      <p class="small dim">Nothing runs in the cloud. No accounts. Your keys never leave your computer.</p>
-    </div>\`;
+      <p class="foot">No accounts. Tools run on their owner’s computer, and keys never leave it.</p>
+    </section>\`;
   $("#start").onclick = async () => {
-    const r = await fetch("/api/rooms", { method: "POST" }).then((x) => x.json());
-    // The creator lands on the owner link (#k=<key>&o=<owner>); the room page stores the owner token and scrubs it.
-    location.href = "/r/" + r.room + (r.key ? "#k=" + r.key + (r.ownerToken ? "&o=" + r.ownerToken : "") : "");
+    const b = $("#start"), err = $("#serr");
+    b.disabled = true; b.textContent = "Starting…"; err.textContent = "";
+    try {
+      const res = await fetch("/api/rooms", { method: "POST" });
+      const r = await res.json().catch(() => ({}));
+      if (!res.ok || !r.room) throw new Error((r && r.error) || ("HTTP " + res.status));
+      // The creator lands on the owner link (#k=<key>&o=<owner>); the room page stores the owner token and scrubs it.
+      location.href = "/r/" + r.room + (r.key ? "#k=" + r.key + (r.ownerToken ? "&o=" + r.ownerToken : "") : "");
+    } catch (e) {
+      b.disabled = false; b.textContent = "Start a session";
+      err.textContent = "Couldn’t start a session: " + ((e && e.message) || "the relay did not answer") + ".";
+    }
   };
   const go = (raw) => {
     const p = parseRoomLink(raw);
@@ -608,19 +766,19 @@ if (!ROOM) {
   };
   $("#jgo").onclick = () => go($("#jlink").value);
   $("#jlink").onkeydown = (e) => { if (e.key === "Enter") go($("#jlink").value); };
-  $("#jgo2").onclick = () => {
+  const go2 = () => {
     const room = $("#jroom").value.trim().toLowerCase(), key = $("#jkey").value.trim().toLowerCase();
     go(room + (key ? "#k=" + key : ""));
   };
+  $("#jgo2").onclick = go2;
+  $("#jkey").onkeydown = (e) => { if (e.key === "Enter") go2(); };
 } else if (!KEY) {
   // No key in the fragment and none remembered: this page shows nothing about the room until it has the link.
-  $("#app").innerHTML = \`
-    <div class="card"><h2>Open room \${esc(ROOM)}</h2>
-      <p><b>You'll need the room link.</b> Paste the link your teammate sent you to continue.</p>
-      <p class="small dim">It looks like <code>\${esc(location.origin)}/r/\${esc(ROOM)}#k=…</code></p>
-      <div class="row"><input id="k" aria-label="Room link" placeholder="Paste the room link" style="width:380px" autocomplete="off"><button id="kgo">Open room</button></div>
-      <p class="small dim" id="kerr" style="min-height:18px">Ask whoever started the session to send it to you.</p>
-    </div>\`;
+  $("#app").innerHTML = notice(ICON.link, "Open room " + esc(ROOM),
+    '<p>You’ll need the room link. Paste the link your teammate sent you to continue.</p>',
+    '<div class="field"><input id="k" aria-label="Room link" placeholder="Paste the room link" autocomplete="off" spellcheck="false"><button id="kgo" type="button">Open room</button></div>' +
+    '<p class="err" id="kerr" role="alert"></p>' +
+    '<p class="hint">It looks like <code>' + esc(location.origin) + '/r/' + esc(ROOM) + '#k=…</code><br>Ask whoever started the session to send it to you.</p>');
   const use = () => {
     const p = parseRoomLink($("#k").value);
     if (!p || !p.key) { $("#kerr").textContent = "No key found in that. The link ends in #k=<key>."; return; }
@@ -634,39 +792,43 @@ if (!ROOM) {
   $("#k").onkeydown = (e) => { if (e.key === "Enter") use(); };
 } else {
   const LINK = location.origin + "/r/" + ROOM + "#k=" + KEY;
-  let me = localStorage.getItem("mesh.user") || "";
-  let shell = localStorage.getItem("mesh.shell") || (navigator.userAgent.includes("Windows") ? "ps" : "bash");
+  let me = lsGet("mesh.user");
+  let shell = lsGet("mesh.shell") || (navigator.userAgent.includes("Windows") ? "ps" : "bash");
   const asFlag = () => " --key " + KEY + (OWNER ? " --owner " + OWNER : "") + (me ? " --as " + me : "");
   let ended = false;
+  let meOnline = false;
   // Polling got 410 or this page ended the session: stop for good and say so.
   const showEnded = (msg) => {
     ended = true;
     lsDel("mesh.owner." + ROOM);
-    $("#app").innerHTML = '<div class="card"><h2>Room ' + esc(ROOM) + '</h2><p><b>This session has ended.</b></p>' +
-      '<p class="small dim">' + esc(msg || "The person who started it ended it for everyone. Everyone was disconnected and this link no longer works.") + '</p>' +
-      '<p><a class="btn" href="/" style="text-decoration:none;display:inline-block">Start a new session</a></p></div>';
+    setStatus("off", "Ended");
+    $("#app").innerHTML = notice(ICON.stop, "This session has ended",
+      '<p>' + esc(msg || "The person who started it ended it for everyone. Everyone was disconnected and this link no longer works.") + '</p>',
+      '<div class="actions"><a class="btn" href="/">Start a new session</a></div>');
   };
   let endArmed = false, endTimer = null;
+  const END_LABEL = "End session for everyone";
   const endSession = async (b) => {
-    const err = $("#enderr");
+    const err = $("#enderr"), warn = $("#endwarn");
     if (!endArmed) {
-      endArmed = true; b.textContent = "Click again to end it for everyone — all teammates are disconnected and this link stops working";
-      endTimer = setTimeout(() => { endArmed = false; b.textContent = "End session for everyone"; }, 6000);
+      endArmed = true; b.textContent = "Click again to end it for everyone"; b.classList.add("armed");
+      if (warn) warn.hidden = false;
+      endTimer = setTimeout(() => { endArmed = false; b.textContent = END_LABEL; b.classList.remove("armed"); if (warn) warn.hidden = true; }, 6000);
       return;
     }
     clearTimeout(endTimer); endArmed = false; b.disabled = true; b.textContent = "Ending…";
     try {
       const res = await fetch("/api/rooms/" + encodeURIComponent(ROOM) + "/end?key=" + encodeURIComponent(KEY), {
         method: "POST", headers: { "content-type": "application/json", "x-mesh-owner": OWNER },
-        body: JSON.stringify({ by: localStorage.getItem("mesh.user") || undefined }),
+        body: JSON.stringify({ by: lsGet("mesh.user") || undefined }),
       });
       const j = await res.json().catch(() => ({}));
       if (res.ok) { showEnded("You ended the session. Everyone was disconnected and this link no longer works."); return; }
-      b.disabled = false; b.textContent = "End session for everyone";
-      if (err) err.textContent = (j && j.error) || ("could not end the session (HTTP " + res.status + ")");
+      b.disabled = false; b.textContent = END_LABEL; b.classList.remove("armed"); if (warn) warn.hidden = true;
+      if (err) err.textContent = (j && j.error) || ("Could not end the session (HTTP " + res.status + ").");
     } catch (e) {
-      b.disabled = false; b.textContent = "End session for everyone";
-      if (err) err.textContent = "could not reach the relay";
+      b.disabled = false; b.textContent = END_LABEL; b.classList.remove("armed"); if (warn) warn.hidden = true;
+      if (err) err.textContent = "Could not reach the relay. Try again.";
     }
   };
   const joinCmd = (sh) => sh === "ps"
@@ -675,77 +837,166 @@ if (!ROOM) {
   const renderJoin = () => {
     const el = $("#join"); if (!el) return;
     const cmd = joinCmd(shell);
-    el.innerHTML = copyBtn(cmd) + esc(cmd);
-    document.querySelectorAll(".tabs button").forEach((b) => b.classList.toggle("on", b.dataset.sh === shell));
+    el.textContent = cmd;
+    const pr = $("#join-prompt"); if (pr) pr.textContent = shell === "ps" ? "PS>" : "$";
+    const cp = $("#join-copy"); if (cp) cp.innerHTML = copyBtn(cmd, "Copy command");
+    document.querySelectorAll(".tabs button").forEach((b) => { const on = b.dataset.sh === shell; b.classList.toggle("on", on); b.setAttribute("aria-pressed", on ? "true" : "false"); });
     const help = $("#platform-help");
-    if (help) help.innerHTML = shell === "ps"
-      ? 'Open PowerShell in your project folder, paste the command, and press Enter.'
-      : 'Open Terminal in your project folder, paste the command, and press Enter.';
+    if (help) help.textContent = shell === "ps"
+      ? "Open PowerShell in your project folder, paste the command, and press Enter."
+      : "Open Terminal in your project folder, paste the command, and press Enter.";
   };
+
+  // Steps: number → check as they complete. Steps 1–2 fold away once this browser's name shows up in the room.
+  const touched = new Set();
+  let autoFolded = false;
+  const setOpen = (n, open) => {
+    const t = $("#s" + n + "-toggle"), body = $("#s" + n + "-body");
+    if (!t || !body) return;
+    t.setAttribute("aria-expanded", open ? "true" : "false"); body.hidden = !open;
+  };
+  const updateSteps = () => {
+    const state = (n) => n === 1 ? (me ? "done" : "current")
+      : n === 2 ? (meOnline ? "done" : me ? "current" : "todo")
+      : n === 3 ? (meOnline ? "current" : "todo") : "todo";
+    for (const n of [1, 2, 3, 4]) { const s = $("#s" + n); if (s) s.dataset.state = state(n); }
+    const s1 = $("#s1-sum"); if (s1) s1.textContent = me ? "· " + me : "";
+    const s2 = $("#s2-sum"); if (s2) s2.textContent = meOnline ? "· Connected" : "";
+    const title = $("#room-title"), lede = $("#room-lede");
+    if (title) title.textContent = meOnline ? "You’re in the room." : "Bring your coding assistant into the room.";
+    if (lede) lede.textContent = meOnline
+      ? "Your assistant can now ask teammates for help. Requests and results show up under Room activity."
+      : "Four steps, about a minute. Then your assistant can borrow teammates’ tools, with their OK.";
+    if (meOnline && !autoFolded) {
+      autoFolded = true;
+      const inStep1 = document.activeElement && document.activeElement.id === "me";
+      if (!touched.has(1) && !inStep1) setOpen(1, false);
+      if (!touched.has(2)) setOpen(2, false);
+    }
+  };
+  const step = (n, title, body) =>
+    '<li class="step" id="s' + n + '" data-state="todo"><span class="step-num" aria-hidden="true"><span>' + n + '</span>' + ICON.check + '</span>' +
+    '<div><h2 class="step-title"><button type="button" class="step-toggle" id="s' + n + '-toggle" aria-expanded="true" aria-controls="s' + n + '-body">' +
+    title + '<span class="step-sum" id="s' + n + '-sum"></span><span class="chev" aria-hidden="true"></span></button></h2></div>' +
+    '<div class="step-body" id="s' + n + '-body">' + body + '</div></li>';
+
   const render = () => {
+    setStatus("warn", "Connecting…");
     $("#app").innerHTML = \`
-      <div class="card"><div class="room-head"><h2>Share this room</h2><span class="pill">\${esc(ROOM)}</span></div>
-        <pre id="link">\${copyBtn(LINK)}\${esc(LINK)}</pre>
-        <p class="room-note">Anyone with this link can join. Share it only with your team.</p>
-        \${OWNER ? '<div class="row" style="margin-top:6px"><button class="ghost danger" id="endbtn">End session for everyone</button><span class="dim small">You started this session, so only you can end it.</span></div><p class="small" id="enderr" style="color:var(--err);min-height:0;margin:6px 0 0"></p>' : ""}</div>
+      <section class="head"><p class="eyebrow">Room \${esc(ROOM)}</p>
+        <h1 id="room-title">Bring your coding assistant into the room.</h1>
+        <p class="lede" id="room-lede">Four steps, about a minute. Then your assistant can borrow teammates’ tools, with their OK.</p></section>
+      <div class="room">
+        <section class="card steps-card" aria-label="Setup"><ol class="steps">
+        \${step(1, "Choose your name", \`
+          <div class="field"><input id="me" aria-label="Your name" value="\${esc(me)}" placeholder="e.g. tarush" maxlength="32" autocomplete="off" spellcheck="false" autocapitalize="off"></div>
+          <p class="small muted field-help">Short, lowercase, no spaces. Teammates’ assistants use it to find you.</p>\`)}
+        \${step(2, "Install mesh", \`
+          <p class="muted">One command, about 20 seconds. Needs <a href="https://nodejs.org" target="_blank" rel="noopener">Node.js 20 or newer</a>.</p>
+          <div class="term">
+            <div class="term-bar"><div class="tabs" role="group" aria-label="Your computer"><button type="button" data-sh="bash">macOS / Linux</button><button type="button" data-sh="ps">Windows</button></div><span id="join-copy"></span></div>
+            <pre class="term-code"><span class="prompt" id="join-prompt" aria-hidden="true">$</span><code id="join"></code></pre>
+          </div>
+          <p class="small muted step-hint" id="platform-help"></p>
+          <p class="ok-note"><span>When you see <code>● mesh running in the background</code>, you’re in. Your name appears under Teammates, and you can close the terminal.</span></p>
+          <div class="more">
+            <details><summary>Use a downloadable file instead</summary>
+              <p class="small"><b>Windows:</b> download <a id="dl-cmd" href="#">mesh-join-\${esc(ROOM)}.cmd</a> and double-click it.</p>
+              <p class="small"><b>macOS:</b> download <a id="dl-command" href="#">mesh-join-\${esc(ROOM)}.command</a>, then right-click it and choose Open.</p></details>
+            <details><summary>What does this command do?</summary>
+              <p class="small muted">It downloads mesh to your home folder, starts it in the background, and connects this room to your coding assistant. Your existing MCP tools are shared with permission set to “ask,” so you approve every request before it runs. Check on it with <code>node ~/.mesh/mesh.mjs status</code>; leave with <code>node ~/.mesh/mesh.mjs stop</code>.</p></details>
+          </div>\`)}
+        \${step(3, "Restart your coding assistant", \`
+          <p class="muted">Open a new Claude Code, Codex, or Cursor session in the same project folder so it can find mesh.</p>
+          <div class="tip"><b>Check that it worked</b>Ask your assistant: <q>“List my mesh teammates.”</q> It should name the people under Teammates.</div>
+          <div class="more"><details><summary>Manual setup (if the check fails)</summary>
+            <p class="small">Claude Code, in a terminal in your project folder:</p>
+            \${pre("claude mcp add --transport http mesh http://localhost:7337/mcp")}
+            <p class="small">Codex CLI, in any terminal:</p>
+            \${pre("codex mcp add mesh --url http://localhost:7337/mcp")}
+            <p class="small">Cursor: create <code>.cursor/mcp.json</code> in your project with this content, then restart Cursor:</p>
+            \${pre('{ "mcpServers": { "mesh": { "url": "http://localhost:7337/mcp" } } }')}
+            <p class="small muted">Working on mesh itself? Run from the repo instead: <code>pnpm -F daemon start join \${esc(ROOM)} --key \${esc(KEY)}\${OWNER ? " --owner " + esc(OWNER) : ""} --as &lt;you&gt; --relay \${esc(RELAY)}</code> (see <a href="\${esc(REPO)}">the repo</a>).</p>
+          </details></div>\`)}
+        \${step(4, "Start collaborating", \`
+          <ul class="examples">
+            <li><b>Borrow a tool</b><span>Ask your assistant for what you need: <q>“Ask Tarush to export the Onboarding frame from Figma.”</q></span></li>
+            <li><b>Approve a request</b><span>When a teammate needs one of your tools, choose Approve or Deny in the overlay or the system dialog.</span></li>
+            <li><b>Send a message</b><span><q>“Tell Abhi I’m changing the login page.”</q> In Codex or Cursor, ask <q>“Check my mesh inbox”</q> to read replies.</span></li>
+          </ul>\`)}
+        </ol></section>
 
-      <div class="card step-card"><h2><span class="step-num">1</span>Choose your name</h2>
-        <div class="field-row"><label for="me">Your name</label><input id="me" value="\${esc(me)}" placeholder="e.g. tarush" maxlength="32" autocomplete="off"></div>
-        <p class="field-help">Use a short lowercase name with no spaces. Teammates' assistants will use it to find you.</p></div>
+        <aside class="side">
+          <section class="card pad invite" aria-labelledby="invite-title">
+            <div class="card-head"><h2 id="invite-title">Invite your team</h2></div>
+            <div class="linkbox" id="link">\${esc(LINK)}</div>
+            <div class="invite-actions">\${copyBtn(LINK, "Copy link", "primary")}</div>
+            <p class="small muted note">Anyone with this link can join. Share it only with your team.</p>
+            \${OWNER ? '<div class="owner"><button class="ghost danger" id="endbtn" type="button">' + END_LABEL + '</button><p class="small muted">You started this session, so only you can end it.</p><p class="small" id="endwarn" style="color:var(--err)" hidden>Everyone is disconnected and this link stops working.</p><p class="err" id="enderr" role="alert"></p></div>' : ""}
+          </section>
+          <section class="card pad people" aria-labelledby="people-title">
+            <div class="card-head"><h2 id="people-title">Teammates</h2><span id="watchers" class="pill"></span></div>
+            <ul id="members" class="members"></ul>
+            <p class="legend" id="legend" hidden><span><i style="background:var(--amber)"></i>Asks first</span><span><i style="background:var(--green)"></i>Runs without asking</span><span><i style="background:var(--red)"></i>Not allowed</span></p>
+            <div class="popout"><div><b>Approvals window</b><p>Keeps requests and messages on top of your other windows. Needs mesh running on this computer.</p></div>
+              <button class="ghost" id="popout" type="button" title="Open an always-on-top window for approvals and messages">Pop out overlay</button></div>
+          </section>
+        </aside>
 
-      <div class="card step-card"><h2><span class="step-num">2</span>Install mesh</h2>
-        <p class="step-lede">One command, about 20 seconds. Requires <a href="https://nodejs.org" target="_blank" rel="noopener">Node.js 20 or newer</a>.</p>
-        <div class="platform-row"><span class="tabs" aria-label="Choose your operating system"><button class="ghost" data-sh="bash">macOS / Linux</button><button class="ghost" data-sh="ps">Windows</button></span></div>
-        <p class="small platform-help" id="platform-help"></p>
-        <pre id="join"></pre>
-        <p class="success-note">When you see <code>● mesh running in the background</code>, your name will appear under Teammates below. You can close the terminal.</p>
-        <details><summary>Use a downloadable file instead</summary>
-          <p class="small"><b>Windows:</b> download <a id="dl-cmd" href="#">mesh-join-\${esc(ROOM)}.cmd</a> and double-click it. <b>macOS:</b> download <a id="dl-command" href="#">mesh-join-\${esc(ROOM)}.command</a>, then right-click and choose Open.</p></details>
-        <details><summary>What does this command do?</summary>
-          <p class="small dim">It downloads mesh to your home folder, starts it in the background, and connects this room to your coding assistant. Your existing MCP tools are shared with permission set to "ask," so you approve requests before they run. To check its status, run <code>node ~/.mesh/mesh.mjs status</code>. To leave, run <code>node ~/.mesh/mesh.mjs stop</code>.</p></details></div>
-
-      <div class="card step-card"><h2><span class="step-num">3</span>Restart your coding assistant</h2>
-        <p class="small">Open a new Claude Code, Codex, or Cursor session in the same project folder so it can discover mesh.</p>
-        <div class="check-note"><b>Check the connection</b><p>Ask your assistant, <i>"List my mesh teammates."</i> It should name the people shown below. If it cannot find mesh, open Manual setup.</p></div>
-        <details><summary>Manual setup (if the check fails)</summary>
-        <p class="small">Claude Code, in a terminal in your project folder:</p>
-        \${pre("claude mcp add --transport http mesh http://localhost:7337/mcp")}
-        <p class="small">Codex CLI, in any terminal:</p>
-        \${pre("codex mcp add mesh --url http://localhost:7337/mcp")}
-        <p class="small">Cursor: create a file called <code>.cursor/mcp.json</code> in your project with this content, then restart Cursor:</p>
-        \${pre('{ "mcpServers": { "mesh": { "url": "http://localhost:7337/mcp" } } }')}
-        <p class="small dim">Developers of mesh itself can run from the repo instead: <code>pnpm -F daemon start join \${esc(ROOM)} --key \${esc(KEY)}\${OWNER ? " --owner " + esc(OWNER) : ""} --as &lt;you&gt; --relay \${esc(RELAY)}</code> (see <a href="\${esc(REPO)}">the repo</a>).</p>
-        </details></div>
-
-      <div class="card step-card"><h2><span class="step-num">4</span>Start collaborating</h2>
-        <div class="use-grid">
-          <div class="use-item"><b>Borrow a tool</b><p>Ask your assistant for what you need. For example: <i>"Ask Tarush to export the Onboarding frame from Figma."</i></p></div>
-          <div class="use-item"><b>Approve a request</b><p>When a teammate needs your tools, review the request in the overlay or system dialog, then choose Approve or Deny.</p></div>
-          <div class="use-item"><b>Send a message</b><p>Try <i>"Tell Abhi I'm changing the login page."</i> In Codex or Cursor, ask <i>"Check my mesh inbox"</i> to read replies.</p></div>
-        </div></div>
-
-      <div class="card"><div class="section-head"><h2>Teammates <span id="watchers" class="pill" style="text-transform:none"></span></h2>
-        <button class="ghost" id="popout" title="Open an always-on-top window for approvals and messages">Pop out overlay</button></div>
-        <p class="section-note">Keep approvals and messages visible in a floating window. Mesh must be running on this machine.</p>
-        <div id="members" class="members"><span class="dim">No teammates are connected yet. Complete Step 2 to join.</span></div></div>
-      <div class="card"><div class="section-head"><h2>Room activity</h2></div>
-        <p class="section-note">Requests, decisions, messages, and results from this room appear here.</p>
-        <div id="feed" class="feed"><span class="dim">Waiting for room activity.</span></div></div>\`;
+        <section class="card pad activity" aria-labelledby="feed-title">
+          <div class="card-head"><h2 id="feed-title">Room activity</h2><span class="small muted">Requests, approvals, messages, and results</span></div>
+          <div id="feed" class="feed" role="log" aria-live="polite" aria-relevant="additions"><p class="feed-empty">Nothing yet. When an assistant in this room asks for something, it shows up here.</p></div>
+        </section>
+      </div>\`;
     const dl = () => { const q = "?room=" + encodeURIComponent(ROOM) + "&key=" + encodeURIComponent(KEY) + (OWNER ? "&owner=" + encodeURIComponent(OWNER) : "") + (me ?"&as=" + encodeURIComponent(me) : ""); const a = $("#dl-cmd"), b = $("#dl-command"); if (a) a.href = "/join.cmd" + q; if (b) b.href = "/join.command" + q; };
     dl();
-    $("#me").oninput = (e) => { me = e.target.value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, ""); localStorage.setItem("mesh.user", me); dl(); renderJoin(); };
-    document.querySelectorAll(".tabs button").forEach((b) => { b.onclick = () => { shell = b.dataset.sh; localStorage.setItem("mesh.shell", shell); renderJoin(); }; });
+    $("#me").oninput = (e) => { me = e.target.value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, ""); lsSet("mesh.user", me); dl(); renderJoin(); updateSteps(); renderMembers(true); };
+    document.querySelectorAll(".tabs button").forEach((b) => { b.onclick = () => { shell = b.dataset.sh; lsSet("mesh.shell", shell); renderJoin(); }; });
+    for (const n of [1, 2, 3, 4]) {
+      const t = $("#s" + n + "-toggle");
+      if (t) t.onclick = () => { touched.add(n); setOpen(n, t.getAttribute("aria-expanded") !== "true"); };
+    }
     renderJoin();
+    updateSteps();
     const po = $("#popout"); if (po) po.onclick = popOutOverlay;
     const eb = $("#endbtn"); if (eb) eb.onclick = () => endSession(eb);
   };
+
+  // Teammates: who is connected now, plus anyone seen earlier on this page who has since left.
+  const known = new Map(); // user → { offers, on, left }
+  let membersSig = "";
+  const PERM = { always: "Runs without asking", ask: "Asks first", never: "Not allowed" };
+  const offerPill = (o) => '<span class="offer ' + esc(o.permission || "") + '" title="' + esc(PERM[o.permission] || o.permission || "") + '">' + esc(o.name) + '</span>';
+  function renderMembers(force) {
+    const mem = $("#members"); if (!mem) return;
+    const list = Array.from(known.entries()).map(([user, v]) => ({ user, ...v }))
+      .sort((a, b) => (b.on - a.on) || ((b.user === me) - (a.user === me)) || a.user.localeCompare(b.user));
+    const sig = JSON.stringify([me, list]);
+    if (!force && sig === membersSig) return;
+    membersSig = sig;
+    const open = new Set(Array.from(mem.querySelectorAll("details[open]")).map((d) => d.dataset.user));
+    mem.innerHTML = list.length ? list.map((m) => {
+      const offers = m.offers || [];
+      const tools = offers.length
+        ? '<details data-user="' + esc(m.user) + '"' + (open.has(m.user) ? " open" : "") + '><summary>' + offers.length + (offers.length === 1 ? " tool" : " tools") + ' shared</summary><div class="offers">' + offers.map(offerPill).join("") + '</div></details>'
+        : '<span class="muted">No tools shared</span>';
+      return '<li class="m ' + (m.on ? "on" : "off") + '"><span class="avatar" aria-hidden="true">' + esc(m.user.slice(0, 1)) + '<i></i></span>' +
+        '<div class="m-top"><b class="m-name">' + esc(m.user) + '</b>' + (m.user === me ? '<span class="you">You</span>' : "") +
+        '<span class="m-state">' + (m.on ? "Online" : "Left " + esc(m.left || "")) + '</span></div>' +
+        '<div class="m-tools">' + tools + '</div></li>';
+    }).join("")
+      : '<li class="empty"><b>No teammates are connected yet.</b><span>Finish step 2 to join, then send the invite link to your team.</span></li>';
+    const lg = $("#legend"); if (lg) lg.hidden = !list.some((m) => (m.offers || []).length);
+  }
+
   render();
+  renderMembers(true);
 
   // "Pop out overlay": Document Picture-in-Picture (Chrome/Edge 116+, always-on-top) with a plain popup fallback.
   // Daemon port lives in localStorage mesh.port (default 7337); the overlay footer can change it.
   let pipWin = null;
   async function popOutOverlay() {
-    const port = Number(localStorage.getItem("mesh.port")) || 7337;
+    const port = Number(lsGet("mesh.port")) || 7337;
     // The overlay page is public HTML but every API call it makes carries the key — hand it over in the fragment.
     const q = "?room=" + encodeURIComponent(ROOM) + "&port=" + port + "#k=" + KEY;
     if (pipWin && !pipWin.closed) { try { pipWin.close(); } catch {} pipWin = null; }
@@ -770,7 +1021,7 @@ if (!ROOM) {
     pip.addEventListener("pagehide", () => { if (pipWin === pip) pipWin = null; });
   }
 
-  const seen = new Set(); let next = 0; const lines = [];
+  const seen = new Set(); let next = 0; let shown = 0;
   const fmtT = (ts) => { try { return new Date(ts).toTimeString().slice(0, 8); } catch { return ""; } };
   // artifact chips (docs/FILES-API.md): name · size → relay file URL (http(s) only; anything else is unlinked)
   const fmtSize = (n) => { n = Number(n) || 0; return n < 1024 ? n + " B" : n < 1048576 ? Math.round(n / 1024) + " KB" : (n / 1048576).toFixed(1).replace(/\\.0$/, "") + " MB"; };
@@ -781,20 +1032,21 @@ if (!ROOM) {
     return url ? '<a class="chip" href="' + esc(url) + '" target="_blank" rel="noopener" title="' + esc(a.mime || "") + '">' + label + '</a>' : '<span class="chip">' + label + '</span>';
   };
   const chips = (list) => Array.isArray(list) && list.length ? '<span class="chips">' + list.map(chip).join("") + '</span>' : "";
+  const KIND = { prompt: "prompt", tool_call: "tool", file_touched: "file", status: "status", note: "note" };
+  // One feed row: time · who · what. Returns the row's inner HTML, or null for frames the feed skips.
   const line = (f) => {
-    const t = '<span class="t">' + fmtT(f.ts) + '</span> ';
-    const u = '<span class="u">' + esc(f.from || "") + '</span> ';
-    if (f.type === "event" && f.kind === "message") return t + u + '<span class="ok">✉ → ' + esc((f.data && f.data.to) || "all") + '</span>: ' + esc((f.data && f.data.text) || f.summary);
+    const row = (body) => '<span class="t">' + fmtT(f.ts) + '</span><span class="u">' + esc(f.from || "") + '</span><span class="b">' + body + '</span>';
+    if (f.type === "event" && f.kind === "message") return row('<span class="ok">→ ' + esc((f.data && f.data.to) || "all") + '</span>  ' + esc((f.data && f.data.text) || f.summary));
     if (f.type === "event" && f.kind === "file") {
       const art = f.data && f.data.artifact;
       const note = (f.data && f.data.note) || f.summary || ("sent " + ((art && art.name) || "a file"));
-      return t + u + '<span class="ok">📎 → ' + esc((f.data && f.data.to) || "all") + '</span>: ' + esc(note) + chips(art ? [art] : []);
+      return row('<span class="ok">file → ' + esc((f.data && f.data.to) || "all") + '</span>  ' + esc(note) + chips(art ? [art] : []));
     }
-    if (f.type === "event") return t + u + ({prompt:"💬",tool_call:"🔧",file_touched:"📁",status:"⏸",note:"📝"}[f.kind] || "•") + ' ' + esc(f.kind) + ': ' + esc(f.summary);
-    if (f.type === "request") return t + u + '<span class="req">──▶ ' + esc(f.to) + '  ' + esc(f.command ? "$ " + f.command : f.tool + " " + JSON.stringify(f.args || {})) + '</span>  <span class="t">why: ' + esc(f.why) + '</span>';
-    if (f.type === "decision") return t + u + (f.decision === "denied" ? '<span class="no">❌ denied' + (f.reason ? " (" + esc(f.reason) + ")" : "") + '</span>' : f.decision === "auto" ? '<span class="ok">⚡ auto-approved</span>' : '<span class="ok">✅ approved</span>');
-    if (f.type === "output") return '<span class="out">' + esc(f.chunk).slice(0, 400) + '</span>';
-    if (f.type === "result") return t + u + (f.exitCode === 0 ? '<span class="ok">✔ exit 0' : '<span class="no">✘ exit ' + esc(f.exitCode)) + ' in ' + (f.durationMs / 1000).toFixed(1) + 's' + (f.timedOut ? " (timed out)" : "") + '</span>' + chips(f.artifacts);
+    if (f.type === "event") return row('<span class="k">' + esc(KIND[f.kind] || f.kind) + '</span>  ' + esc(f.summary));
+    if (f.type === "request") return row('<span class="req">asks ' + esc(f.to) + ':  ' + esc(f.command ? "$ " + f.command : f.tool + " " + JSON.stringify(f.args || {})) + '</span>' + (f.why ? '<span class="why">why: ' + esc(f.why) + '</span>' : ""));
+    if (f.type === "decision") return row(f.decision === "denied" ? '<span class="no">✕ denied' + (f.reason ? " (" + esc(f.reason) + ")" : "") + '</span>' : f.decision === "auto" ? '<span class="ok">✓ approved automatically</span>' : '<span class="ok">✓ approved</span>');
+    if (f.type === "output") return '<span class="b out">' + esc(String(f.chunk == null ? "" : f.chunk).slice(0, 400)) + '</span>';
+    if (f.type === "result") return row((f.exitCode === 0 ? '<span class="ok">✓ done, exit 0' : '<span class="no">✕ failed, exit ' + esc(f.exitCode)) + ' in ' + ((Number(f.durationMs) || 0) / 1000).toFixed(1) + 's' + (f.timedOut ? " (timed out)" : "") + '</span>' + chips(f.artifacts));
     return null;
   };
   async function poll() {
@@ -805,23 +1057,38 @@ if (!ROOM) {
       if (res.status === 410) { showEnded(); return; } // ended by its owner: stop polling for good
       if (res.status === 401) { // the key stopped working (relay restarted without ROOM_SECRET, or a stale one was remembered)
         lsSet("mesh.key." + ROOM, "");
-        $("#app").innerHTML = '<div class="card"><h2>Room ' + esc(ROOM) + '</h2><p><b>This room needs a new link.</b> The saved link no longer works. Ask your teammate to share the current room link.</p><p class="small"><a href="/r/' + esc(ROOM) + '">Reload and paste it</a></p></div>';
+        setStatus("off", "Link expired");
+        $("#app").innerHTML = notice(ICON.link, "This room needs a new link",
+          '<p>The saved link no longer works. Ask your teammate to share the current room link.</p>',
+          '<div class="actions"><a class="btn" href="/r/' + esc(ROOM) + '">Reload and paste it</a></div>');
         return;
       }
       const r = await res.json();
       next = r.next || 0;
-      const mem = $("#members");
-      if (mem) mem.innerHTML = r.members.length ? r.members.map((m) => '<div class="m"><b>' + esc(m.user) + '</b> <span class="on">● Online</span><div>' +
-        (m.offers.length ? m.offers.map((o) => '<span class="offer ' + esc(o.permission || "") + '" title="' + esc(o.permission || "") + '">' + esc(o.name) + '</span>').join("") : '<span class="dim small">No tools shared</span>') + '</div></div>').join("")
-        : '<span class="dim">No teammates are connected yet. Complete Step 2 to join.</span>';
+      setStatus("live", "Live");
+      const now = new Set((r.members || []).map((m) => m.user));
+      for (const m of r.members || []) known.set(m.user, { offers: m.offers || [], on: true, left: "" });
+      for (const [user, v] of known) if (v.on && !now.has(user)) known.set(user, { ...v, on: false, left: fmtT(Date.now()).slice(0, 5) });
+      const wasOnline = meOnline;
+      meOnline = !!me && now.has(me);
+      if (meOnline !== wasOnline) updateSteps();
+      renderMembers(false);
       const w = $("#watchers"); if (w) w.textContent = r.watchers ? r.watchers + " watching" : "";
-      for (const f of r.events || []) { if (seen.has(f.i)) continue; seen.add(f.i); const l = line(f); if (l) lines.push(l); }
       const feed = $("#feed");
-      if (feed && lines.length) { feed.innerHTML = lines.slice(-200).map((l) => "<div>" + l + "</div>").join(""); feed.scrollTop = feed.scrollHeight; }
-    } catch {}
+      const fresh = [];
+      for (const f of r.events || []) { if (seen.has(f.i)) continue; seen.add(f.i); const l = line(f); if (l) fresh.push(f.type === "output" ? '<div class="ev out">' + l + '</div>' : '<div class="ev">' + l + '</div>'); }
+      if (feed && fresh.length) {
+        const atBottom = !shown || feed.scrollHeight - feed.scrollTop - feed.clientHeight < 40;
+        if (!shown) feed.innerHTML = "";
+        feed.insertAdjacentHTML("beforeend", fresh.join(""));
+        shown += fresh.length;
+        while (shown > 200 && feed.firstElementChild) { feed.firstElementChild.remove(); shown--; }
+        if (atBottom) feed.scrollTop = feed.scrollHeight;
+      }
+    } catch { if (!ended) setStatus("warn", "Reconnecting…"); }
     if (!ended) setTimeout(poll, 2000);
   }
   poll();
 }
-</script></main></body></html>`;
+</script></body></html>`;
 }

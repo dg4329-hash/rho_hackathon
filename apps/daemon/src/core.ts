@@ -528,8 +528,7 @@ export function createCore(opts: CoreOptions): DaemonCore & { client: RelayClien
       const clean = (s: string) => path.basename(s).replace(/[\/\\\0]/g, "_") || "_";
       const root = path.resolve(cwd, "mesh-artifacts");
       const dest = path.resolve(root, clean(from), input.saveAs?.trim() ? input.saveAs.trim() : clean(name));
-      const cwdReal = path.resolve(cwd);
-      if (dest !== cwdReal && !dest.startsWith(cwdReal + path.sep)) throw new Error(`saveAs '${input.saveAs}' would write outside ${cwd}; artifacts stay under mesh-artifacts/`);
+      if (!dest.startsWith(root + path.sep)) throw new Error(`saveAs '${input.saveAs}' would write outside mesh-artifacts/; artifacts stay under ${root}`);
       const { size, mime: servedMime } = await downloadArtifact(url, dest);
       const mime = known?.artifact.mime ?? (servedMime !== "application/octet-stream" ? servedMime : mimeFor(dest));
       say(chalk.dim(`  📥 fetched ${path.relative(cwd, dest)} (${formatSize(size)}) from ${from}`));

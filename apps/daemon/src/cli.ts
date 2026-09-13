@@ -117,6 +117,7 @@ program
       }
       const args = process.argv.slice(1).filter((a) => a !== "--background");
       mkdirSync(meshHome(), { recursive: true });
+      const logSizeBefore = existsSync(logPath()) ? readFileSync(logPath(), "utf8").length : 0;
       const log = openSync(logPath(), "a");
       const child = spawn(process.execPath, [...process.execArgv, ...args], {
         cwd: userCwd(), env: { ...process.env, INIT_CWD: userCwd(), MESH_BACKGROUND: "1" }, detached: true, stdio: ["ignore", log, log], windowsHide: true,
@@ -124,14 +125,19 @@ program
       child.unref();
       writeState({ pid: child.pid ?? 0, port, room: config.room, relay: config.relay, user: config.user, cwd, startedAt: new Date().toISOString() });
       // wait briefly for /health so the user gets a definite answer
-      const ok = await waitHealth(port, 15_000);
+      const alive = () => { try { return child.pid ? process.kill(child.pid, 0) : false; } catch { return false; } };
+      const okHealth = await waitHealth(port, 15_000);
+      const h = okHealth ? await health(port) : undefined;
+      const ok = okHealth && alive() && h?.user === config.user && h?.room === config.room;
+      if (okHealth && !ok) console.log(chalk.red(`port ${port} is served by a different daemon (${String(h?.user)}@${String(h?.room)}) or ours exited; see ${logPath()}`));
       if (ok) {
         console.log(chalk.green(`● mesh running in the background`) + chalk.dim(`  ${config.user}@${config.room}  mcp=http://localhost:${port}/mcp  pid ${child.pid}`));
         console.log(chalk.dim(`  approvals pop up as system dialogs; log: ${logPath()}; \`mesh status\` / \`mesh stop\``));
-        const tail = readFileSync(logPath(), "utf8").split("\n").filter((l) => /registered|already registered|restart your agent/.test(l)).slice(-6);
+        const tail = readFileSync(logPath(), "utf8").slice(logSizeBefore).split("\n").filter((l) => /registered|already registered|restart your agent/.test(l)).slice(-8);
         for (const l of tail) console.log(l);
       } else {
-        console.log(chalk.red(`mesh did not come up within 15 s; see ${logPath()}`));
+        if (!okHealth) console.log(chalk.red(`mesh did not come up within 15 s; see ${logPath()}`));
+        try { unlinkSync(statePath()); } catch { /* ignore */ }
         process.exitCode = 1;
       }
       return;
@@ -318,7 +324,7 @@ program
             if (printed.has("msg:" + m.id)) continue;
             printed.add("msg:" + m.id);
             if (m.artifact) {
-              console.log(`mesh: ${m.from} sent you a file${m.to === "all" ? " (to everyone)" : ""}: ${m.artifact.name} (${m.artifact.mime}, ${m.artifact.size} bytes)${m.text && m.text !== `sent ${m.artifact.name}` ? `, note: ${JSON.stringify(m.text)}` : ""}. Tell the user; to look at it call the mesh fetch_artifact tool with url ${JSON.stringify(m.artifact.url)} (it lands in ./mesh-artifacts/ and images come back inline).`);
+              console.log(`mesh: ${m.from} sent you a file${m.to === "all" ? " (to everyone)" : ""}: ${m.artifact.name} (${m.artifact.mime}, ${m.artifact.size} bytes)${m.text && !m.text.startsWith(`sent ${m.artifact.name}`) ? `, note: ${JSON.stringify(m.text)}` : ""}. Tell the user; to look at it call the mesh fetch_artifact tool with url ${JSON.stringify(m.artifact.url)} (it lands in ./mesh-artifacts/ and images come back inline).`);
               continue;
             }
             console.log(`mesh: message from ${m.from}${m.to === "all" ? " (to everyone)" : ""}: ${JSON.stringify(m.text)}. Tell the user, and if a reply is needed use the mesh send_message tool (to: ${JSON.stringify(m.from)}).`);

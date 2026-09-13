@@ -217,8 +217,8 @@ else
   fi
   node "$MESH_HOME/mesh.mjs" stop >/dev/null 2>&1 || true   # re-running the installer updates + restarts
   echo "mesh: joining room '$ROOM' via $RELAY in the background (approvals pop up as system dialogs)"
-  node "$MESH_HOME/mesh.mjs" join "$ROOM" --relay "$RELAY" --background "$@"
-  rc=$?
+  rc=0
+  node "$MESH_HOME/mesh.mjs" join "$ROOM" --relay "$RELAY" --background "$@" || rc=$?
   if [ $rc -eq 0 ]; then
     echo "mesh: done. Restart your coding agent session once so it picks up the mesh tools.  (status/stop: node ~/.mesh/mesh.mjs status)"
   else

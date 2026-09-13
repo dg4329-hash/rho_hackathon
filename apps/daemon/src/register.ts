@@ -98,8 +98,8 @@ export async function registerClaudePlugin(relayWsUrl: string, cwd: string): Pro
   } catch (e) {
     return { tool: "Claude Code plugin", status: "failed", note: (e as Error).message };
   }
-  spawnSync("claude", ["plugin", "marketplace", "add", market], { cwd, encoding: "utf8" }); // idempotent-ish; errors if already added → fine
-  const inst = spawnSync("claude", ["plugin", "install", "mesh@mesh", "--scope", "project"], { cwd, encoding: "utf8" });
+  spawnSync("claude", ["plugin", "marketplace", "add", market], { cwd, encoding: "utf8", timeout: 20_000 }); // idempotent-ish; errors if already added → fine
+  const inst = spawnSync("claude", ["plugin", "install", "mesh@mesh", "--scope", "project"], { cwd, encoding: "utf8", timeout: 30_000 });
   if (inst.status !== 0) {
     const msg = (inst.stderr || inst.stdout || "").trim().split("\n").slice(-1)[0] ?? "";
     if (/already installed/i.test(msg)) return { tool: "Claude Code plugin", status: "already" };

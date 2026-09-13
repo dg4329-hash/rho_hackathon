@@ -134,13 +134,13 @@ export const AskTeammateInput = z
     command: z.string().min(1).optional(),
     tool: z.string().min(1).optional(),
     args: z.record(z.unknown()).optional(),
-    waitSeconds: z.number().int().min(1).max(120).default(45),
+    waitSeconds: z.number().int().min(1).max(55).default(45), // MCP clients time out at 60 s; use check_job for longer
   })
   .refine((r) => (r.command ? 1 : 0) + (r.tool ? 1 : 0) === 1, { message: "exactly one of command or tool" });
 export const DescribeCapabilityInput = z.object({ who: z.string(), name: z.string() });
 export const OfferSummary = z.object({ name: z.string(), kind: OfferKind, permission: Permission, summary: z.string() });
 export const DescribeCapabilityOutput = Offer.extend({ usage: z.string() });
-export const CheckJobInput = z.object({ jobId: z.string(), waitSeconds: z.number().int().min(0).max(120).default(0) });
+export const CheckJobInput = z.object({ jobId: z.string(), waitSeconds: z.number().int().min(0).max(55).default(0) });
 export const PostEventInput = z.object({ kind: EventKind, summary: z.string(), data: z.record(z.unknown()).optional() });
 export const SendMessageInput = z.object({
   to: z.string().min(1).describe("teammate handle, or 'all'"),

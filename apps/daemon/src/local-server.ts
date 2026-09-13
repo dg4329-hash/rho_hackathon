@@ -99,7 +99,7 @@ export function buildMcpServer(core: DaemonCore): McpServer {
     inputSchema: {
       who: z.string().describe("teammate handle, from list_teammates"),
       why: z.string().describe("one line the teammate reads before approving: what you need and why"),
-      waitSeconds: z.number().int().min(1).max(120).optional().describe("how long to wait for completion (default 45, max 120)"),
+      waitSeconds: z.number().int().min(1).max(55).optional().describe("how long to wait for completion (default 45, max 55; use check_job for longer jobs)"),
       command: z.string().min(1).optional().describe("shell command to run on their machine (shell form; exactly one of command/tool)"),
       tool: z.string().min(1).optional().describe("offer name '<server>.<tool>' (mcp form; exactly one of command/tool)"),
       args: z.record(z.unknown()).optional().describe("arguments for the tool, matching its inputSchema from describe_capability"),
@@ -126,7 +126,7 @@ export function buildMcpServer(core: DaemonCore): McpServer {
     description: TOOL_DESCRIPTIONS.check_job,
     inputSchema: {
       jobId: z.string().describe("jobId returned by ask_teammate"),
-      waitSeconds: z.number().int().min(0).max(120).optional().describe("block up to this long for completion (default 0)"),
+      waitSeconds: z.number().int().min(0).max(55).optional().describe("block up to this long for completion (default 0, max 55)"),
     },
   }, guard(async (raw) => {
     const { jobId, waitSeconds } = CheckJobInput.parse(raw);
@@ -170,10 +170,10 @@ export function buildMcpServer(core: DaemonCore): McpServer {
 
   server.registerTool("wait_for_events", {
     description: "Wait for the next teammate message or request to use this machine (long-poll, up to timeoutSeconds). Returns messages and pending requests as information; approvals are decided by the user in the mesh overlay or dialog, never by you. Loop on this when the user asks you to watch mesh.",
-    inputSchema: { timeoutSeconds: z.number().int().min(1).max(120).optional().describe("how long to wait (default 60)") },
+    inputSchema: { timeoutSeconds: z.number().int().min(1).max(55).optional().describe("how long to wait (default 50)") },
   }, guard(async (raw) => {
-    const t = Number((raw as { timeoutSeconds?: number }).timeoutSeconds ?? 60);
-    const r = await core.watchPoll(Math.min(120, Math.max(1, t)) * 1000);
+    const t = Number((raw as { timeoutSeconds?: number }).timeoutSeconds ?? 50);
+    const r = await core.watchPoll(Math.min(55, Math.max(1, t)) * 1000);
     const pendingInfo = r.pending.map((p) => ({ id: p.id, from: p.from, why: p.why, command: p.command, tool: p.tool, args: p.args, note: "waiting for the user to approve in the overlay/dialog" }));
     return ok({ messages: r.messages, pending: pendingInfo, ...(r.messages.length === 0 && pendingInfo.length === 0 ? { note: `nothing new in ${t}s; call again to keep watching` } : {}) });
   }));

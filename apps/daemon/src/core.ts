@@ -282,9 +282,11 @@ export function createCore(opts: CoreOptions): DaemonCore & { client: RelayClien
 
   const REQUEST_MAX_AGE_MS = 30_000;
   const seenRequests = new Set<string>();
+  let leaving = false;
   function onRequest(req: RequestFrame): void {
     if (req.to !== me) return;
     if (req.from === me) return;
+    if (leaving) { sendDecision(req.id, "denied", `${me} left the room`); return; }
     // Replay guard: the relay replays up to 200 frames on (re)join. Never re-run a request that's
     // stale, already decided in the replayed history, or one we've handled in this process.
     if (seenRequests.has(req.id)) return;
@@ -459,6 +461,10 @@ export function createCore(opts: CoreOptions): DaemonCore & { client: RelayClien
     },
 
     leave(reason?: string, delayMs = 300) {
+      if (leaving) return;
+      leaving = true;
+      // Nothing parked may outlive the leave: tell each waiting requester no, before the socket closes.
+      for (const p of pending.list()) pending.decide(p.id, "denied", `${me} left the room`);
       say(chalk.yellow(`leaving room ${config.room}${reason ? ` (${reason})` : ""}`));
       client.send({ type: "event", kind: "status", summary: `left the room${reason ? `: ${reason}` : ""}` });
       setTimeout(() => opts.onLeave?.(reason), delayMs);

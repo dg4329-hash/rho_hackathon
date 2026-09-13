@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/** `mesh` CLI: join / ask / init / watch / status / stop / log (CONTRACT §6). */
+/** `mesh` CLI: join / ask / init / watch / status / stop / leave / log (CONTRACT §6). */
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Command } from "commander";
@@ -243,6 +243,8 @@ program
       stopping = true;
       console.log(chalk.dim("\nstopping…"));
       restoreTerminal();
+      // Never linger: an imported MCP server or a stuck connection must not keep a stopped daemon alive.
+      setTimeout(() => process.exit(0), STOP_GRACE_MS).unref();
       client.close();
       wake?.stop();
       gitWatch?.stop();
@@ -251,8 +253,7 @@ program
     };
     leaveRef.current = () => {
       // intentional leave: forget the saved join so the plugin's SessionStart hook and `mesh status` don't bring it back
-      try { unlinkSync(configPath()); } catch { /* ignore */ }
-      try { unlinkSync(statePath()); } catch { /* ignore */ }
+      forgetJoin();
       void stop();
     };
     process.on("SIGINT", stop);
@@ -384,6 +385,12 @@ const meshHome = () => path.join(homedir(), ".mesh");
 const statePath = () => path.join(meshHome(), "daemon.json");
 const logPath = () => path.join(meshHome(), "daemon.log");
 const configPath = () => path.join(meshHome(), "config.json");
+/** How long stop() waits for servers / imported MCP servers to close before exiting anyway. */
+const STOP_GRACE_MS = 2000;
+/** Intentional leave / stop: remove the saved join and the background state so nothing brings the daemon back. */
+function forgetJoin(): void {
+  for (const p of [configPath(), statePath()]) { try { unlinkSync(p); } catch { /* not there */ } }
+}
 function writeJoinConfig(cfg: JoinConfig): void { mkdirSync(meshHome(), { recursive: true }); writeFileSync(configPath(), JSON.stringify(cfg, null, 2) + "\n"); }
 function writeState(st: DaemonState): void { mkdirSync(meshHome(), { recursive: true }); writeFileSync(statePath(), JSON.stringify(st, null, 2)); }
 function loadState(): DaemonState | undefined { try { return JSON.parse(readFileSync(statePath(), "utf8")) as DaemonState; } catch { return undefined; } }
@@ -439,12 +446,36 @@ program
 
 program
   .command("stop")
-  .description("stop the background daemon")
+  .description("stop the background daemon and forget the saved join (nothing restarts it until you join again)")
   .action(async () => {
     const st = loadState();
-    if (!st) { console.log(chalk.dim("nothing to stop")); return; }
+    const hadJoin = existsSync(configPath());
+    forgetJoin(); // `stop` means off: the plugin's SessionStart hook must not bring it back
+    if (!st) { console.log(chalk.dim(hadJoin ? "no background daemon; forgot the saved join" : "nothing to stop")); return; }
     try { process.kill(st.pid, "SIGTERM"); console.log(chalk.green(`stopped mesh (pid ${st.pid})`)); } catch { console.log(chalk.dim(`process ${st.pid} was not running`)); }
-    try { unlinkSync(statePath()); } catch { /* ignore */ }
+  });
+
+program
+  .command("leave")
+  .description("leave the room: the running daemon disconnects and exits, and the saved join is forgotten")
+  .option("--port <n>", "local daemon port (default: the running daemon's, else 7337)")
+  .action(async (flags: { port?: string }) => {
+    const st = loadState();
+    const saved = loadJoinConfig();
+    const port = Number(flags.port) || st?.port || saved?.port || DEFAULT_PORT;
+    forgetJoin();
+    let left: string | undefined;
+    try {
+      const r = await fetch(`http://127.0.0.1:${port}/leave`, {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ reason: "mesh leave" }), signal: AbortSignal.timeout(3000),
+      });
+      if (r.ok) left = String(((await r.json()) as { left?: unknown }).left ?? "the room");
+    } catch { /* no daemon on that port */ }
+    if (!left && st?.pid) { try { process.kill(st.pid, "SIGTERM"); left = st.room; } catch { /* already gone */ } }
+    if (!left) { console.log(chalk.dim(`mesh is not running on :${port}; forgot the saved join`)); return; }
+    const until = Date.now() + 5000;
+    while (Date.now() < until && (await health(port))) await new Promise((r) => setTimeout(r, 200));
+    console.log(chalk.green(`left ${left}`) + chalk.dim("  (mesh join <room-link> to come back)"));
   });
 
 program

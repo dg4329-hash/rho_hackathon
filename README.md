@@ -78,8 +78,9 @@ pnpm -r typecheck                                        # all 4 packages
 
 # 1. relay — one laptop, everyone else points at its URL
 ./scripts/tunnel-relay.sh                                # bundles the daemon, relay on :8090 + ngrok, prints the install one-liner
-PORT=8090 pnpm -F relay start                            # or local-only: ws://localhost:8090 (warns if the bundle is missing)
-pnpm -F daemon bundle                                    # apps/daemon/dist/mesh.mjs (esbuild); the relay serves it at /mesh.mjs
+PORT=8090 pnpm -F relay start                            # local-only: ws://localhost:8090; builds the current daemon bundle before serving it
+# Windows PowerShell: $env:PORT='8090'; corepack pnpm -F relay start
+pnpm -F daemon bundle                                    # optional standalone rebuild of apps/daemon/dist/mesh.mjs
 
 # 2. daemon — every laptop. Room name or room link; team.json optional
 pnpm -F daemon start join https://<host>/r/<room>        # zero-config: handle from git, imports your MCPs, registers agents + hooks

@@ -386,8 +386,13 @@ try {
 & node (Join-Path $MeshHome "mesh.mjs") stop 2>$null | Out-Null   # re-running the installer updates + restarts
 Write-Host "mesh: joining room '$Room' via $Relay in the background (approvals pop up as dialogs)"
 & node (Join-Path $MeshHome "mesh.mjs") join $Room --relay $Relay --background @Rest
-Write-Host "mesh: done. Restart your coding agent session once so it picks up the mesh tools.  (status: node $env:USERPROFILE\.mesh\mesh.mjs status)"
-exit $LASTEXITCODE
+$joinExit = $LASTEXITCODE
+if ($joinExit -ne 0) {
+  Write-Host "mesh: join failed (exit $joinExit). Check the error above, then re-run the installer." -ForegroundColor Red
+  exit $joinExit
+}
+Write-Host ('mesh: done. Restart your coding agent session once so it picks up the mesh tools.  (status: node "' + (Join-Path $MeshHome 'mesh.mjs') + '" status)')
+exit 0
 `;
 }
 
@@ -440,6 +445,28 @@ function page(opts: { repoUrl: string; room?: string }): string {
   .card h2{font-size:19px;font-weight:600;margin:0 0 12px;color:var(--label);letter-spacing:-.02em}
   .card h2::first-letter{text-transform:uppercase}
   .card p{margin:10px 0}
+  .room-head,.section-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .room-head h2,.section-head h2{margin:0}
+  .section-head{justify-content:space-between}
+  .room-note,.section-note{color:var(--label-2);font-size:13px}
+  .room-note{margin-bottom:0!important}
+  .step-card h2{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+  .step-num{display:inline-grid;place-items:center;flex:0 0 auto;width:28px;height:28px;border-radius:50%;background:var(--label);color:var(--bg);font:600 13px/1 var(--font);letter-spacing:0}
+  .step-lede{color:var(--label-2);font-size:14px;margin-top:-4px!important}
+  .field-row{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  .field-row label{font-weight:600}.field-row input{width:260px}
+  .field-help{margin:8px 0 0!important;color:var(--label-2);font-size:13px}
+  .platform-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  .platform-help{margin:12px 0 8px!important}
+  .success-note{margin:12px 0 0!important;font-size:13px}
+  .success-note code{white-space:nowrap}
+  .check-note{margin:14px 0;padding:12px 14px;border:1px solid var(--sep);border-radius:12px;background:var(--surface-2);font-size:14px}
+  .check-note p{margin:3px 0 0}
+  .use-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+  .use-item{padding:14px;border:1px solid var(--sep);border-radius:14px;background:var(--surface-2)}
+  .use-item b{display:block;margin-bottom:5px;font-size:14px}
+  .use-item p{margin:0;color:var(--label-2);font-size:13px}
+  @media(max-width:680px){.use-grid{grid-template-columns:1fr}.section-head{align-items:flex-start}.field-row input{width:min(100%,320px)}}
   button,.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:44px;background:var(--accent);color:#fff;border:0;border-radius:999px;padding:0 22px;font:500 15px/1 var(--font);letter-spacing:-.01em;cursor:pointer;transition:background-color .15s,transform .15s}
   button:hover,.btn:hover{background:color-mix(in srgb,var(--accent) 88%,#000);text-decoration:none}
   button:active{transform:scale(.98)}@media (prefers-reduced-motion:reduce){button:active{transform:none}}
@@ -455,6 +482,7 @@ function page(opts: { repoUrl: string; room?: string }): string {
   pre .copy:hover{background:rgba(255,255,255,.18)}
   .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
   .members{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+  #members>.dim{grid-column:1/-1}
   .m{background:var(--surface-2);border:1px solid var(--sep);border-radius:14px;padding:14px 16px}.m b{font-size:16px;font-weight:600}
   .m .on{color:var(--green);font-size:13px}.m .off{color:var(--label-3)}
   .offer{display:inline-block;margin:6px 6px 0 0;padding:2px 9px;border-radius:999px;font:12px/1.5 var(--mono);color:var(--label-2);background:var(--fill)}
@@ -494,7 +522,7 @@ const REPO = ${JSON.stringify(opts.repoUrl)};
 const RELAY = (location.protocol === "https:" ? "wss://" : "ws://") + location.host;
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
-function copyBtn(txt){ return '<button class="ghost copy" onclick="navigator.clipboard.writeText(' + JSON.stringify(txt).replace(/"/g,"&quot;") + ');this.textContent=\\'copied\\';setTimeout(()=>this.textContent=\\'copy\\',1200)">copy</button>'; }
+function copyBtn(txt){ return '<button class="ghost copy" onclick="navigator.clipboard.writeText(' + JSON.stringify(txt).replace(/"/g,"&quot;") + ');this.textContent=\\'Copied\\';setTimeout(()=>this.textContent=\\'Copy\\',1200)">Copy</button>'; }
 function pre(txt){ return '<pre>' + copyBtn(txt) + esc(txt) + '</pre>'; }
 
 // ---- room key (docs/ROOM-KEYS.md): it lives in the URL fragment, never in a request line ----
@@ -587,10 +615,10 @@ if (!ROOM) {
 } else if (!KEY) {
   // No key in the fragment and none remembered: this page shows nothing about the room until it has the link.
   $("#app").innerHTML = \`
-    <div class="card"><h2>room \${esc(ROOM)}</h2>
-      <p><b>This room needs its link.</b> The link is the only password, so the page can't show you the room without it.</p>
-      <p class="small">Paste the room link you were sent — it looks like <code>\${esc(location.origin)}/r/\${esc(ROOM)}#k=…</code></p>
-      <div class="row"><input id="k" placeholder="paste the room link" style="width:380px" autocomplete="off"><button id="kgo">Open room</button></div>
+    <div class="card"><h2>Open room \${esc(ROOM)}</h2>
+      <p><b>You'll need the room link.</b> Paste the link your teammate sent you to continue.</p>
+      <p class="small dim">It looks like <code>\${esc(location.origin)}/r/\${esc(ROOM)}#k=…</code></p>
+      <div class="row"><input id="k" aria-label="Room link" placeholder="Paste the room link" style="width:380px" autocomplete="off"><button id="kgo">Open room</button></div>
       <p class="small dim" id="kerr" style="min-height:18px">Ask whoever started the session to send it to you.</p>
     </div>\`;
   const use = () => {
@@ -607,14 +635,14 @@ if (!ROOM) {
 } else {
   const LINK = location.origin + "/r/" + ROOM + "#k=" + KEY;
   let me = localStorage.getItem("mesh.user") || "";
-  let shell = localStorage.getItem("mesh.shell") || "bash";
+  let shell = localStorage.getItem("mesh.shell") || (navigator.userAgent.includes("Windows") ? "ps" : "bash");
   const asFlag = () => " --key " + KEY + (OWNER ? " --owner " + OWNER : "") + (me ? " --as " + me : "");
   let ended = false;
   // Polling got 410 or this page ended the session: stop for good and say so.
   const showEnded = (msg) => {
     ended = true;
     lsDel("mesh.owner." + ROOM);
-    $("#app").innerHTML = '<div class="card"><h2>room ' + esc(ROOM) + '</h2><p><b>This session has ended</b></p>' +
+    $("#app").innerHTML = '<div class="card"><h2>Room ' + esc(ROOM) + '</h2><p><b>This session has ended.</b></p>' +
       '<p class="small dim">' + esc(msg || "The person who started it ended it for everyone. Everyone was disconnected and this link no longer works.") + '</p>' +
       '<p><a class="btn" href="/" style="text-decoration:none;display:inline-block">Start a new session</a></p></div>';
   };
@@ -649,33 +677,37 @@ if (!ROOM) {
     const cmd = joinCmd(shell);
     el.innerHTML = copyBtn(cmd) + esc(cmd);
     document.querySelectorAll(".tabs button").forEach((b) => b.classList.toggle("on", b.dataset.sh === shell));
+    const help = $("#platform-help");
+    if (help) help.innerHTML = shell === "ps"
+      ? 'Open PowerShell in your project folder, paste the command, and press Enter.'
+      : 'Open Terminal in your project folder, paste the command, and press Enter.';
   };
   const render = () => {
     $("#app").innerHTML = \`
-      <div class="card"><div class="row"><h2 style="margin:0">room</h2><span class="pill">\${esc(ROOM)}</span>
-        <span class="dim small">this link is the only password</span></div>
+      <div class="card"><div class="room-head"><h2>Share this room</h2><span class="pill">\${esc(ROOM)}</span></div>
         <pre id="link">\${copyBtn(LINK)}\${esc(LINK)}</pre>
-        <p class="small dim">⚠ anyone with this link can join; don't post it publicly.</p>
+        <p class="room-note">Anyone with this link can join. Share it only with your team.</p>
         \${OWNER ? '<div class="row" style="margin-top:6px"><button class="ghost danger" id="endbtn">End session for everyone</button><span class="dim small">You started this session, so only you can end it.</span></div><p class="small" id="enderr" style="color:var(--err);min-height:0;margin:6px 0 0"></p>' : ""}</div>
 
-      <div class="card"><h2>step 1 · pick a name</h2>
-        <div class="row"><label>your name <input id="me" value="\${esc(me)}" placeholder="e.g. tarush" maxlength="32" autocomplete="off"></label>
-        <span class="dim small">lowercase, no spaces. This is how teammates' assistants will refer to you.</span></div></div>
+      <div class="card step-card"><h2><span class="step-num">1</span>Choose your name</h2>
+        <div class="field-row"><label for="me">Your name</label><input id="me" value="\${esc(me)}" placeholder="e.g. tarush" maxlength="32" autocomplete="off"></div>
+        <p class="field-help">Use a short lowercase name with no spaces. Teammates' assistants will use it to find you.</p></div>
 
-      <div class="card"><h2>step 2 · install (one command, ~20 seconds)</h2>
-        <div class="row"><span class="tabs"><button class="ghost" data-sh="bash">Mac / Linux</button><button class="ghost" data-sh="ps">Windows</button></span>
-        <span class="dim small">Needs <a href="https://nodejs.org" target="_blank" rel="noopener">Node.js</a> (version 20 or newer). If you've used any AI coding tool, you almost certainly have it.</span></div>
-        <p class="small"><b>Mac / Linux:</b> open Terminal, go to your project folder (<code>cd path/to/your/project</code>), paste this, press Enter.<br><b>Windows:</b> open Windows Terminal or PowerShell (not Git Bash), go to your project folder, paste this, press Enter.</p>
+      <div class="card step-card"><h2><span class="step-num">2</span>Install mesh</h2>
+        <p class="step-lede">One command, about 20 seconds. Requires <a href="https://nodejs.org" target="_blank" rel="noopener">Node.js 20 or newer</a>.</p>
+        <div class="platform-row"><span class="tabs" aria-label="Choose your operating system"><button class="ghost" data-sh="bash">macOS / Linux</button><button class="ghost" data-sh="ps">Windows</button></span></div>
+        <p class="small platform-help" id="platform-help"></p>
         <pre id="join"></pre>
-        <p class="small"><b>You'll know it worked</b> when it prints <code>● mesh running in the background</code> and your name appears under "who's here" below. You can close the terminal afterwards.</p>
-        <p class="small dim">Prefer a file? <b>Windows:</b> download <a id="dl-cmd" href="#">mesh-join-\${esc(ROOM)}.cmd</a> and double-click it (click "Run anyway" if Windows warns). <b>Mac:</b> download <a id="dl-command" href="#">mesh-join-\${esc(ROOM)}.command</a>, right-click it → Open.</p>
-        <details><summary>what did that just do?</summary>
-        <p class="small dim">It downloaded one small program into a <code>.mesh</code> folder in your home directory and started it in the background. That program joined this room, looked at which MCP servers your coding assistant already has, and offered them to the room with permission "ask" (so nothing runs without your OK). It also told your coding assistant about mesh. To turn it off: <code>node ~/.mesh/mesh.mjs stop</code>. To check: <code>node ~/.mesh/mesh.mjs status</code>.</p></details></div>
+        <p class="success-note">When you see <code>● mesh running in the background</code>, your name will appear under Teammates below. You can close the terminal.</p>
+        <details><summary>Use a downloadable file instead</summary>
+          <p class="small"><b>Windows:</b> download <a id="dl-cmd" href="#">mesh-join-\${esc(ROOM)}.cmd</a> and double-click it. <b>macOS:</b> download <a id="dl-command" href="#">mesh-join-\${esc(ROOM)}.command</a>, then right-click and choose Open.</p></details>
+        <details><summary>What does this command do?</summary>
+          <p class="small dim">It downloads mesh to your home folder, starts it in the background, and connects this room to your coding assistant. Your existing MCP tools are shared with permission set to "ask," so you approve requests before they run. To check its status, run <code>node ~/.mesh/mesh.mjs status</code>. To leave, run <code>node ~/.mesh/mesh.mjs stop</code>.</p></details></div>
 
-      <div class="card"><h2>step 3 · restart your coding assistant once</h2>
-        <p class="small">Close your current Claude Code / Codex / Cursor session and open a new one in the same project folder. Coding assistants only look for new tools when they start.</p>
-        <p class="small"><b>Check it worked:</b> ask your assistant <i>"list my mesh teammates"</i>. It should answer with the people under "who's here". If it says it has no such tool, open the manual setup below.</p>
-        <details><summary>manual setup (only if the check above failed)</summary>
+      <div class="card step-card"><h2><span class="step-num">3</span>Restart your coding assistant</h2>
+        <p class="small">Open a new Claude Code, Codex, or Cursor session in the same project folder so it can discover mesh.</p>
+        <div class="check-note"><b>Check the connection</b><p>Ask your assistant, <i>"List my mesh teammates."</i> It should name the people shown below. If it cannot find mesh, open Manual setup.</p></div>
+        <details><summary>Manual setup (if the check fails)</summary>
         <p class="small">Claude Code, in a terminal in your project folder:</p>
         \${pre("claude mcp add --transport http mesh http://localhost:7337/mcp")}
         <p class="small">Codex CLI, in any terminal:</p>
@@ -685,19 +717,20 @@ if (!ROOM) {
         <p class="small dim">Developers of mesh itself can run from the repo instead: <code>pnpm -F daemon start join \${esc(ROOM)} --key \${esc(KEY)}\${OWNER ? " --owner " + esc(OWNER) : ""} --as &lt;you&gt; --relay \${esc(RELAY)}</code> (see <a href="\${esc(REPO)}">the repo</a>).</p>
         </details></div>
 
-      <div class="card"><h2>step 4 · use it</h2>
-        <ul class="small">
-          <li><b>To borrow something:</b> just ask your assistant to do the task. If it needs a teammate's tool, it will ask them by itself. You can also be explicit: <i>"ask tarush to export the Onboarding frame from Figma"</i>.</li>
-          <li><b>When someone asks you:</b> a small window pops up on your screen saying who wants what and why. Click Approve or Deny. If you don't answer within 90 seconds, it's denied.</li>
-          <li><b>Messages:</b> your assistant can send a note to a teammate's assistant (<i>"tell abhi I'm changing the login page"</i>). You get a notification when one arrives. On Codex or Cursor, ask your assistant <i>"check my mesh inbox"</i> to read it; Claude Code shows it automatically.</li>
-          <li><b>Watch it happen:</b> everything shows up in the "live" panel below.</li>
-        </ul></div>
+      <div class="card step-card"><h2><span class="step-num">4</span>Start collaborating</h2>
+        <div class="use-grid">
+          <div class="use-item"><b>Borrow a tool</b><p>Ask your assistant for what you need. For example: <i>"Ask Tarush to export the Onboarding frame from Figma."</i></p></div>
+          <div class="use-item"><b>Approve a request</b><p>When a teammate needs your tools, review the request in the overlay or system dialog, then choose Approve or Deny.</p></div>
+          <div class="use-item"><b>Send a message</b><p>Try <i>"Tell Abhi I'm changing the login page."</i> In Codex or Cursor, ask <i>"Check my mesh inbox"</i> to read replies.</p></div>
+        </div></div>
 
-      <div class="card"><div class="row" style="margin-bottom:10px"><h2 style="margin:0">who's here <span id="watchers" class="pill" style="text-transform:none"></span></h2>
-        <button class="ghost" id="popout" title="small always-on-top window: approve requests + read/reply to messages without switching tabs">Pop out overlay</button>
-        <span class="dim small">approvals + messages in a floating window (needs mesh running on this machine)</span></div>
-        <div id="members" class="members"><span class="dim">nobody yet — do step 2 and your name will appear here</span></div></div>
-      <div class="card"><h2>live</h2><div id="feed" class="feed"><span class="dim">requests, approvals and output will appear here</span></div></div>\`;
+      <div class="card"><div class="section-head"><h2>Teammates <span id="watchers" class="pill" style="text-transform:none"></span></h2>
+        <button class="ghost" id="popout" title="Open an always-on-top window for approvals and messages">Pop out overlay</button></div>
+        <p class="section-note">Keep approvals and messages visible in a floating window. Mesh must be running on this machine.</p>
+        <div id="members" class="members"><span class="dim">No teammates are connected yet. Complete Step 2 to join.</span></div></div>
+      <div class="card"><div class="section-head"><h2>Room activity</h2></div>
+        <p class="section-note">Requests, decisions, messages, and results from this room appear here.</p>
+        <div id="feed" class="feed"><span class="dim">Waiting for room activity.</span></div></div>\`;
     const dl = () => { const q = "?room=" + encodeURIComponent(ROOM) + "&key=" + encodeURIComponent(KEY) + (OWNER ? "&owner=" + encodeURIComponent(OWNER) : "") + (me ?"&as=" + encodeURIComponent(me) : ""); const a = $("#dl-cmd"), b = $("#dl-command"); if (a) a.href = "/join.cmd" + q; if (b) b.href = "/join.command" + q; };
     dl();
     $("#me").oninput = (e) => { me = e.target.value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, ""); localStorage.setItem("mesh.user", me); dl(); renderJoin(); };
@@ -772,15 +805,15 @@ if (!ROOM) {
       if (res.status === 410) { showEnded(); return; } // ended by its owner: stop polling for good
       if (res.status === 401) { // the key stopped working (relay restarted without ROOM_SECRET, or a stale one was remembered)
         lsSet("mesh.key." + ROOM, "");
-        $("#app").innerHTML = '<div class="card"><h2>room ' + esc(ROOM) + '</h2><p><b>This room needs its link.</b> The key this page had is no longer valid — ask for the room link again.</p><p class="small"><a href="/r/' + esc(ROOM) + '">reload and paste it</a></p></div>';
+        $("#app").innerHTML = '<div class="card"><h2>Room ' + esc(ROOM) + '</h2><p><b>This room needs a new link.</b> The saved link no longer works. Ask your teammate to share the current room link.</p><p class="small"><a href="/r/' + esc(ROOM) + '">Reload and paste it</a></p></div>';
         return;
       }
       const r = await res.json();
       next = r.next || 0;
       const mem = $("#members");
-      if (mem) mem.innerHTML = r.members.length ? r.members.map((m) => '<div class="m"><b>' + esc(m.user) + '</b> <span class="on">● online</span><div>' +
-        (m.offers.length ? m.offers.map((o) => '<span class="offer ' + esc(o.permission || "") + '" title="' + esc(o.permission || "") + '">' + esc(o.name) + '</span>').join("") : '<span class="dim small">no offers</span>') + '</div></div>').join("")
-        : '<span class="dim">nobody yet — do step 2 and your name will appear here</span>';
+      if (mem) mem.innerHTML = r.members.length ? r.members.map((m) => '<div class="m"><b>' + esc(m.user) + '</b> <span class="on">● Online</span><div>' +
+        (m.offers.length ? m.offers.map((o) => '<span class="offer ' + esc(o.permission || "") + '" title="' + esc(o.permission || "") + '">' + esc(o.name) + '</span>').join("") : '<span class="dim small">No tools shared</span>') + '</div></div>').join("")
+        : '<span class="dim">No teammates are connected yet. Complete Step 2 to join.</span>';
       const w = $("#watchers"); if (w) w.textContent = r.watchers ? r.watchers + " watching" : "";
       for (const f of r.events || []) { if (seen.has(f.i)) continue; seen.add(f.i); const l = line(f); if (l) lines.push(l); }
       const feed = $("#feed");

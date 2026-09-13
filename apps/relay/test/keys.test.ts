@@ -178,8 +178,8 @@ async function pages(): Promise<void> {
     const roomHtml = await (await fetch(`${http}/r/keys-test`)).text();
     check("room page reads the key from the fragment and remembers it", roomHtml.includes("keyFromHash(location.hash)") && roomHtml.includes('"mesh.key." + ROOM'), false);
     check("room page bakes --key into the one-liner", roomHtml.includes('" --key " + KEY'), false);
-    check("room page shows the share warning", roomHtml.includes("anyone with this link can join"), false);
-    check("room page has the paste-the-link box when there is no key", roomHtml.includes("paste the room link"), false);
+    check("room page shows the share warning", roomHtml.includes("Anyone with this link can join"), false);
+    check("room page has the paste-the-link box when there is no key", roomHtml.includes("Paste the room link"), false);
     check("landing has a join box", roomHtml.includes('id="jlink"'), false);
     check("pop-out passes the key to the overlay", roomHtml.includes('"#k=" + KEY') && roomHtml.includes("key: KEY"), false);
     const js = await (await fetch(`${http}/overlay.js`)).text();

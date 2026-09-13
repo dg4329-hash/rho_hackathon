@@ -130,8 +130,8 @@ Registration is automatic on `mesh join` (best-effort, one line each, never bloc
 | agent | how | when |
 |---|---|---|
 | Claude Code plugin | download `<relay>/plugin.tgz` → `~/.mesh/marketplace`, then `claude plugin marketplace add` + `claude plugin install mesh@mesh --scope project` in `cwd`. Brings the MCP server, the §4 hooks and the `mesh watch` monitor; the next two rows are then skipped (`the mesh plugin provides …`) | `claude` on PATH |
-| Claude Code | `claude mcp add --transport http mesh http://localhost:<port>/mcp` in `cwd` (project scope; replaces a stale `mesh` entry) | `claude` on PATH and no plugin |
-| Claude Code hooks | merged into `<cwd>/.claude/settings.json` (§4) | `claude` on PATH, an `emit.js` found, no plugin |
+| Claude Code | `claude mcp add --transport http mesh http://localhost:<port>/mcp` in `cwd` (project scope; replaces a stale `mesh` entry) | `claude` on PATH and no plugin for this project (with the plugin: removes a leftover localhost `mesh` entry so tools aren't listed twice) |
+| Claude Code hooks | merged into `<cwd>/.claude/settings.json` (§4) | `claude` on PATH, an `emit.js` found, no plugin for this project (with the plugin: strips leftover `emit.js` hooks so events aren't sent twice) |
 | Claude Code ask rule | `permissions.ask` for `approve_request` (both tool-name forms) in `<cwd>/.claude/settings.json` | `claude` on PATH |
 | Codex | `codex mcp add mesh --url http://localhost:<port>/mcp` (verified codex-cli 0.154); else `[mcp_servers.mesh] url = …` written to `~/.codex/config.toml` | `codex` on PATH or `~/.codex` exists, or `--codex` |
 | Cursor | `mesh` merged into `<cwd>/.cursor/mcp.json` `{ "mcpServers": { "mesh": { "url": … } } }` | `<cwd>/.cursor` or `~/.cursor` exists, or `--cursor` |
@@ -176,7 +176,7 @@ Tool description text (copy into the server verbatim):
 
 ## 4. Hooks (Claude Code only; shipped by the plugin, else installed by `mesh join` into `<cwd>/.claude/settings.json`)
 
-When the Claude Code plugin is installed it ships these same five hooks (`plugin/hooks/hooks.json`, same `emit.js`) plus a SessionStart hook, and `mesh join` skips the merge below. Otherwise `mesh join` copies `hooks/emit.js` to `~/.mesh/emit.js` (the installer downloads it from the relay's `/emit.js`) and merges five entries into the project's `.claude/settings.json`, replacing previous mesh entries and keeping everything else (`hooks/install.sh <repo>` does the same by hand; needs `jq`). Each hook is `node ~/.mesh/emit.js <kind>` (prefixed `MESH_DAEMON=http://localhost:<port>` when the port isn't 7337), timeout 5 s, reading the hook's stdin JSON and POSTing `{ kind, summary, data }` to `POST http://localhost:7337/event`. The daemon forwards it as an `event` frame. Hooks never fail the agent: errors are swallowed, exit 0, 1 s HTTP timeout.
+When the Claude Code plugin is installed it ships these same five hooks (`plugin/hooks/hooks.json`, same `emit.js`) plus a SessionStart hook, and `mesh join` skips the merge below and removes any `emit.js` hooks an earlier non-plugin join left in `<cwd>/.claude/settings.json` (both sets would fire, doubling every prompt/tool/status event). A project-scope plugin install only counts for its own project. Otherwise `mesh join` copies `hooks/emit.js` to `~/.mesh/emit.js` (the installer downloads it from the relay's `/emit.js`) and merges five entries into the project's `.claude/settings.json`, replacing previous mesh entries and keeping everything else (`hooks/install.sh <repo>` does the same by hand; needs `jq`). Each hook is `node ~/.mesh/emit.js <kind>` (prefixed `MESH_DAEMON=http://localhost:<port>` when the port isn't 7337), timeout 5 s, reading the hook's stdin JSON and POSTing `{ kind, summary, data }` to `POST http://localhost:7337/event`. The daemon forwards it as an `event` frame. Hooks never fail the agent: errors are swallowed, exit 0, 1 s HTTP timeout.
 
 | hook | kind | summary |
 |---|---|---|

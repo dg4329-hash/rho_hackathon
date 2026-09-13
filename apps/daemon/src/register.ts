@@ -76,12 +76,52 @@ function onPath(bin: string): boolean {
   return r.status === 0;
 }
 
-/** True when the `mesh` Claude Code plugin is installed (any marketplace): it ships the MCP server + hooks itself. */
-export function meshPluginInstalled(): boolean {
+/**
+ * True when the `mesh` Claude Code plugin is installed (any marketplace): it ships the MCP server + hooks itself.
+ * With `cwd`, a project/local-scope install only counts for that project (user scope counts everywhere).
+ */
+export function meshPluginInstalled(cwd?: string): boolean {
   const file = path.join(process.env.CLAUDE_CONFIG_DIR || path.join(homedir(), ".claude"), "plugins", "installed_plugins.json");
   const installed = readJson(file);
   const plugins = (installed?.plugins as Record<string, unknown> | undefined) ?? {};
-  return Object.keys(plugins).some((k) => k.startsWith("mesh@"));
+  return Object.entries(plugins).some(([k, v]) => {
+    if (!k.startsWith("mesh@")) return false;
+    if (!cwd || !Array.isArray(v)) return true; // v1 format or no project to match
+    return (v as Array<{ scope?: string; projectPath?: string }>).some((i) =>
+      i.scope === "user" || !i.projectPath || path.resolve(i.projectPath) === path.resolve(cwd));
+  });
+}
+
+/**
+ * Before the plugin, `mesh join` wrote emit.js hooks into <cwd>/.claude/settings.json. With the plugin installed they
+ * fire alongside the plugin's own hooks, so every prompt / tool call / stop reaches the team feed twice. Strip them.
+ */
+export function removeLegacyClaudeHooks(cwd: string): number {
+  const file = path.join(cwd, ".claude", "settings.json");
+  const cfg = readJson(file);
+  const hooks = cfg?.hooks as Record<string, Array<{ matcher?: string; hooks: Array<{ command?: string }> }>> | undefined;
+  if (!cfg || !hooks) return 0;
+  let removed = 0;
+  for (const ev of Object.keys(hooks)) {
+    const kept = (hooks[ev] ?? []).map((e) => {
+      const hs = (e.hooks ?? []).filter((h) => !/emit\.js/.test(h.command ?? ""));
+      removed += (e.hooks ?? []).length - hs.length;
+      return { ...e, hooks: hs };
+    }).filter((e) => e.hooks.length > 0);
+    if (kept.length) hooks[ev] = kept; else delete hooks[ev];
+  }
+  if (!removed) return 0;
+  if (Object.keys(hooks).length === 0) delete cfg.hooks;
+  writeJson(file, cfg);
+  return removed;
+}
+
+/** The pre-plugin `claude mcp add mesh` entry duplicates the plugin's MCP server (two sets of mesh tools). Remove it. */
+function removeLegacyClaudeMcp(cwd: string): boolean {
+  const get = spawnSync("claude", ["mcp", "get", "mesh"], { cwd, encoding: "utf8", timeout: 15_000 });
+  if (get.status !== 0 || !/localhost:\d+\/mcp/.test(get.stdout ?? "")) return false;
+  const scope = /Scope:\s*Project/i.test(get.stdout ?? "") ? "project" : /Scope:\s*User/i.test(get.stdout ?? "") ? "user" : "local";
+  return spawnSync("claude", ["mcp", "remove", "mesh", "-s", scope], { cwd, stdio: "ignore", timeout: 15_000 }).status === 0;
 }
 
 /** Canonical tool names Claude Code uses for approve_request: `claude mcp add mesh …` form and the plugin form. */
@@ -111,7 +151,7 @@ export function registerApproveAskRule(cwd: string): RegisterResult {
  */
 export async function registerClaudePlugin(relayWsUrl: string, cwd: string): Promise<RegisterResult> {
   if (!onPath("claude")) return { tool: "Claude Code plugin", status: "skipped", note: "claude CLI not on PATH" };
-  if (meshPluginInstalled()) return { tool: "Claude Code plugin", status: "already" };
+  if (meshPluginInstalled(cwd)) return { tool: "Claude Code plugin", status: "already" };
   const origin = relayWsUrl.replace(/^wss:/, "https:").replace(/^ws:/, "http:");
   const home = path.join(homedir(), ".mesh");
   const market = path.join(home, "marketplace");
@@ -140,7 +180,10 @@ export async function registerClaudePlugin(relayWsUrl: string, cwd: string): Pro
 export function registerClaudeCode(port: number, cwd: string): RegisterResult {
   const url = `http://localhost:${port}/mcp`;
   if (!onPath("claude")) return { tool: "Claude Code", status: "skipped", note: "claude CLI not on PATH" };
-  if (meshPluginInstalled()) return { tool: "Claude Code", status: "already", note: "the mesh plugin provides the MCP server" };
+  if (meshPluginInstalled(cwd)) {
+    const note = removeLegacyClaudeMcp(cwd) ? "the mesh plugin provides the MCP server (removed the old `claude mcp add mesh` entry)" : "the mesh plugin provides the MCP server";
+    return { tool: "Claude Code", status: "already", note };
+  }
   const list = spawnSync("claude", ["mcp", "get", "mesh"], { cwd, encoding: "utf8" });
   if (list.status === 0 && (list.stdout ?? "").includes(url)) return { tool: "Claude Code", status: "already" };
   if (list.status === 0) spawnSync("claude", ["mcp", "remove", "mesh"], { cwd, stdio: "ignore" });
@@ -204,7 +247,11 @@ export function findEmitScript(): string | undefined {
 /** Claude Code hooks → <cwd>/.claude/settings.json (merge; replaces previous mesh entries; keeps everything else). */
 export function installClaudeHooks(cwd: string, port: number): RegisterResult {
   if (!onPath("claude")) return { tool: "Claude Code hooks", status: "skipped", note: "claude CLI not on PATH" };
-  if (meshPluginInstalled()) return { tool: "Claude Code hooks", status: "already", note: "the mesh plugin provides the hooks" };
+  if (meshPluginInstalled(cwd)) {
+    let removed = 0;
+    try { removed = removeLegacyClaudeHooks(cwd); } catch { /* unreadable settings: leave them alone */ }
+    return { tool: "Claude Code hooks", status: "already", note: removed ? `the mesh plugin provides the hooks (removed ${removed} old emit.js hooks from .claude/settings.json)` : "the mesh plugin provides the hooks" };
+  }
   const emit = findEmitScript();
   if (!emit) return { tool: "Claude Code hooks", status: "skipped", note: "emit.js not found (expected ~/.mesh/emit.js)" };
   // keep a stable copy under ~/.mesh so the hook survives repo moves

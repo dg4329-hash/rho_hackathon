@@ -11,7 +11,7 @@ import { createCore } from "../src/core.js";
 import { createLocalServer } from "../src/local-server.js";
 import { createMcpImport } from "../src/mcp-import.js";
 import { PendingApprovals, selectApprovalPath, watchLine } from "../src/pending.js";
-import { APPROVE_REQUEST_TOOLS, registerApproveAskRule } from "../src/register.js";
+import { APPROVE_REQUEST_TOOLS, meshPluginInstalled, registerApproveAskRule, removeLegacyClaudeHooks } from "../src/register.js";
 import { RelayClient } from "../src/relay-client.js";
 import { resolvePermission } from "../src/permissions.js";
 import { startFakeRelay } from "./fake-relay.js";
@@ -158,12 +158,52 @@ function testAskRule(): void {
   }
 }
 
+function testLegacyCleanup(): void {
+  console.log("legacy Claude Code hooks + plugin scope");
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "mesh-legacy-"));
+  const prevConfigDir = process.env.CLAUDE_CONFIG_DIR;
+  try {
+    const settings = path.join(tmp, "proj", ".claude", "settings.json");
+    fs.mkdirSync(path.dirname(settings), { recursive: true });
+    const emit = (kind: string) => ({ type: "command", command: `node "/home/x/.mesh/emit.js" ${kind}`, timeout: 5 });
+    fs.writeFileSync(settings, JSON.stringify({
+      permissions: { ask: [...APPROVE_REQUEST_TOOLS] },
+      hooks: {
+        UserPromptSubmit: [{ hooks: [emit("prompt")] }],
+        PostToolUse: [{ matcher: "Edit|Write|MultiEdit", hooks: [emit("file_touched"), { type: "command", command: "prettier --write" }] }, { matcher: "mcp__.*", hooks: [emit("tool_call")] }],
+        Stop: [{ hooks: [emit("status")] }],
+      },
+      enabledPlugins: { "mesh@mesh": true },
+    }));
+    const n = removeLegacyClaudeHooks(path.join(tmp, "proj"));
+    const cfg = JSON.parse(fs.readFileSync(settings, "utf8"));
+    check("removes every emit.js hook", n === 4, n);
+    check("keeps non-mesh hooks, permissions, enabledPlugins", cfg.hooks?.PostToolUse?.length === 1 && cfg.hooks.PostToolUse[0].hooks[0].command === "prettier --write" && !cfg.hooks.UserPromptSubmit && !cfg.hooks.Stop && cfg.permissions.ask.length === 2 && cfg.enabledPlugins["mesh@mesh"] === true, cfg);
+    check("idempotent", removeLegacyClaudeHooks(path.join(tmp, "proj")) === 0);
+    check("no settings file → 0", removeLegacyClaudeHooks(path.join(tmp, "nope")) === 0);
+
+    process.env.CLAUDE_CONFIG_DIR = path.join(tmp, "claude");
+    fs.mkdirSync(path.join(tmp, "claude", "plugins"), { recursive: true });
+    const record = (entries: unknown[]) => fs.writeFileSync(path.join(tmp, "claude", "plugins", "installed_plugins.json"), JSON.stringify({ version: 2, plugins: { "mesh@mesh": entries } }));
+    record([{ scope: "project", projectPath: path.join(tmp, "proj") }]);
+    check("project install counts for its project", meshPluginInstalled(path.join(tmp, "proj")));
+    check("project install does not count for another project", !meshPluginInstalled(path.join(tmp, "other")));
+    check("no cwd → any install counts", meshPluginInstalled());
+    record([{ scope: "user" }]);
+    check("user install counts everywhere", meshPluginInstalled(path.join(tmp, "other")));
+  } finally {
+    if (prevConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = prevConfigDir;
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
 const timer = setTimeout(() => { console.log("FAIL: test timed out"); process.exit(1); }, 60_000);
 try {
   testSelectApprovalPath();
   await testQueue();
   await testEndToEnd();
   testAskRule();
+  testLegacyCleanup();
 } catch (e) {
   failures++;
   console.log("  FAIL uncaught:", e);

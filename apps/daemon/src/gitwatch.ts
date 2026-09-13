@@ -20,6 +20,7 @@ export function findGitRoot(cwd: string): string | undefined {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
       timeout: 5000,
+      windowsHide: true,
     });
     if (r.status !== 0) return undefined;
     const out = (r.stdout ?? "").trim();
@@ -159,6 +160,7 @@ export function startGitWatch(opts: GitWatchOptions): { stop(): void } {
       proc = spawn("git", ["status", "--porcelain", "--untracked-files=normal"], {
         cwd: opts.root,
         stdio: ["ignore", "pipe", "ignore"],
+        windowsHide: true,
       });
     } catch {
       return;

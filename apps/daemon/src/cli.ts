@@ -10,6 +10,7 @@ import { homedir } from "node:os";
 import { DEFAULT_PORT, type Offer, type PendingRequest, type ShellOfferConfig, type TeamConfig } from "@mesh/protocol";
 import { configFromFlags, loadConfig, userCwd } from "./config.js";
 import { createCore } from "./core.js";
+import { codexAvailable, CodexWake } from "./codex-wake.js";
 import { createLocalServer } from "./local-server.js";
 import { createMcpImport } from "./mcp-import.js";
 import { claudeHooksInstalled, findGitRoot, startGitWatch } from "./gitwatch.js";
@@ -101,7 +102,8 @@ program
   .option("--background", "run detached in the background (approvals via native OS dialogs); see `mesh status` / `mesh stop`")
   .option("--no-git-offers", "don't add the default read-only git offers (git.status/diff/log/branch)")
   .option("--no-git-watch", "don't emit file_touched events from git status (on by default inside a git repo)")
-  .action(async (roomArg: string, flags: CommonFlags & { port: string; register: boolean; cursor?: boolean; codex?: boolean; background?: boolean; gitWatch?: boolean; gitOffers?: boolean }) => {
+  .option("--no-codex-wake", "temporarily disable background Codex runs enabled in team.json")
+  .action(async (roomArg: string, flags: CommonFlags & { port: string; register: boolean; cursor?: boolean; codex?: boolean; background?: boolean; gitWatch?: boolean; gitOffers?: boolean; codexWake?: boolean }) => {
     const target = parseRoomArg(roomArg);
     const room = target.room;
     if (target.relay && !flags.relay) flags.relay = target.relay;
@@ -174,9 +176,15 @@ program
       ...(config.key ? { key: config.key } : {}),
     });
     const leaveRef: { current?: () => void } = {};
+    const wake = config.codexWake && flags.codexWake !== false && codexAvailable()
+      ? new CodexWake({ cwd, room: () => client.room, me: config.user, log: (line) => console.log(chalk.dim(line)) })
+      : undefined;
+    console.log(chalk.dim(`Codex wake: ${wake ? "on (fresh teammate messages start a background Codex run)" : config.codexWake ? "off (codex unavailable or --no-codex-wake)" : "off (set codexWake: true in team.json to enable)"}`));
     const core = createCore({
       onLeave: () => leaveRef.current?.(),
-      onSwitch: (room, relay, key) => { try { writeJoinConfig({ room, relay, user: config.user, port, cwd, updatedAt: new Date().toISOString(), ...(key ? { key } : {}) }); } catch { /* best effort */ } try { const st = loadState(); if (st) writeState({ ...st, room, relay, key }); } catch { /* ignore */ } }, config, cwd, client, mcpImport, shellOffers, mcpOffers: imported.offers });
+      onSwitch: (room, relay, key) => { try { writeJoinConfig({ room, relay, user: config.user, port, cwd, updatedAt: new Date().toISOString(), ...(key ? { key } : {}) }); } catch { /* best effort */ } try { const st = loadState(); if (st) writeState({ ...st, room, relay, key }); } catch { /* ignore */ } }, config, cwd, client, mcpImport, shellOffers, mcpOffers: imported.offers,
+      onIncomingMessage: (message) => { wake?.enqueue(message); },
+    });
     client.on("open", () => console.log(chalk.green(`● connected to ${config.relay} room=${config.room} as ${config.user}`) + (config.key ? chalk.dim(`  ${maskKey(config.key)}`) : "")));
     // The relay refused our room key: nothing this daemon can do without the room link, so stop (CONTRACT / ROOM-KEYS).
     client.on("keyError", () => {
@@ -236,6 +244,7 @@ program
       console.log(chalk.dim("\nstopping…"));
       restoreTerminal();
       client.close();
+      wake?.stop();
       gitWatch?.stop();
       await Promise.allSettled([server.stop(), mcpImport.stop()]);
       process.exit(0);

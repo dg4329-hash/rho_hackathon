@@ -54,7 +54,9 @@ Routing: everything is broadcast. Daemons ignore `request` frames whose `to` isn
 
 ## 2. `team.json` (optional; `./team.json` or `~/.mesh/team.json` or `--config`)
 
-**Zero-config rule.** `mesh join` works with no file. Defaults: `user` = first word of `git config user.name` (else OS username), lowercased; `relay` from the room link / `--relay` / `MESH_RELAY`; `cwd` = where the command ran; `import` = everything from Claude Code + Cursor configs at permission `ask`; no shell offers; `allowArbitrary: ask`. A `team.json`, if present, is honoured and flags win over it.
+**Zero-config rule.** `mesh join` works with no file. Defaults: `user` = first word of `git config user.name` (else OS username), lowercased; `relay` from the room link / `--relay` / `MESH_RELAY`; `cwd` = where the command ran; `import` = everything from Claude Code + Cursor configs at permission `ask`; no shell offers; `allowArbitrary: ask`; `codexWake: false`. A `team.json`, if present, is honoured and flags win over it.
+
+`codexWake: true` opts this owner into a separate background `codex exec` run for each fresh direct or broadcast teammate message/file. The run inherits Codex's saved login, MCP configuration (including `mesh`), project instructions, and rules. It uses a workspace-write sandbox with Codex auto-review, never authorizes a mesh `ask` approval on the owner’s behalf, and returns a final native alert. Messages are handled serially; IDs are recorded in `~/.mesh/codex-wake-seen.json` so relay replay/reconnect does not repeat work. Messages older than five minutes are not started. This is off by default because teammates can cause local work and model usage. `--no-codex-wake` disables it for that join.
 
 ```jsonc
 {
@@ -129,22 +131,24 @@ Registration is automatic on `mesh join` (best-effort, one line each, never bloc
 
 Every client caches its tool list: the agent session must be restarted once after registration (Claude Code: or `/reload-plugins`). Manual equivalent: `claude mcp add --transport http mesh http://localhost:7337/mcp`.
 
-Ten tools (names, inputs, outputs). Descriptions matter: they are the only thing that teaches the model when to use us.
+Twelve tools (names, inputs, outputs). Descriptions matter: they are the only thing that teaches the model when to use us.
 
 | tool | input | returns |
 |---|---|---|
 | `list_teammates` | `{}` | `{ me, members: [{ user, offers: [{ name, kind, permission, summary, fixed?, usage? }] }] }` — `summary` = first 120 chars of description. Fixed shell offers (§2) carry `fixed: true, usage: 'command: "<name>"'`. One line per tool; keep it cheap. |
 | `describe_capability` | `{ who: string, name: string }` | `{ name, kind, permission, description, inputSchema?, notes?, fixed?, usage: string }` — `usage` is a rendered example call the model can copy; for a fixed offer it is `ask_teammate({ who, command: "<name>", why })` |
-| `ask_teammate` | `{ who: string, why: string, waitSeconds?: number (default 45, max 120), command?: string, tool?: string, args?: object }` — exactly one of `command` or `tool` | on completion: `{ jobId, status: 'completed', exitCode, output: string (tail ≤ 8 KB), durationMs }`; if still running at waitSeconds: `{ jobId, status: 'running' }`; if denied: `{ jobId, status: 'denied', reason }` |
+| `ask_teammate` | `{ who: string, why: string, waitSeconds?: number (default 45, max 55), command?: string, tool?: string, args?: object }` — exactly one of `command` or `tool` | on completion: `{ jobId, status: 'completed', exitCode, output: string (tail ≤ 8 KB), durationMs }`; if still running at waitSeconds: `{ jobId, status: 'running' }`; if denied: `{ jobId, status: 'denied', reason }` |
 | `check_job` | `{ jobId: string, waitSeconds?: number }` | same shape as `ask_teammate` |
 | `post_event` | `{ kind: EventKind, summary: string, data? }` | `{ ok: true }` |
 | `send_message` | `{ to: user \| 'all', text }` | `{ ok: true }` — emits `event` kind `message`; recipient daemon prints it live and queues it for `inbox` / the prompt hook |
 | `inbox` | `{ unreadOnly?: true, sinceMinutes?: 120 }` | `{ messages: [{ id, ts, from, to, text, read }] }` — marks returned messages read when unreadOnly |
+| `send_file` | `{ to: user \| 'all', path: string, note?: string }` | uploads a file under the owner project or `~/.mesh`, emits a `file` event, and returns its artifact descriptor; see `docs/FILES-API.md` |
+| `fetch_artifact` | `{ url?: string, id?: string, saveAs?: string }` | downloads into `./mesh-artifacts/<sender>/`; small images/text are also returned inline; see `docs/FILES-API.md` |
 | `team_activity` | `{ sinceMinutes?: number (default 10) }` | `{ events: Array<{ ts, from, type, summary }> }` — flattened, human-readable, newest last, ≤ 100 |
 | `approve_request` | `{ id: string, decision: 'approved' \| 'denied', reason?: string }` | `{ ok, id, decision }`; error text if the id is no longer pending. Declares `_meta["anthropic/requiresUserInteraction"]`, so in Claude Code the permission prompt for this call is the owner's yes/no; never allowlisted |
 | `switch_room` | `{ room \| room link, relay? }` | `{ ok, room, relay }` — leaves the current room and joins another with the same identity/offers; also `POST /switch` and the overlay's room box |
 | `leave_room` | `{ reason? }` | `{ ok, left }` — disconnects, forgets the saved join (no auto-restart), stops the daemon; also `POST /leave` and the overlay's Leave button; rejoin with the join command |
-| `wait_for_events` | `{ timeoutSeconds?: number (default 60) }` | `{ messages: InboxMessage[], pending: PendingRequest[] }` — long-poll; returns on the next teammate message or pending request, or empty arrays at timeout. Codex/Cursor's substitute for push (shipping tonight). Never decides anything |
+| `wait_for_events` | `{ timeoutSeconds?: number (default 60) }` | `{ messages: InboxMessage[], pending: PendingRequest[] }` — long-poll; returns on the next teammate message or pending request, or empty arrays at timeout. Codex/Cursor's manual watcher path. Never decides anything |
 
 Tool description text (copy into the server verbatim):
 
@@ -175,7 +179,7 @@ When the Claude Code plugin is installed it ships these same five hooks (`plugin
 | `PostToolUse` (matcher `mcp__.*`) | `tool_call` | tool name |
 | `Stop` | `status` | "idle" |
 
-`UserPromptSubmit` also GETs `/inbox?unread=1` (unread messages, printed first, marked read) and `/activity?sinceMinutes=10` and prints both to stdout so they land in the agent's context on every prompt. Codex and Cursor have no equivalent installed: their agents pull with the `inbox` tool.
+`UserPromptSubmit` also GETs `/inbox?unread=1` (unread messages, printed first, marked read) and `/activity?sinceMinutes=10` and prints both to stdout so they land in the agent's context on every prompt. Cursor still pulls with `inbox`; Codex pulls by default and can separately opt into automatic background runs with `codexWake`.
 
 **Conflict warning (`pre_edit`).** Before every Edit/Write/MultiEdit the hook GETs `/touched?path=<relative path>&minutes=10`. If another user's daemon reported a `file_touched` for that path in the last 10 minutes, it prints one line per user (max 3), newest first, as PreToolUse JSON — `hookSpecificOutput.additionalContext` (lands in the agent's context) and `systemMessage` (shown to the user):
 `mesh: abhi edited src/billing.ts 3 min ago — coordinate before changing it (send_message abhi)`. It never blocks: no `permissionDecision`, exit 0 always, 1 s HTTP timeout, silent when the daemon is down or nobody touched the file.
@@ -197,7 +201,7 @@ When the Claude Code plugin is installed it ships these same five hooks (`plugin
 ## 6. CLI surface
 ```
 mesh join <room | https://<relay>/r/<room>> [--as <user>] [--relay wss://…] [--config /abs/team.json] [--port 7337]
-          [--background] [--no-register] [--cursor] [--codex] [--no-git-watch]
+          [--background] [--no-register] [--cursor] [--codex] [--no-git-watch] [--no-codex-wake]
 mesh status                                     # background daemon: user@room, relay state, members, pid, log path (exit 1 if none)
 mesh stop                                       # SIGTERM the background daemon, remove ~/.mesh/daemon.json
 mesh log                                        # print ~/.mesh/daemon.log

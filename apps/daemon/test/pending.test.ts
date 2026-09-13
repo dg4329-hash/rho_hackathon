@@ -73,8 +73,8 @@ async function testModesUnit(): Promise<void> {
   check("overlay mode: an agent poll alone is not an answerer", !q.answererAttached());
   q.setMode("dialog");
   check("dialog mode: nobody sees parked requests", q.visibleTo("agent").length === 0 && q.visibleTo("overlay").length === 0);
-  q.decide("m1", "denied");
-  await parked;
+  check("dialog mode: nobody is an answerer", !q.answererAttached());
+  check("switching to dialog releases parked requests to the fallback at once", (await parked) === undefined && q.list().length === 0);
 
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "mesh-approvals-"));
   try {

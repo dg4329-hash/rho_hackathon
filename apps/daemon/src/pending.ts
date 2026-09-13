@@ -72,6 +72,17 @@ export class PendingApprovals {
   setMode(mode: ApprovalsMode): void {
     this.mode = mode;
     this.chosen = true;
+    // Requests already parked that nobody can answer under the new mode fall back to the dialog now, not after 120 s.
+    if (!this.answererAttached()) for (const id of [...this.entries.keys()]) this.release(id);
+  }
+
+  /** Drop a parked request unanswered; its ask() resolves undefined and the caller falls back. */
+  private release(id: string): void {
+    const e = this.entries.get(id);
+    if (!e) return;
+    this.entries.delete(id);
+    for (const t of e.timers) clearTimeout(t);
+    e.resolve(undefined);
   }
 
   /** Any watcher (agent or overlay) polled recently. */
@@ -86,6 +97,7 @@ export class PendingApprovals {
   }
   /** Is someone allowed to answer under the current mode still polling? ("overlay" / "agent" count only that consumer.) */
   answererAttached(): boolean {
+    if (this.mode === "dialog" || this.mode === "tty") return false;
     if (this.mode === "overlay") return this.overlayAttached();
     if (this.mode === "agent") return this.agentAttached();
     return this.watcherAttached();
@@ -140,13 +152,7 @@ export class PendingApprovals {
     const createdAt = this.now();
     const full: PendingRequest = { ...req, createdAt: new Date(createdAt).toISOString(), expiresAt: new Date(createdAt + timeoutMs).toISOString() };
     return new Promise((resolve) => {
-      const giveUp = () => {
-        const e = this.entries.get(req.id);
-        if (!e) return;
-        this.entries.delete(req.id);
-        for (const t of e.timers) clearTimeout(t);
-        resolve(undefined);
-      };
+      const giveUp = () => this.release(req.id);
       const timeout = setTimeout(giveUp, timeoutMs);
       const watcherCheck = setInterval(() => { if (!this.answererAttached()) giveUp(); }, WATCHER_CHECK_MS);
       this.entries.set(req.id, { req: full, resolve, timers: [timeout, watcherCheck] });

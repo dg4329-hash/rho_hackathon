@@ -90,14 +90,21 @@ Routing: everything is broadcast. Daemons ignore `request` frames whose `to` isn
     { "name": "figma.export", "command": "./scripts/figma-export.sh",
       "description": "Export a Figma frame to PNG + text outline. Usage: figma-export.sh <fileKey> <nodeId>",
       "permission": "ask" },
-    { "name": "vercel.deploy", "command": "vercel", "description": "Deploy this repo. --prod only if asked.", "permission": "ask" }
+    { "name": "vercel.deploy", "command": "vercel", "description": "Deploy this repo. --prod only if asked.", "permission": "ask" },
+    // FIXED command lines (whitespace in `command`): the requester asks by name, the owner's exact line runs. Safe as `always`.
+    { "name": "git.status", "command": "git status --short", "description": "Working-tree status of the app repo.", "permission": "always" },
+    { "name": "git.diff",   "command": "git diff HEAD",      "description": "Uncommitted diff of the app repo.",   "permission": "always" }
   ]
 }
 ```
 
 **Import rule.** On `mesh join`, for each configured server (the daemon's own `mesh` entry and any `http://localhost:*/mcp` URL are skipped so it never imports itself): stdio servers are spawned by the daemon with the config's `command/args/env`; `http`/`sse` servers are connected without auth. Servers that fail (OAuth-only remotes like the official Figma MCP, missing binaries) are logged as `skipped: <reason>` and the owner is told to add a shell offer instead. Then `tools/list` → one offer per tool named `<server>.<tool>`, description and inputSchema verbatim, permission from `permissions` globs else `import.defaultPermission`, `notes` from the `notes` globs (first match).
 
-**Shell matching rule.** Split `command` with shell-words; first token's basename vs each shell offer's `command` basename. No match → `allowArbitrary`. `never` → `decision: denied`. `always` → `decision: auto`. `ask` → prompt. **Compound commands** (any `;`, `&&`, `||`, `|`, redirection, backticks, `$( )`, newline, or unparseable input) never inherit an offer's `always`: they are treated as `ask` (or `never` when `allowArbitrary` is `never`). An offer's `never` stays `never`.
+**Shell matching rule.** Two kinds of shell offer, decided by the offer's `command`:
+- **Fixed offer** — `command` contains whitespace (`git diff HEAD`, `echo a | tr a b`). It is the owner's complete command line. A request matches it only when the request, normalized (trim, collapse runs of whitespace), equals the offer's `command` exactly **or** equals the offer's `name` (so agents call `ask_teammate({ who, command: "git.diff" })`). Nothing else matches: not a prefix, not extra flags (`git diff HEAD --stat` → arbitrary). The daemon runs the **offer's** line verbatim (pipes and all): fixed offers are never compound-escalated, so `always` on them is safe. Fixed offers are checked first and advertised with `fixed: true` in `presence`/`list_teammates`.
+- **Single-token offer** — `command` is one program (`git`, `./scripts/figma-export.sh`). Split the request with shell-words; first token's basename vs the offer's `command` basename; the rest of the request is passed through to the owner's program. A bare `git` offer with `always` therefore auto-approves *any* git command — the owner's choice; prefer fixed offers for `always`. **Compound requests** (any `;`, `&&`, `||`, `|`, redirection, backticks, `$( )`, newline, or unparseable input) never inherit a single-token offer's `always`: they are treated as `ask` (or `never` when `allowArbitrary` is `never`).
+
+No match → `allowArbitrary`. `never` → `decision: denied`. `always` → `decision: auto`. `ask` → prompt. An offer's `never` stays `never`.
 
 **Spawn rule (shell).** POSIX: `spawn('/bin/sh', ['-c', command], { cwd, env: process.env, detached })`, process group killed at `timeoutSeconds`. Windows: Git's `bash.exe` if installed (so offers written for `sh` work), else `cmd.exe`. The approval prompt is the safety layer.
 
@@ -124,8 +131,8 @@ Ten tools (names, inputs, outputs). Descriptions matter: they are the only thing
 
 | tool | input | returns |
 |---|---|---|
-| `list_teammates` | `{}` | `{ me, members: [{ user, offers: [{ name, kind, permission, summary }] }] }` — `summary` = first 120 chars of description. One line per tool; keep it cheap. |
-| `describe_capability` | `{ who: string, name: string }` | `{ name, kind, permission, description, inputSchema?, notes?, usage: string }` — `usage` is a rendered example call the model can copy |
+| `list_teammates` | `{}` | `{ me, members: [{ user, offers: [{ name, kind, permission, summary, fixed?, usage? }] }] }` — `summary` = first 120 chars of description. Fixed shell offers (§2) carry `fixed: true, usage: 'command: "<name>"'`. One line per tool; keep it cheap. |
+| `describe_capability` | `{ who: string, name: string }` | `{ name, kind, permission, description, inputSchema?, notes?, fixed?, usage: string }` — `usage` is a rendered example call the model can copy; for a fixed offer it is `ask_teammate({ who, command: "<name>", why })` |
 | `ask_teammate` | `{ who: string, why: string, waitSeconds?: number (default 45, max 120), command?: string, tool?: string, args?: object }` — exactly one of `command` or `tool` | on completion: `{ jobId, status: 'completed', exitCode, output: string (tail ≤ 8 KB), durationMs }`; if still running at waitSeconds: `{ jobId, status: 'running' }`; if denied: `{ jobId, status: 'denied', reason }` |
 | `check_job` | `{ jobId: string, waitSeconds?: number }` | same shape as `ask_teammate` |
 | `post_event` | `{ kind: EventKind, summary: string, data? }` | `{ ok: true }` |
@@ -139,7 +146,7 @@ Tool description text (copy into the server verbatim):
 
 - `list_teammates`: "List teammates currently online and every tool or command each one can run for you on their machine (their MCP servers: Supabase, Figma, Linear, GitHub, etc., plus shell commands). Call this whenever you need a tool, credential, dataset, or environment you don't have, before telling the user you can't do something. Then call describe_capability on the specific tool before using it."
 - `describe_capability`: "Full description, input schema, owner notes, and an example call for one teammate capability. Always call this before ask_teammate on a tool you haven't used in this session; the owner's notes contain project-specific details (IDs, table names, conventions) you cannot guess."
-- `ask_teammate`: "Use a teammate's tool (tool + args, from describe_capability) or run a shell command on their machine (command). They see exactly what you're asking and your `why`, and must approve unless the capability is marked 'always'. Shell commands run in the owner's configured working directory with their environment. Returns { status, exitCode, output }: exitCode 0 = success, 1 = the tool reported an error, null = killed at the owner's timeout. If status is 'running', call check_job with the jobId. If 'denied', do not retry the same request; tell the user why."
+- `ask_teammate`: "Use a teammate's tool (tool + args, from describe_capability) or run a shell command on their machine (command). They see exactly what you're asking and your `why`, and must approve unless the capability is marked 'always'. Shell commands run in the owner's configured working directory with their environment. A shell offer marked fixed: true is one exact command line the owner chose (e.g. git.diff runs `git diff HEAD`): pass command: '<offer name>' and nothing else; arguments or extra flags will not match it. Returns { status, exitCode, output }: exitCode 0 = success, 1 = the tool reported an error, null = killed at the owner's timeout. If status is 'running', call check_job with the jobId. If 'denied', do not retry the same request; tell the user why."
 - `check_job`: "Check on, or wait for, a job started by ask_teammate. waitSeconds blocks up to that long for completion (0 = return immediately). Same result shape as ask_teammate; exitCode null means it was killed at the owner's timeout."
 - `post_event`: "Post a short note to the team activity feed (what you're doing, what you found)."
 - `send_message`: "Send a short message to a teammate's agent ('all' for everyone). Use it to coordinate: what you're about to change, a fix idea for something you saw in team_activity, a question about their tool. Delivered live to their terminal and the room page, and into their agent's context on its next prompt (Claude Code) or when it calls inbox (Cursor)."
@@ -154,22 +161,29 @@ Tool description text (copy into the server verbatim):
 
 ## 4. Hooks (Claude Code only; shipped by the plugin, else installed by `mesh join` into `<cwd>/.claude/settings.json`)
 
-When the Claude Code plugin is installed it ships these same four hooks (`plugin/hooks/hooks.json`, same `emit.js`) plus a SessionStart hook, and `mesh join` skips the merge below. Otherwise `mesh join` copies `hooks/emit.js` to `~/.mesh/emit.js` (the installer downloads it from the relay's `/emit.js`) and merges four entries into the project's `.claude/settings.json`, replacing previous mesh entries and keeping everything else (`hooks/install.sh <repo>` does the same by hand; needs `jq`). Each hook is `node ~/.mesh/emit.js <kind>` (prefixed `MESH_DAEMON=http://localhost:<port>` when the port isn't 7337), timeout 5 s, reading the hook's stdin JSON and POSTing `{ kind, summary, data }` to `POST http://localhost:7337/event`. The daemon forwards it as an `event` frame. Hooks never fail the agent: errors are swallowed, exit 0, 1 s HTTP timeout.
+When the Claude Code plugin is installed it ships these same five hooks (`plugin/hooks/hooks.json`, same `emit.js`) plus a SessionStart hook, and `mesh join` skips the merge below. Otherwise `mesh join` copies `hooks/emit.js` to `~/.mesh/emit.js` (the installer downloads it from the relay's `/emit.js`) and merges five entries into the project's `.claude/settings.json`, replacing previous mesh entries and keeping everything else (`hooks/install.sh <repo>` does the same by hand; needs `jq`). Each hook is `node ~/.mesh/emit.js <kind>` (prefixed `MESH_DAEMON=http://localhost:<port>` when the port isn't 7337), timeout 5 s, reading the hook's stdin JSON and POSTing `{ kind, summary, data }` to `POST http://localhost:7337/event`. The daemon forwards it as an `event` frame. Hooks never fail the agent: errors are swallowed, exit 0, 1 s HTTP timeout.
 
 | hook | kind | summary |
 |---|---|---|
 | `UserPromptSubmit` | `prompt` | first 140 chars of the prompt |
+| `PreToolUse` (matcher `Edit\|Write\|MultiEdit`) | `pre_edit` | posts nothing; conflict warning, see below |
 | `PostToolUse` (matcher `Edit\|Write\|MultiEdit`) | `file_touched` | relative path |
 | `PostToolUse` (matcher `mcp__.*`) | `tool_call` | tool name |
 | `Stop` | `status` | "idle" |
 
 `UserPromptSubmit` also GETs `/inbox?unread=1` (unread messages, printed first, marked read) and `/activity?sinceMinutes=10` and prints both to stdout so they land in the agent's context on every prompt. Codex and Cursor have no equivalent installed: their agents pull with the `inbox` tool.
 
+**Conflict warning (`pre_edit`).** Before every Edit/Write/MultiEdit the hook GETs `/touched?path=<relative path>&minutes=10`. If another user's daemon reported a `file_touched` for that path in the last 10 minutes, it prints one line per user (max 3), newest first, as PreToolUse JSON — `hookSpecificOutput.additionalContext` (lands in the agent's context) and `systemMessage` (shown to the user):
+`mesh: abhi edited src/billing.ts 3 min ago — coordinate before changing it (send_message abhi)`. It never blocks: no `permissionDecision`, exit 0 always, 1 s HTTP timeout, silent when the daemon is down or nobody touched the file.
+
+**Where `file_touched` comes from.** Claude Code hooks (above, precise). For everyone else — Codex, Cursor, a human in an editor — the daemon's **git watch** (`apps/daemon/src/gitwatch.ts`): when the daemon's cwd is inside a git repo it runs `git status --porcelain --untracked-files=normal` every 5 s (5 s timeout, a tick is skipped while the previous run is still going), diffs against the last snapshot, and emits one `file_touched` (summary = path relative to the repo root, `data.source = "git"`) per newly modified/added path, max 20 per tick, one emit per path per 60 s; the first snapshot is a baseline and emits nothing. `mesh-artifacts/`, `.mesh`, and directory entries are never emitted. Off with `--no-git-watch`, or automatically when Claude Code hooks are installed for that cwd (an `emit.js` hook in `.claude/settings.json`, or the mesh plugin) so files are not reported twice. Logs one line on start: `git watch: on (<repo root>)`.
+
 ## 5. Daemon local HTTP (`127.0.0.1:<port>`, default 7337)
 - `POST /mcp` — stateless Streamable HTTP MCP endpoint (§3). `GET`/`DELETE /mcp` → 405.
 - `POST /event` — `{ kind, summary, data? }`, see §4. 400 on a bad body.
 - `GET /inbox?unread=1` — `{ messages }`, same as `inbox` (`unread=0` returns read ones too; look-back 120 min).
 - `GET /activity?sinceMinutes=10` — `{ events }`, same as `team_activity`.
+- `GET /touched?path=<relative path>&minutes=10` — `{ touched: [{ user, ts }] }`: other users who reported a `file_touched` for that path in the window (from the activity buffer; one entry per user, newest first; a path matches when equal or when one is a `/`-suffix of the other, since hooks and the git watch may root paths differently). 400 without `path`. Backs the `pre_edit` hook (§4).
 - `GET /pending?wait=25&messages=1&consumer=overlay&since=<ISO>` — `{ pending: PendingRequest[], messages: InboxMessage[] }`; long-poll ≤ 25 s, returns early on a new request or message. Any caller counts as an attached watcher for 60 s (§2 approval rule). `consumer=overlay` + `since` returns messages newer than `since` without marking them read; the default consumer (the Claude Code watcher) marks them read.
 - `POST /decide` — `{ id, decision: 'approved'|'denied', reason? }` → `{ ok, id, decision }`; 404 if the id is not pending. Same effect as `approve_request`.
 - `POST /message` — `{ to, text }` → `{ ok: true }`; same as `send_message` (the overlay's reply box).
@@ -179,7 +193,7 @@ When the Claude Code plugin is installed it ships these same four hooks (`plugin
 ## 6. CLI surface
 ```
 mesh join <room | https://<relay>/r/<room>> [--as <user>] [--relay wss://…] [--config /abs/team.json] [--port 7337]
-          [--background] [--no-register] [--cursor] [--codex]
+          [--background] [--no-register] [--cursor] [--codex] [--no-git-watch]
 mesh status                                     # background daemon: user@room, relay state, members, pid, log path (exit 1 if none)
 mesh stop                                       # SIGTERM the background daemon, remove ~/.mesh/daemon.json
 mesh log                                        # print ~/.mesh/daemon.log
@@ -190,7 +204,7 @@ mesh feed <room> [--relay …]                    # Abhi's app
 ```
 - A room link (`https://host/r/room`, also `wss://host/room`) sets both room and relay. `MESH_RELAY` is the env fallback for `--relay`.
 - `--background`: re-spawns itself detached with `MESH_BACKGROUND=1`, stdout/stderr to `~/.mesh/daemon.log`, state `{ pid, port, room, relay, user, cwd, startedAt }` in `~/.mesh/daemon.json`, waits ≤ 15 s for `/health`, then prints the registration lines. Re-running while one is up on that port prints "already running". Approvals in this mode are native dialogs only.
-- `--no-register`: skip §3 registration and §4 hooks. `--cursor` / `--codex`: register even if the tool isn't detected.
+- `--no-register`: skip §3 registration and §4 hooks. `--cursor` / `--codex`: register even if the tool isn't detected. `--no-git-watch`: don't emit `file_touched` from `git status` (§4).
 - Env: `MESH_APPROVE=tty` forces the terminal prompt; `MESH_DEBUG=1` logs every frame; `MESH_RELAY` default relay.
 - Installed form: `node ~/.mesh/mesh.mjs <command> …` (the bundle has no `mesh` on PATH). Installers run `join <room> --relay <baked origin> --background [--as …]`.
 

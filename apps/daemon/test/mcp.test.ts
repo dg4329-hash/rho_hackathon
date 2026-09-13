@@ -61,6 +61,8 @@ async function testLocalServer() {
       { ts: "2026-09-12T10:01:00Z", from: "dev", type: "request", summary: "asked tarush: echo hi" },
     ],
     relayStatus: () => "connected",
+    approvalsMode: () => "auto",
+    setApprovalsMode: (m: string) => m,
     async pendingApprovals() { return []; },
     async watchPoll() { return { pending: [], messages: [] }; },
     decide: (id) => id === "req-1",

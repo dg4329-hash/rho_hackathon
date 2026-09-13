@@ -326,6 +326,12 @@ export function buildApp(core: DaemonCore): express.Express {
   });
 
   // { room, relay?, key? } — `room` may be a room link, whose `#k=` fragment supplies relay and key.
+  app.get("/approvals", (_req: Request, res: Response) => { res.json({ mode: core.approvalsMode(), modes: ["auto", "overlay", "dialog", "tty"] }); });
+  app.post("/approvals", (req: Request, res: Response) => {
+    try { res.json({ ok: true, mode: core.setApprovalsMode(String((req.body as { mode?: unknown })?.mode ?? "")) }); }
+    catch (e) { res.status(400).json({ ok: false, error: (e as Error).message }); }
+  });
+
   app.post("/switch", async (req: Request, res: Response) => {
     const b = (req.body ?? {}) as { room?: unknown; relay?: unknown; key?: unknown };
     const target = parseRoomArg(typeof b.room === "string" ? b.room : "");
@@ -375,7 +381,7 @@ export function buildApp(core: DaemonCore): express.Express {
   });
 
   app.get("/health", (_req, res) => {
-    res.json({ user: core.me, room: core.config.room, relay: core.relayStatus(), members: core.members().length });
+    res.json({ approvals: core.approvalsMode(), user: core.me, room: core.config.room, relay: core.relayStatus(), members: core.members().length });
   });
 
   // In-tool approvals (`mesh watch` + the plugin monitor). GET long-polls up to ?wait= seconds (max 60);

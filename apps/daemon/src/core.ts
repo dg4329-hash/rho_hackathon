@@ -24,7 +24,7 @@ import type { ActivityEntry, AskInput, DaemonCore, FetchedArtifact, Job, McpCont
 import { askApproval } from "./approval.js";
 import { artifactMeta, downloadArtifact, extFor, formatSize, mimeFor, scanOutputForFiles, uploadBytes, uploadFile } from "./artifacts.js";
 import { nativeNotify } from "./native.js";
-import { PendingApprovals } from "./pending.js";
+import { APPROVALS_MODES, PendingApprovals, type ApprovalsMode } from "./pending.js";
 import { Jobs, toJobResult } from "./jobs.js";
 import { resolvePermission } from "./permissions.js";
 import { parseRoomArg } from "./register.js";
@@ -490,6 +490,15 @@ export function createCore(opts: CoreOptions): DaemonCore & { client: RelayClien
       return { room: target, relay: config.relay };
     },
 
+    approvalsMode() { return pending.mode; },
+    setApprovalsMode(mode: string) {
+      const m = mode.trim().toLowerCase();
+      if (!(APPROVALS_MODES as string[]).includes(m)) throw new Error(`approvals mode must be one of ${APPROVALS_MODES.join(", ")}`);
+      pending.mode = m as ApprovalsMode;
+      say(chalk.dim(`approvals: ${m}`));
+      return pending.mode;
+    },
+
     relayStatus() {
       return client.status();
     },
@@ -502,8 +511,8 @@ export function createCore(opts: CoreOptions): DaemonCore & { client: RelayClien
       if (opts?.since !== undefined) {
         // overlay-style consumer: cursor by timestamp, never marks read (the agent watcher may still want them)
         const newer = () => core.inbox({ unreadOnly: false, sinceMinutes: 120 }).filter((m) => m.ts > (opts.since ?? ""));
-        if (newer().length > 0) return { pending: await pending.poll(0), messages: newer() };
-        const list = await pending.poll(waitMs);
+        if (newer().length > 0) return { pending: await pending.poll(0, "overlay"), messages: newer() };
+        const list = await pending.poll(waitMs, "overlay");
         return { pending: list, messages: newer() };
       }
       const unreadNow = () => core.inbox({ unreadOnly: false, sinceMinutes: 120 }).filter((m) => !m.read);

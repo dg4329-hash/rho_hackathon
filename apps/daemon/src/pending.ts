@@ -14,6 +14,8 @@ import type { ApprovalAnswer } from "./approval.js";
 export type ApprovalPath = "watcher" | "dialog" | "tty";
 
 export interface ApprovalPathInputs {
+  /** an overlay (browser panel) is long-polling; only meaningful with mode "overlay" */
+  overlayAttached?: boolean;
   /** A `GET /pending` long-poll was seen within WATCHER_TTL_MS. */
   watcherAttached: boolean;
   /** `MESH_APPROVE`: "dialog" | "tty" force that path; "watcher" forces the queue; anything else = auto. */
@@ -27,10 +29,16 @@ export function selectApprovalPath(i: ApprovalPathInputs): ApprovalPath {
   const mode = (i.mode ?? "").trim().toLowerCase();
   if (mode === "tty") return "tty";
   if (mode === "dialog") return i.dialogAvailable ? "dialog" : "tty";
+  // "overlay": only the overlay answers; if none is open, fall straight to the OS dialog (no 120 s wait)
+  if (mode === "overlay") return i.overlayAttached ? "watcher" : i.dialogAvailable ? "dialog" : "tty";
   if (mode === "watcher" || i.watcherAttached) return "watcher";
   if (i.dialogAvailable) return "dialog";
   return "tty";
 }
+
+export type ApprovalsMode = "auto" | "overlay" | "dialog" | "tty";
+export const APPROVALS_MODES: ApprovalsMode[] = ["auto", "overlay", "dialog", "tty"];
+export type PollConsumer = "agent" | "overlay";
 
 export const WATCHER_TTL_MS = 60_000;
 export const DECISION_TIMEOUT_MS = 120_000;
@@ -46,10 +54,23 @@ export class PendingApprovals {
   private readonly entries = new Map<string, Entry>();
   private readonly pollers = new Set<() => void>();
   private lastPollAt = -Infinity;
+  private lastOverlayPollAt = -Infinity;
+  /** Runtime approvals mode (set from the overlay or `POST /approvals`); "auto" = env MESH_APPROVE or the default path. */
+  mode: ApprovalsMode = "auto";
   constructor(private readonly now: () => number = () => Date.now()) {}
 
+  /** Any watcher (agent or overlay) polled recently. */
   watcherAttached(): boolean {
-    return this.now() - this.lastPollAt < WATCHER_TTL_MS;
+    return this.now() - Math.max(this.lastPollAt, this.lastOverlayPollAt) < WATCHER_TTL_MS;
+  }
+  overlayAttached(): boolean {
+    return this.now() - this.lastOverlayPollAt < WATCHER_TTL_MS;
+  }
+  /** What a given consumer is allowed to see. In "overlay" mode the coding-agent watcher is never asked. */
+  visibleTo(consumer: PollConsumer): PendingRequest[] {
+    if (this.mode === "overlay" && consumer === "agent") return [];
+    if (this.mode === "dialog" || this.mode === "tty") return [];
+    return this.list();
   }
 
   list(): PendingRequest[] {
@@ -65,15 +86,16 @@ export class PendingApprovals {
     for (const wake of [...this.pollers]) wake();
   }
 
-  poll(waitMs: number): Promise<PendingRequest[]> {
-    this.lastPollAt = this.now();
-    if (this.entries.size > 0 || waitMs <= 0) return Promise.resolve(this.list());
+  poll(waitMs: number, consumer: PollConsumer = "agent"): Promise<PendingRequest[]> {
+    const stamp = () => { if (consumer === "overlay") this.lastOverlayPollAt = this.now(); else this.lastPollAt = this.now(); };
+    stamp();
+    if (this.visibleTo(consumer).length > 0 || waitMs <= 0) return Promise.resolve(this.visibleTo(consumer));
     return new Promise((resolve) => {
       const done = () => {
         clearTimeout(timer);
         this.pollers.delete(done);
-        this.lastPollAt = this.now();
-        resolve(this.list());
+        stamp();
+        resolve(this.visibleTo(consumer));
       };
       const timer = setTimeout(done, waitMs);
       this.pollers.add(done);

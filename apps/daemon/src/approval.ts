@@ -86,9 +86,11 @@ let queue: Promise<unknown> = Promise.resolve();
  * never overlap; the watcher path is not (many requests can wait in the queue at once).
  */
 export function askApproval(req: ApprovalRequest, pending?: PendingApprovals): Promise<ApprovalAnswer> {
+  const runtime = pending?.mode && pending.mode !== "auto" ? pending.mode : undefined;
   const path = selectApprovalPath({
     watcherAttached: pending?.watcherAttached() ?? false,
-    mode: process.env.MESH_APPROVE,
+    overlayAttached: pending?.overlayAttached() ?? false,
+    mode: runtime ?? process.env.MESH_APPROVE,
     dialogAvailable: nativeDialogAvailable(),
     tty: hasTty(),
   });

@@ -374,6 +374,19 @@ export const OVERLAY_JS: string = String.raw`(function (root) {
         .catch(function () { b.disabled = false; b.textContent = "go"; });
     };
     $("mo-room").onkeydown = function (e) { if (e.key === "Enter") $("mo-switch").click(); };
+    // approvals mode: read from the daemon, set on change (POST /approvals)
+    (function () {
+      var sel = $("mo-approvals"); if (!sel) return;
+      fetch("http://localhost:" + state.port + "/approvals").then(function (r) { return r.json(); }).then(function (j) { if (j && j.mode) sel.value = j.mode === "tty" ? "dialog" : j.mode; }).catch(function () {});
+      sel.onchange = function () {
+        var v = sel.value;
+        fetch("http://localhost:" + state.port + "/approvals", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode: v }) })
+          .then(function (r) { return r.json(); })
+          .then(function (j) { var h = $("mo-hint"); if (!j || !j.ok) { if (h) { h.hidden = false; h.textContent = (j && j.error) || "could not set approvals mode"; } return; }
+            if (h) { h.hidden = v !== "overlay"; if (v === "overlay") h.textContent = "Requests are approved only in this panel; your coding agent won't be asked. Keep it open (falls back to a system dialog if it's closed)."; } })
+          .catch(function () {});
+      };
+    })();
     var leaveArmed = false;
     $("mo-leave").onclick = function () {
       var b = this;

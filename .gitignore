@@ -11,3 +11,4 @@ team.json
 .claude/settings.json
 .cursor/mcp.json
 .playwright-mcp/
+.claude/

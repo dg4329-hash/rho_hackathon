@@ -43,7 +43,7 @@ if (REMOTE && !/^https?:\/\//.test(REMOTE)) {
   console.error(`--relay must be an http(s) URL (got ${REMOTE})`);
   process.exit(2);
 }
-if (REMOTE && /gap-masses-sureness|:8095\b|:7337\b|:4040\b/.test(REMOTE)) {
+if (REMOTE && /\.ngrok(-free)?\.(app|dev|io)|:8095\b|:7337\b|:4040\b/.test(REMOTE)) {
   console.error("refusing to run against the live dev relay; point --relay at a test/Railway deploy");
   process.exit(2);
 }

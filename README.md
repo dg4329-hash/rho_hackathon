@@ -1,4 +1,44 @@
-# mesh — borrow a teammate's machine, not their credentials
+# mesh: borrow a teammate's machine, not their credentials
+
+**Live site:** https://relay-production-8eef.up.railway.app/site  ·  **Demo film:** [`demo/render/mesh-demo-cleaned.mp4`](demo/render/mesh-demo-cleaned.mp4)
+
+mesh lets a coding agent (Claude Code, Codex or Cursor) run a command or MCP tool on a **teammate's laptop** when it lacks
+the tools or credentials itself. The teammate sees an approval prompt (`dev wants to run: figma-export … [Deny] [Approve]`),
+clicks Approve, and the output streams back to the requesting agent. API keys and logins never leave the owner's machine.
+
+Built at a hackathon in September 2026 by Dev Gadde, Tarush Garg and Abhiviraj G.
+
+### Why
+On a small team, one person has the Figma token, another has the Supabase login, a third has the Vercel deploy. Today
+you either share secrets in Slack or wait for that person. mesh routes the *request* to the machine that already has the
+access, and a human approves every call.
+
+### What it does
+- **One-line join.** `curl … | bash` downloads a single-file daemon, reads your existing Claude Code / Cursor MCP servers
+  and offers their tools to the room. Nothing is shared until you approve it.
+- **Human-in-the-loop approvals.** An always-on-top overlay (Document Picture-in-Picture) or the native OS dialog shows each
+  request; no answer means denied.
+- **Agent-to-agent messaging** and a shared live feed of what every teammate's agent is doing.
+- **Edit awareness.** Before your agent edits a file a teammate touched in the last 10 minutes, a hook warns it to coordinate.
+- **Claude Code plugin** (MCP server + hooks + in-session watcher), plus Codex and Cursor registration.
+
+### How it works
+```
+agent ──MCP──▶ local daemon ──WebSocket──▶ relay (Railway) ──▶ teammate's daemon ──▶ [Approve?] ──▶ runs tool locally
+                                                                                                   │
+agent ◀──────────────── output streamed back through the relay ◀──────────────────────────────────┘
+```
+Rooms are gated by an HMAC-derived key in the share link; the relay only forwards frames and never holds tool credentials.
+
+### Tech stack
+TypeScript monorepo (pnpm workspaces) · Node 20 · WebSockets (`ws`) · Model Context Protocol SDK · Express · Electron
+(tray app) · Docker on Railway · Claude Code plugin + hooks.
+
+### Status
+Hackathon project, working end to end. Verified Mac↔Mac and Mac↔Windows over the public relay (details under
+[Verified](#verified-2026-09-12)). Not production-hardened; see [Known limits](#known-limits).
+
+---
 
 > Working name. Rename freely; nothing depends on it.
 
@@ -165,7 +205,7 @@ imports and offers Playwright, 24 tools, + filesystem, 14). The overlay and `wai
 the separate Codex wake path was tested through a live self-addressed mesh message on Windows.
 
 ## Known limits
-- Room name is the only auth.
+- Anyone who has a room link (with its `#k=` key) can join the room; approvals still gate what they can run.
 - Codex and Cursor agents get messages by pulling (`inbox`) or by looping on `wait_for_events`; only Claude Code has push
   delivery by default (plugin monitor + prompt hook). Codex also gets separate automatic runs when `codexWake` is enabled.
   Humans on any tool get messages in the overlay.
